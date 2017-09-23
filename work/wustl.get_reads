@@ -1,0 +1,34 @@
+#!/bin/bash
+
+while getopts c foo ; do
+    if [ "$foo" = 'c' ]; then
+	clip=1
+    fi
+done
+shift $((OPTIND-1))
+
+
+if [ $# -ne 3 ]; then
+    echo -e "\nUsage: $0 [options] fasta-dir qual-dir output-prefix
+
+    Creates prefix.fa, prefix.qual, prefix.clipped.fa, and prefix.clipped.qual
+
+    Options:
+
+	-c          Sequences less than 50 bases are removed.
+	            If Fasta sequence is masked, then Xs and Ns at the ends will be removed.
+"
+    exit 1
+fi
+tmp=/tmp/wustl.$$
+wustl.concat_reads $1 $2 $tmp.fa $tmp.qual
+if [ "$clip" ]; then
+    fasta.fa_qual_to_cols $tmp.fa $tmp.qual | cols.fix_clipped_fasta | cols.select "length({seq}) >= 50" > $tmp.kkk
+    make_fasta header seq $tmp.kkk > $3.fa
+    make_fasta header qual $tmp.kkk > $3.qual
+    rm -f $tmp.fa $tmp.qual $tmp.kkk
+else
+    mv $tmp.fa $3.fa
+    mv $tmp.qual $3.qual
+fi
+

@@ -1,0 +1,22 @@
+#!/usr/bin/perl -i
+
+if ("@ARGV" =~ /-h/) {
+    die "\nUsage: $0 < infile.txt > outfile.txt
+    or $0 file.txt (inplace fix)
+
+    Fixes tab-delimited files exported from Excel:
+    1. Changes \\r\\n to \\n.
+    2. Removes extra quotes.
+
+";
+}
+
+while (<>) {
+	$_ =~ s/\r?\n$//;
+	my @row;
+	for my $cell (split(/\t/, $_)) {
+	    $cell =~ s/^"(.*)"$/$1/;
+	    push(@row, $cell);
+	}
+	print join("\t", @row), "\n";
+}

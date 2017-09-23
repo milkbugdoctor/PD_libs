@@ -1,0 +1,57 @@
+#!/bin/bash
+
+. subs.sh
+
+opt_p=/tmp/temp.$$
+set_options p:q: "$@"
+set -- "${new_args[@]}"
+
+if [ $# -lt 2 ]; then
+    echo -e "\nUsage: $0 [options] delta-file bank-directory
+
+    Options:
+	-p prefix	prefix for temporary files
+	-q reads.qual	quality scores for reads	
+
+    Creates AMOS bank directory from a NUCmer delta file.
+"
+    exit 1
+fi
+
+delta="$1" ; shift
+bank="$1" ; shift
+
+prefix=$opt_p
+seq=$prefix.seq
+qual=$prefix.qual
+afg=$prefix.afg
+delta=`abs_path "$delta"`
+
+cheater_opts="-d 0 -allreads -Z -m $bank/RED.map"
+cheater_opts="-d 0 -Z -i 90 -v 0 -g 50 -m $bank/RED.map"
+
+reads=`set -- \`head -1 "$delta"\` ; echo $2`
+
+if need $reads $seq; then
+    run "ln -s $reads $seq"
+fi
+if need $reads $qual && [ -s "$opt_q" ]; then
+    cheater_opts="$cheater_opts -q $opt_q"
+    run "ln -s $opt_q $qual"
+fi
+if need $seq $prefix.afg; then
+    run "tarchive2amos -o $prefix $seq"
+fi
+if need $prefix.afg $bank; then
+    run "bank-transact -f -c -b $bank -m $afg"
+fi
+if need $delta $prefix.reads.iid.ctg; then
+    run "amos.cheater $cheater_opts $delta $prefix"
+fi
+if need $prefix.reads.iid.ctg $bank/CTG.ifo; then
+    run "amos.add_ctg_to_bank $prefix.reads.iid.ctg $bank"
+fi
+if false && need $prefix.reads.iid.ctg $prefix.ace; then
+    run "amos2ace -o $prefix.ace $prefix.afg $prefix.reads.iid.ctg"
+fi
+

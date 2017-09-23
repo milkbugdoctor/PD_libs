@@ -1,0 +1,570 @@
+#!/usr/bin/env activeperl
+
+# perl executable above must support GD
+
+my $fuzzy = 10;
+
+use Carp 'confess';
+use Getopt::Std;
+getopts('cl:n:o:r:sv');
+
+@ARGV || die "\nUsage: $0 [options] coverage.txt > outfile.draw-commands
+
+    Options:
+	-l pattern	   link fragmented contigs matching pattern
+	-n pattern	   pattern for printable part of contig name
+	-r repeats-file
+	-c		   random contig colors (default)
+	-s                 draw longest contigs first (default is best fit)
+	-v		   list contig names vertically
+
+";
+
+require 'draw_gd.pl';
+require 'markers.pl';
+require 'ranges.pl';
+my $m = markers::new();
+
+my $repeats_file = $opt_r;
+
+my $min = 1;
+my $y_pos = -10;
+my $y_inc = 1.5;
+print "background white\n";
+
+my ($xc, $yc) = (50, 55);
+
+my %things;
+while (<ARGV>) {
+    chomp;
+    my ($genome, $what, $start, $end, $len, $name) = split /\t/;
+    push(@{$things{$what}}, $_);
+}
+
+for my $g (@{$things{genome}}) {
+    my ($genome, $what, $start, $end, $len, $name) = split /\t/, $g;
+    if ($genome > 8) {
+	warn "too many genomes on line $_!\n";
+	exit 0; # ZZZ
+    }
+    $genome{$genome}{'size'} = $len;
+    $genome{$genome}{'name'} = $name;
+    get_mult($genome); # fix ordering
+}
+
+for my $g (@{$things{read_hit}}) {
+    my ($genome, $what, $start, $end, $len, $name) = split /\t/, $g;
+    my $mult = get_mult($genome);
+    my $tsize = $genome{$genome}{'size'};
+    my @ang = get_angle($tsize, $start, $end);
+    printf "radial_box $xc $yc @ang %s %s green\n", 93 * $mult, 2 * $mult;
+}
+
+for my $g (@{$things{read_gap}}) {
+    my ($genome, $what, $start, $end, $len, $name) = split /\t/, $g;
+	my $mult = get_mult($genome);
+	my $tsize = $genome{$genome}{'size'};
+	my @ang = get_angle($tsize, $start, $end);
+	printf "radial_box $xc $yc @ang %s %s red\n", 93 * $mult, 2 * $mult;
+}
+
+if ($opt_s) {
+    @contigs = sort_contigs_by_length(@{$things{contig}});
+}
+else {
+    @contigs = sort_contigs(@{$things{contig}});
+}
+
+my $contig_num = 0;
+for my $g (@contigs) {
+    my ($contig_level, $genome, $what, $start, $end, $len, $name, $qstart, $qend) = split /\t/, $g;
+    if ($name ne '') {	# contig has a name
+	if (defined $contig_num{$name}) {
+	    $contig_num = $contig_num{$name};
+	}
+	else {
+	    $contig_num{$name} = scalar(keys %contig_num) + 1;
+	    $contig_num = $contig_num{$name};
+	}
+    }
+    else {
+	$name = ++$contig_num;
+    }
+    my $mult = get_mult($genome);
+    my $tsize = $genome{$genome}{'size'};
+    my @ang = get_angle($tsize, $start, $end);
+    print "# contig $contig_num $start - $end\n";
+    $color = get_color($name);
+    printf "radial_box $xc $yc @ang %s %s $color black .01\n",
+	(91 - 2 * $contig_level) * $mult, 2 * $mult;
+    my $ang = ($ang[0] + $ang[1]) / 2;
+    my $display_name = display_name($name);
+    my $len = length($dislay_name);
+    my $scale = ($ang[1] - $ang[0] > $len * .002) ? 1 : .75;
+    printf "radial_text $xc $yc $ang %s black %s center center \"$display_name\"\n",
+	(90 - 2 * $contig_level) * $mult, 20 * $mult * $scale;
+}
+
+if ($opt_l) {
+    my @last_contig;
+    @contigs = sort {
+        (split /\t/, $a)[6] cmp (split /\t/, $b)[6]             # contig name
+        || (split /\t/, $a)[7] <=> (split /\t/, $b)[7]; # contig start
+    } @contigs;
+    for my $g (@contigs) {
+	my ($level, $gen, $what, $start, $end, $len, $name, $qstart, $qend, $qsize, $qdir)
+	    = split /\t/, $g;
+	next if $name !~ /$opt_l/;
+	my $qlen2 = $qend - $qstart + 1;
+
+printf STDERR ("$name q[$qstart-$qend] r[$start-$end]: %.2g%% of $name used, %d used %d unused\n",
+$qlen2/$qsize*100, $qlen2, ($qsize - $qlen2))
+if $qsize - $qlen2 > 100 && $qlen2 > 100;
+
+	my $mult2 = get_mult($gen);
+	my ($level1, $gen1, $what1, $s1, $e1, $len1, $name1, $qstart1, $qend1, $qsize1, $qdir1)
+	    = @last_contig;
+	my $mult1 = get_mult($gen1) if $gen1;
+
+	if ($last_contig[6] ne $name) {
+	    if ($qstart > .1 * $qsize or $qstart > 1000) {
+		my $pos = $qdir > 0 ? $start : $end;
+		my $ang = get_angle2($gen, $pos);
+		my $radius = (91 - 2 * $level - 2.2);
+		my ($x1, $y1) = draw_gd::polar_to_cartesian($mult2 * $radius / 2, $ang);
+		my ($x2, $y2) = draw_gd::polar_to_cartesian($mult2 * $radius / 2 * .92 , $ang);
+warn "incomplete start for $name ($qstart) : $x1 $y1 to $x2 $y2\n";
+		printf "line %s %s %s %s red 2\n", $xc + $x1, $yc + $y1, $xc + $x2, $yc + $y2;
+	    }
+	    if ($gen1 ne '' and ($qend1 < .9 * $qsize1 or $qsize1 - $qend1 > 1000)) {
+		my $pos = $qdir1 > 0 ? $e1 : $s1;
+		my $ang = get_angle2($gen1, $pos);
+		my $radius = (91 - 2 * $level1 - 2.2);
+		my ($x1, $y1) = draw_gd::polar_to_cartesian($mult1 * $radius / 2, $ang);
+		my ($x2, $y2) = draw_gd::polar_to_cartesian($mult1 * $radius / 2 * .92 , $ang);
+warn "incomplete end for $name ($qstart) : $x1 $y1 to $x2 $y2\n";
+		printf "line %s %s %s %s red 2\n", $xc + $x1, $yc + $y1, $xc + $x2, $yc + $y2;
+	    }
+	    @last_contig = split /\t/, $g;
+	    next;
+	}
+	my $mult = get_mult($gen);
+	my $tsize = $genome{$gen}{'size'};
+	my $contig_level = $level;
+	my $p1 = $qdir1 > 0 ? $e1 : $s1;
+	my $p2 = $qdir > 0 ? $start : $end;
+	my $ang1 = get_angle2($gen1, $p1);
+	my $ang2 = get_angle2($gen, $p2);
+	my $radius = (91 - 2 * $contig_level - 2.2);
+	my $radius1 = (91 - 2 * $level1 - 2.2);
+	my ($x1, $y1) = draw_gd::polar_to_cartesian($mult1 * $radius1 / 2, $ang1);
+	my ($x2, $y2) = draw_gd::polar_to_cartesian($mult2 * $radius / 2, $ang2);
+	my $color;
+	if ($qstart - $qend1 > $fuzzy) {
+	    $color = "red";	# gap, not enough overlap
+	}
+	elsif ($qend1 - $qstart > $fuzzy) {
+	    $color = "blue";	# repeat, too much overlap
+	}
+	else {
+	    $color = "green";
+	}
+warn "COOL! Connecting split contig $name from $p1 to $p2\n\n";
+	printf "line %s %s %s %s $color 2\n", $xc + $x1, $yc + $y1, $xc + $x2, $yc + $y2;
+	@last_contig = split /\t/, $g;
+    }
+}
+
+my @genomes = sort {
+    $genome{$a}{'order'} <=> $genome{$b}{'order'}
+} keys %genome;
+for my $genome (@genomes) {
+    my $num = $genome{$genome}{'order'} + 1;
+    my $desc = $genome{$genome}{'name'};
+    printf "text 2 %s black 30 left center \"Template $num: $desc\"\n", $y_pos;
+    $y_pos += $y_inc;
+}
+
+printf "box 2 %s 5 %s green\n", $y_pos - .5, $y_pos + .5;
+printf "text 6 %s black 30 left center \"read hits\"\n", $y_pos;
+$y_pos += $y_inc;
+printf "box 2 %s 5 %s red\n", $y_pos - .5, $y_pos + .5;
+printf "text 6 %s black 30 left center \"no read hits\"\n", $y_pos;
+$y_pos += $y_inc;
+printf "box 2 %s 5 %s blue\n", $y_pos - .5, $y_pos + .5;
+printf "text 6 %s black 30 left center \"repeat\"\n", $y_pos;
+$y_pos += $y_inc;
+
+if ($opt_v) {
+    $y_pos += $y_inc;
+    my @keys = sort { $contig_num{$a} <=> $contig_num{$b} } keys %contig_num;
+    for my $name (@keys) {
+	my $num = $contig_num{$name};
+	my $color = get_color($name);
+	printf "box 2 %s 5 %s $color\n", $y_pos - .5, $y_pos + .5;
+	printf "text 6 %s black 30 left center \"$name\"\n", $y_pos;
+	$y_pos += $y_inc;
+    }
+}
+
+exit 0 if (keys %genome) == 0;
+
+for my $g (keys %genome) {
+    my $max = $genome{$g}{'size'};
+    confess "genome size == 0 from genome [$g]" if $max == 0;
+    my $mult = get_mult($g);
+    printf "arc $xc $yc %f black 4 0 1\n", 91 * $mult;
+    # my $big = $max * $mult / 30;
+    my $big = $max / 30;
+    if ($big > 50000) {
+        $big = round_to($big, 50000);
+    }
+    elsif ($big > 10000) {
+        $big = round_to($big, 10000);
+    }
+    elsif ($big > 5000) {
+        $big = round_to($big, 5000);
+    }
+    elsif ($big > 1000) {
+        $big = round_to($big, 1000);
+    }
+    elsif ($big > 500) {
+        $big = round_to($big, 500);
+    }
+    elsif ($big > 100) {
+        $big = round_to($big, 100);
+    }
+    elsif ($big > 50) {
+        $big = round_to($big, 50);
+    }
+next if 30 * $mult < 7;
+    for (my $s = 0; $s <= .99 * $max; $s += $big) {
+	my ($ang) = get_angle($max, $s);
+	$ang = 0 if $s == 0;
+	my $text = get_num($s);
+	printf "radial_line $xc $yc $ang %s %s gray 1\n",
+	    94 * $mult, 3 * $mult;
+	printf "radial_text $xc $yc $ang %s black %s center center \"$text\"\n",
+	    94 * $mult, 26 * $mult;
+    }
+next if 17 * $mult < 7;
+    for (my $s = $big/2; $s <= .99 * $max; $s += $big) {
+	my ($ang) = get_angle($max, $s);
+	$ang = 0 if $s == 0;
+	my $text = get_num($s);
+	printf "radial_line $xc $yc $ang %s %s gray 1\n",
+	    94 * $mult, 3 * $mult;
+	printf "radial_text $xc $yc $ang %s black %s center center \"$text\"\n",
+	    94 * $mult, 17 * $mult;
+    }
+next if 15 * $mult < 7;
+    for (my $s = $big/4; $s <= .995 * $max; $s += $big/2) {
+	my ($ang) = get_angle($max, $s);
+	$ang = 0 if $s == 0;
+	my $text = get_num($s);
+	printf "radial_line $xc $yc $ang %s %s gray 1\n",
+	    92.5 * $mult, 1.5 * $mult;
+	printf "radial_text $xc $yc $ang %s black %s center center \"$text\"\n",
+	    92.5 * $mult, 15 * $mult;
+    }
+}
+
+#
+# draw repeats in blue
+#
+
+exit 0 if $repeats_file eq '';
+
+draw_repeats($repeats_file);
+
+sub draw_repeats {
+    my ($repeats_file) = @_;
+    warn "drawing repeats\n";
+    open(FILE, "$repeats_file") or die "$repeats_file: $!";
+    my $header = <FILE>;
+    my $repeat_num = 0;
+    my %ranges;
+    while (<FILE>) {
+	my ($gen1, $s1, $e1, $gen2, $s2, $e2, $len, $strand) = split /\s+/;
+	next if $gen1 eq $gen2 && $s1 == $s2 && $e1 == $e2;
+	if (0) {
+	    $repeat_num++;
+	    draw_repeat($gen1, $s1, $e1, $repeat_num);
+	    draw_repeat($gen2, $s2, $e2, $repeat_num);
+	}
+	else {
+	    range_add($s1, $e1, $ranges{$gen1});
+	    range_add($s2, $e2, $ranges{$gen2});
+	}
+	if (0) {
+	    # draw line to matching repeat
+	    my $mid1 = ($e1 + $s1)/2;
+	    my $mid2 = ($e2 + $s2)/2;
+	    my $ang1 = get_angle2($gen1, $mid1);
+	    my $ang2 = get_angle2($gen2, $mid2);
+	    my $mult1 = get_mult($gen1);
+	    my $mult2 = get_mult($gen2);
+	    my ($x1, $y1) = draw_gd::polar_to_cartesian($mult1 * 91 / 2, $ang1);
+	    my ($x2, $y2) = draw_gd::polar_to_cartesian($mult2 * 91 / 2, $ang2);
+	    printf "line %s %s %s %s blue 5\n", $xc + $x1, $yc + $y1, $xc + $x2, $yc + $y2;
+	}
+    }
+    for my $genome (keys %ranges) {
+	range_merge(100, $ranges{$genome});
+	my $range = $ranges{$genome};
+	while (my ($s, $e) = splice(@$range, 0, 2)) {
+	    $repeat_num++;
+	    draw_repeat($genome, $s, $e, $repeat_num);
+	}
+    }
+}
+
+sub draw_repeat {
+    my ($genome, $s1, $e1, $num) = @_;
+    my $color = 'blue'; # get_color("repeat-$num");
+    my $mult = get_mult($genome);
+    my $tsize = $genome{$genome}{'size'};
+die "repeat end [$e1] > tsize [$tsize] for genome [$genome]" if $e1 > $tsize;
+    my @ang = get_angle($tsize, $s1, $e1);
+    printf "radial_box $xc $yc @ang %s %s $color\n", 92 * $mult, 1 * $mult;
+}
+
+#
+#   return "angle" from scale: 0 - 1
+#
+sub get_angle2 {
+    my ($gen, $pos) = @_;
+    my $mult = get_mult($gen);
+    my $tsize = $genome{$gen}{'size'};
+    confess "tsize is 0 for genome $gen" if $tsize == 0;
+    my $ang = ($pos - $min) / ($tsize - $min + 1);
+    return $ang;
+}
+
+sub get_angle {
+    my ($max, @pos) = @_;
+    my @angles;
+    for my $pos (@pos) {
+	my $ang = ($pos - $min) / ($max - $min + 1);
+	push(@angles, $ang);
+    }
+    return sort {$a <=> $b} @angles;
+}
+
+sub get_mult {
+    my ($my_genome) = @_;
+    confess "bad genome [$my_genome]" if $my_genome eq '';
+    my @genomes = sort {
+	$genome{$b}{'size'} <=> $genome{$a}{'size'}
+    } keys %genome;
+    my $index;
+    for ($index = 0; $index <= $#genomes; $index++) {
+	my $gen = $genomes[$index];
+	$genome{$gen}{'order'} = $index;
+    }
+    $index = $genome{$my_genome}{'order'};
+    my $mult = 1.07 * (.85 ** $index);
+    return $mult;
+}
+
+sub round_to {
+    my ($val, $multiple) = @_;
+    return int($val / $multiple + .5) * $multiple;
+}
+
+sub get_num {
+    my ($s) = @_;
+    if ($s >= 1000000) {
+	$s = sprintf "%.2f", ($s / 1000000);
+	$s = remove_zeroes($s) . "M";
+    }
+    else {
+	$s = sprintf "%.2f", ($s / 1000);
+	$s = remove_zeroes($s) . "K";
+    }
+    return $s;
+}
+
+sub remove_zeroes {
+    my ($s) = @_;
+    return '0' if $s == 0;
+    my @s = split //, $s;
+    while ($s[0] eq '0') { shift(@s); }
+    while ($s[-1] eq '0') { pop(@s); }
+    while ($s[-1] eq '.') { pop(@s); }
+    my $sss = join('', @s);
+    return join('', @s);
+}
+
+
+sub get_color {
+    my ($name) = @_;
+    return $colors{$name} if $colors{$name};
+    my ($best, $best_dist, $loops);
+    while ($loops < 100) {
+	my $color = int(rand(2**24));
+	my $red = $color & 255;
+	$color >>= 8;
+	my $green = $color & 255;
+	$color >>= 8;
+	my $blue = $color & 255;
+	next if $red + $green + $blue < 300;
+	if (scalar %colors == 0) {
+	    $best = join("/", $red, $green, $blue);
+	    $best_dist = "first";
+	    last;
+	}
+	my $min_dist;
+	for my $color (values %colors) {
+	    my ($r, $g, $b) = split m|/|, $color;
+	    my $dist = min(abs($r - $red), min(abs($g - $green), abs($b - $blue)));
+	    my $dist = abs($r - $red) + abs($g - $green) + abs($b - $blue);
+	    $min_dist = $dist if (! defined $min_dist || $dist < $min_dist);
+	}
+	if ($min_dist > $best_dist) {
+	    $best_dist = $min_dist;
+	    $best = join("/", $red, $green, $blue);
+	}
+	$loops++;
+    }
+warn "colors{$name} = $best, dist $best_dist;\n";
+    $colors{$name} = $best;
+    return $colors{$name};
+}
+
+sub sort_contigs {
+    my @contigs = @_;
+    my %contigs;
+    my @result;
+    warn "sorting contigs\n";
+    for my $i (0 .. $#contigs) {
+	my $c = $contigs[$i];
+	my ($genome, $what, $start, $end, $len, $name) = split /\t/, $c;
+	$m->add_marker($genome, '+', $start, $end, $i);
+	$contigs{$genome}{$i} = 1;
+    }
+    for my $g (keys %contigs) {
+	my $current_level = 0;
+	my $tsize = $genome{$g}{'size'};
+	confess "tsize for [$g] is zero [$tsize]!" if $tsize == 0;
+	my $range = [ -100, $tsize + 100];	# all 100 on each side
+
+	while (keys %{$contigs{$g}}) {
+	    my $num = keys %{$contigs{$g}};
+	    print STDERR ".";
+
+	    my ($best_fit, $best_start, $best_end, $best_index, $best_marker_index);
+	    my @range = @$range;
+	    while (@range) {
+		my ($s, $e) = splice(@range, 0, 2);
+
+		my @hits = $m->get_covering_marker_indexes('all_marker', $g, '+', $s, $e);
+		for my $mi (@hits) {
+		    my ($genome, $strand, $start, $end, $i) = $m->get_marker($mi);
+		    next if ! defined $contigs{$g}{$i};
+
+		    die "huh?" if $start < $s or $end > $e;
+		    my $len = ($end - $start + 1);
+		    my $fit = ($e - $s + 1) - $len;
+		    if ($best_fit eq '' or $fit < $best_fit) {
+			$best_fit = $fit;
+			$best_index = $i;
+			$best_marker_index = $mi;
+			$best_start = $start;
+			$best_end = $end;
+			$best_level = $current_level;
+			$best_len = $len;
+		    }
+		}
+	    }
+	    if ($best_index ne '') {
+		range_sub($best_start + 50, $best_end - 50, $range);
+		if (0) {
+		    range_add($best_start + int(.2 * $best_len + .5),
+			$best_end - int(.2 * $best_len + .5), $range);
+		}
+		my $best = $contigs[$best_index];
+		delete $contigs{$g}{$best_index};
+		push(@result, "$best_level\t$best");
+		$m->delete_marker($best_marker_index);
+	    }
+	    else {
+		warn "could not fit anybody else on level $current_level\n";
+		if (@$range == 2 && $range->[1] == $tsize) {
+		    warn "all contigs are too big for genome! [-100 to $tsize + 100]\n";
+		    exit 1;
+		}
+		$current_level++;
+		if ($current_level >= 30) {
+		    warn "too many levels!";
+		    last;
+		}
+		warn "level $current_level, range 1 - $tsize\n";
+		$range = [ -100, $tsize + 100 ];
+	    }
+	}
+    }
+    warn "done sorting contigs\n";
+    return @result;
+}
+
+sub sort_contigs_by_length {
+    my @contigs = @_;
+    my %contigs;
+    my @result;
+    warn "sorting contigs\n";
+    @contigs = sort {
+	(split /\t/, $b)[4] <=> (split /\t/, $a)[4];
+    } @contigs;
+    my %ranges;
+    for my $contig (@contigs) {
+	my ($g, $what, $start, $end, $len, $name) = split /\t/, $contig;
+	my $tsize = $genome{$g}{'size'};
+	my $allow = $tsize / 10000;
+	confess "tsize for [$g] is zero [$tsize]!" if $tsize == 0;
+	my $contig_range = [ $start, $end ];
+	for (my $level = 0; ; $level++) {
+	    if ($ranges{$g}[$level] eq '') {
+		$ranges{$g}[$level] = [ -100, $tsize + 100];	# add 100 to each side, I don't remember why
+	    }
+	    my $tmp = range_subtract($contig_range, $ranges{$g}[$level]);
+	    # print STDERR "[$start $end]-[@{$ranges{$g}[$level]}]=[@$tmp] ";
+	    if (@$tmp == 0) { # covered
+		$ranges{$g}[$level] = range_subtract($ranges{$g}[$level], $contig_range);
+		push(@result, "$level\t$contig");
+		last;
+	    }
+	    next if $len < $allow;
+	    my $ok = 1;
+	    while (my @r = splice(@$tmp, 0, 2)) {
+		if (($r[0] != $start && $r[1] != $end) || ($r[1] - $r[0]) > $allow) {
+		    $ok = 0;
+		    last;
+		}
+	    }
+	    if ($ok) {
+		$ranges{$g}[$level] = range_subtract($ranges{$g}[$level], $contig_range);
+		push(@result, "$level\t$contig");
+		last;
+	    }
+	}
+    }
+    warn "\ndone sorting contigs\n";
+    return @result;
+}
+
+sub display_name {
+    my ($name) = @_;
+    if (defined $opt_n) {
+	if ($opt_n eq '') {
+	    $name = '';
+	}
+	elsif ($name =~ /$opt_n/) {
+	    $name = $&;
+	}
+	else {
+	    $name = '';
+	}
+    }
+    return $name;
+}

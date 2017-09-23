@@ -1,0 +1,19 @@
+#!/usr/bin/perl
+
+require 'fasta.pl';
+
+@ARGV == 1 || die "\nUsage: $0 coverage.fasta > output.txt\n\n";
+
+my $file = shift;
+
+open(FILE, $file) or die "$file: $!";
+print "pos\tdepth\tdescription\n";
+while ((my ($head, $seq) = read_fasta(FILE)) == 2) {
+    my @nums = split /\s+/, $seq;
+    my $pos = 1;
+    for my $num (@nums) {
+	print "$pos\t$num\t$head\n";
+	$head = '';
+	$pos++;
+    }
+}

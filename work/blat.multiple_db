@@ -1,0 +1,43 @@
+#!/usr/bin/perl
+
+require 'blat.pl';
+require 'misc.pl';
+
+my @options;
+
+for my $arg (@ARGV) {
+    if ($arg =~ /^-/) {
+	push(@options, $arg);
+    }
+    else {
+	push(@args, $arg);
+    }
+}
+@ARGV = @args;
+
+my $infile = shift;
+my $outfile = shift;
+
+my $tmpdir = "/tmp/blat.multiple_db.$$";
+system("mkdir -p $tmpdir") == 0 || exit 1;
+
+if (@args >= 3) {
+    for my $db (@ARGV) {
+	my $db_base = $db;
+	$db_base =~ s|.*/||;
+	$db_base =~ s|\..*||;
+	warn "blat.filtered '$db' '$infile' '$tmpdir/$db_base.out' @options\n";
+	exit 1 if (system("blat.filtered '$db' '$infile' '$tmpdir/$db_base.out' @options") != 0);
+    }
+    shell("unsplit_files +h $tmpdir/*.out > $outfile") || exit 1;
+    exit 0;
+}
+else {
+    print STDERR "\nUsage: $0 [options] infile outfile databases ... [options]
+
+    Runs blat.filtered sequentially on multiple databases.
+
+    Run \"blat.filtered\" and \"blat\" for list of options.
+
+";
+}

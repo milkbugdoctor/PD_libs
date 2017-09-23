@@ -1,0 +1,75 @@
+#!/bin/bash
+
+. subs.sh
+
+prefix=mapped
+options=
+
+break=400
+while getopts b:l:n:p:rsv foo ; do
+    if [ "$foo" = 'b' ]; then
+        break="$OPTARG"
+    elif [ "$foo" = 'n' ]; then
+        options="-n '$OPTARG'"
+    elif [ "$foo" = 's' ]; then
+        options="-s"
+    elif [ "$foo" = 'l' ]; then
+        link="-l '$OPTARG'"
+    elif [ "$foo" = 'p' ]; then
+        prefix="$OPTARG"
+    elif [ "$foo" = 'r' ]; then
+        repeats="-r"
+    elif [ "$foo" = 'v' ]; then
+        vertical="-v"
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -lt 2 ]; then
+    echo -e "\nUsage: $0 [options] reference.fa contigs.fa ...
+
+    Options:
+	-b break	nucmer break length (default 400)
+	-l pattern	link split contigs matching pattern
+	-n pattern	printable portion of contig name
+	-p prefix
+        -r              draw repeats if reference.fa.repeats exists
+	-s              draw longest contigs first
+"
+    exit 1
+fi
+
+ref="$1" ; shift
+
+if [ ! -s "$ref" ]; then
+    echo -e "$ref does not exist or is empty" 1>&2 ; exit 1
+fi
+
+if need "$ref" "$ref.headers"; then
+    run "fasta.get_headers '$ref' > '$ref.headers'"
+fi
+
+if need "$ref" "$ref.repeats"; then
+    run "amos.get_repeats '$ref' > '$ref.repeats'"
+fi
+
+contigs=$prefix.contigs.fa
+cat "$@" > /tmp/contigs.$$
+if ! cmp /tmp/contigs.$$ $contigs 2> /dev/null; then
+    cat "$@" > $contigs
+fi
+rm -f /tmp/contigs.$$
+
+if need "$ref" "$contigs" $prefix.delta.q; then
+    run "nucmer.get_best_hits -b $break -p $prefix $ref $contigs"
+fi
+if need "$ref" $prefix.genome-coverage.txt; then
+    run "amos.get_genome_coverage '$ref' > $prefix.genome-coverage.txt"
+fi
+if [ "$repeats" -a -s "$ref.repeats" ]; then
+    repeats="-r '$ref.repeats'"
+else
+    repeats=
+fi
+run "draw_delta_coverage $repeats $vertical $options $link -g $prefix.genome-coverage.txt $prefix.delta.q $prefix.q"
+

@@ -1,0 +1,54 @@
+#!/bin/bash
+
+ext=only_me
+
+if [ $# -lt 3 ]; then
+    echo -e "\nUsage: $0 col files...
+
+    Copy lines that have unique value in <col> into filename.only-mine.
+
+    Unique value must not occur in any other file listed.
+
+"
+    exit 1
+fi
+
+col="$1" ; shift
+
+if test "$col" -ge 1 2> /dev/null; then
+    cols="cols"
+    numeric=1
+else
+    cols="ncols -h"
+fi
+
+for i in $*
+do
+    base=`basename $i`
+    file=/tmp/$base.$ext.$$
+    $cols $col < $i | sort -u > $file
+done
+
+for i in $*
+do
+    base=`basename $i`
+    file=/tmp/$base.$ext.$$
+    for j in $*
+    do
+	if [ "$i" != "$j" ]; then
+	    base2=`basename $j`
+	    file2=/tmp/$base2.$ext.$$
+	    comm -23 $file $file2 > /tmp/$ext.$$
+	    mv /tmp/$ext.$$ $file
+	fi
+    done
+done
+
+for i in $*
+do
+    base=`basename $i`
+    file=/tmp/$base.$ext.$$
+    echo "cols.get_matching $col $i < $file > $i.only-mine"
+    cols.get_matching $col $i < $file > $i.only-mine
+    rm -f $file
+done

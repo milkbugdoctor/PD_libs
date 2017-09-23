@@ -1,0 +1,143 @@
+#!/usr/bin/perl
+
+use Carp;
+use Getopt::Std;
+getopts('cfp:P:o:r');
+
+$pad = $opt_p || $opt_P;
+$circular = $opt_c;
+
+@ARGV == 6 || die "\nUsage: $0 [options] genes.txt sequences.fa <chr> start-col end-col strand-col > outfile.txt
+
+    Options:
+	-o prefix	prefix for output columns
+	-p bases	add pad columns before and after
+	-P bases	pad sequence without creating separate columns
+	-c		circular
+	-f		ignore errors
+	-r		allow start/end to be reversed on - strand
+
+    Parameters:
+	<chr>		name of contig sequence, or column which contains sequence name	
+
+    Adds columns: 'start', 'end', 'seq', and optionally 'upstream' and 'downstream'
+
+";
+
+use Columns;
+use Fasta;
+require 'misc.pl';
+require 'primers.pl';
+
+my $genes_file = shift;
+my $seq_file = shift;
+my $id_col = shift;
+my $start_col = shift;
+my $end_col = shift;
+my $strand_col = shift;
+
+my $fasta = Fasta::new($seq_file);
+$fasta->get_seq_positions(1);
+
+if ($opt_p) {
+    $upstream_col = $opt_o ? "${opt_o}upstream" : 'upstream';
+    $downstream_col = $opt_o ? "${opt_o}downstream" : 'downstream';
+    $seq_col = $opt_o ? "${opt_o}seq" : 'seq';
+}
+elsif ($opt_P) {
+    $out_start_col = $opt_o ? "${opt_o}start" : 'pad_start';
+    $out_end_col = $opt_o ? "${opt_o}end" : 'pad_end';
+    $seq_col = $opt_o ? "${opt_o}seq" : 'pad_seq';
+}
+else {
+    $seq_col = $opt_o ? "${opt_o}seq" : 'seq';
+}
+
+my $cols = Columns::new($genes_file);
+my $has_id = $cols->has_col($id_col);
+$cols->must_all($start_col, $end_col, $strand_col);
+$cols->add_col($out_start_col) if $out_start_col;
+$cols->add_col($out_end_col) if $out_end_col;
+$cols->add_col($upstream_col) if $upstream_col;
+$cols->add_col($seq_col) if $seq_col;
+$cols->add_col($downstream_col) if $downstream_col;
+$cols->print_header(STDOUT);
+while (my $row = $cols->get_row()) {
+    my ($first, $last, $strand) = $cols->get_col($row, $start_col, $end_col, $strand_col);
+    my $id = $has_id ? $cols->get_col($row, $id_col) : $id_col;
+    if ($strand !~ /^[-+]$/) {
+	warn "bad strand '$strand' in @$row" if $strand !~ /^[-+]$/;
+	next if $opt_f;
+	exit 1;
+    }
+    if ($start_col eq $end_col) {
+	$first =~ /(\d+)[^\d]+(\d+)/;	# parse num..num
+	($first, $last) = ($1, $2);
+    }
+    my ($start, $end, $upstream, $downstream, $orf);
+    if ($first > $last && $strand eq '-') {
+	($last, $first) = ($first, $last);
+	$cols->set_col($row, $start_col, $first);
+	$cols->set_col($row, $end_col, $last);
+    }
+    ($start, $end) = ($first, $last);
+    $first = $first - $pad;
+    $first = max(1, $first) if ! $circular;
+    $last += $pad;
+warn "$loc, first $first start $start end $end last $last\n" if $debug;
+    my $len = $last - $first + 1;
+    warn "bad length $len for @$row\n" if $len <= 0;
+    next if $len <= 0;
+    if ($circular) {
+	$seq = $fasta->get_seq($id);
+	my $chr_len = length($seq);
+	$seq = $seq . $seq . $seq;
+	$seq = substr($seq, $chr_len + $first - 1, $len);
+	my $seq_len = length($seq);
+	die "seq_len $seq_len != len $len" if $seq_len != $len;
+    }
+    else {
+	$seq = $fasta->get_seq($id, $first, $len);
+    }
+    my $is_qual;
+    if (Fasta::is_qual($seq)) {
+	$is_qual = 1;
+	$seq = Fasta::pack_qual($seq);
+    }
+    warn "seq len is not $len" if length($seq) != $len;
+    $last = $first + length($seq) - 1;
+    if ($strand =~ /^-/) {
+	if ($is_qual) {
+	    $seq = reverse($seq);
+	}
+	else {
+	    $seq = rc($seq);
+	}
+	$upstream = substr($seq, 0, $last - $end);
+	$downstream = substr($seq, $last - $start + 1);
+	$orf = substr($seq, $last - $end, $end - $start + 1);
+    }
+    else {
+	$upstream = substr($seq, 0, $start - $first);
+	$downstream = substr($seq, $end - $first + 1);
+	$orf = substr($seq, $start - $first, $end - $start + 1);
+    }
+    if ($is_qual) {
+	$seq = Fasta::unpack_qual($seq);
+	$upstream = Fasta::unpack_qual($upstream);
+	$downstream = Fasta::unpack_qual($downstream);
+	$orf = Fasta::unpack_qual($orf);
+    }
+    $cols->set_col($row, $upstream_col, $upstream) if $upstream_col;
+    if ($opt_P) {
+	$cols->set_col($row, $seq_col, $upstream . $orf . $downstream);
+	$cols->set_col($row, $out_start_col, $start - length($upstream)) if $out_start_col;
+	$cols->set_col($row, $out_end_col, $end + length($downstream)) if $out_end_col;
+    }
+    else {
+	$cols->set_col($row, $seq_col, $orf)
+    }
+    $cols->set_col($row, $downstream_col, $downstream) if $downstream_col;
+    $cols->print_row(STDOUT, $row);
+}
+close GENES;

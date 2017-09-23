@@ -1,0 +1,32 @@
+#!/usr/bin/perl
+
+(@ARGV >= 1) || die "\nUsage: $0 bank-dir [infile] > outfile\n\n";
+
+my $bank_dir = shift;
+my $id_col = "rid";
+
+my $mapfile = "$bank_dir/RED.map";
+
+use Columns;
+
+my %hash;
+open(MAP, $mapfile) or die "$mapfile: $!";
+warn "reading map file...\n";
+while (<MAP>) {
+    chomp;
+    next if /^RED/;
+    my ($a, $b, $real_id) = split /\s+/;
+    die "$a ne $b" if $a ne $b;
+    $hash{$a} = $real_id;
+}
+warn "done reading map file\n";
+
+my $c = Columns::new(ARGV);
+$c->add_col('rname');
+$c->print_header(undef);
+while (my $row = $c->get_row()) {
+    my ($id) = $c->get_col($row, $id_col);
+    my $id = $hash{$id};
+    $c->set_col($row, 'rname', $id);
+    $c->print_row(undef, $row);
+}

@@ -1,0 +1,72 @@
+#!/usr/bin/perl
+
+require 'fasta.pl';
+require 'sequences.pl';
+require 'ranges.pl';
+
+use Getopt::Std;
+getopts('ce:o:');
+
+@ARGV == 4 || die "\nUsage: $0 [options] infile.fa read-len coverage prefix
+
+    Options:
+	-c            circular
+	-o overlap    make reads overlap; default is random placement
+	-e err        err is probability of error, e.g. \".01\"
+
+    Produce random reads with quality 60
+
+";
+
+my $genome_file = shift;
+my $read_len = shift;
+my $coverage = shift;
+my $prefix = shift;
+
+warn "readlen $read_len cover $coverage overlap $opt_o\n";
+
+my $bases = 0;
+my $range = [ ];
+
+my $genome = join('', `fasta2contig -n 0 $genome_file`);
+my $genome_len = length($genome);
+$genome .= $genome if $opt_c;
+
+open(FA_OUT, ">$prefix.fa") or die "can't create $prefix.fa";
+open(QUAL_OUT, ">$prefix.fa.qual") or die "can't create $prefix.fa.qual";
+open(TXT, ">$prefix.txt") or die "can't create $prefix.txt";
+print TXT join("\t", 'id', 'strand', 'start', 'end', 'len', 'seq', 'qual'), "\n";
+my $pos = 0;
+my $count = 1;
+while ($bases < $genome_len * $coverage) {
+    my $seq = substr($genome, $pos, $read_len);
+    $len = length($seq);
+    if ($len >= .5 * $read_len) {
+	$bases += $len;
+	my $new_id = sprintf "$count.%d.$len", $pos + 1;
+	my $qual = join(" ", (60) x $len);
+	my $end = $pos + $len - 1;
+	if (rand() < $opt_e) {      # introduce an error
+	    add_error($seq, $qual);
+	    $len = length($seq);
+	}
+	print TXT join("\t", $new_id, "+", $pos, $end, $len, $seq, $qual), "\n";
+	print FA_OUT ">$new_id\n";
+	print_wrapped(FA_OUT, $seq);
+	print QUAL_OUT ">$new_id\n";
+	print_wrapped(QUAL_OUT, $qual);
+	$count++;
+	printf STDERR "%d\n", $count if $count % 10000 == 0;
+	$around = 1 if $pos + $len > $genome_len;
+	range_add($pos, $pos + $len - 1, $range);
+    }
+    if ($opt_o ne '') {
+	$pos = ($pos + $read_len - $opt_o) % $genome_len;
+    }
+    else {
+	$pos = int(rand $genome_len);
+    }
+}
+my $final = join(" ", @$range);
+my $expected = sprintf "0 %s", $genome_len - 1;
+die "coverage too low! didn't cover entire genome!\nwanted range $expected, got $final" if $final ne $expected;

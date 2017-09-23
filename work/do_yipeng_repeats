@@ -1,0 +1,46 @@
+#!/usr/bin/perl -i
+
+my $self_anneal_len = 8;
+
+require 'primers.pl';
+require 'columns.pl';
+require 'probes.pl';
+require 'yipeng.pl';
+
+$" = "\t";
+
+(@ARGV == 2) || die "\nUsage: $0 sequence-column sequence-file.txt\n\n";
+my $seq_col = shift;
+
+@repeats = &get_yipeng_repeats;
+$repeats = join('|', @repeats);
+
+my @header = get_header(*ARGV);
+print "@header\n";
+while (my @row = get_row(*ARGV)) {
+	my $seq = get_col(\@header, \@row, $seq_col);
+	next if !($seq =~ /^[ACGT]+$/i);
+	$total++;
+	if ($seq =~ /$repeats/) {
+	    $rep10++;
+	    next;
+	}
+	if ($seq =~ /AAAAAAAA|TTTTTTTT|CCCCCCCC|GGGGGGGG|GTGTGTGT|CACACACA/) {
+	    $rep8++;
+	    next;
+	}
+	if (self_anneal($self_anneal_len, $seq)) {
+	    $self++;
+	    next;
+	}
+	$kept++;
+	print "@row\n";
+}
+printf STDERR "total: %d kept: %d (%f%%) lost: rep10 %d (%f%%) rep8 %d (%f%%) self %d (%f%%)\n",
+	$total, $kept, ($kept/$total)*100,
+	$rep10, ($rep10/$total)*100,
+	$rep8, ($rep8/$total)*100,
+	$self, ($self/$total)*100;
+
+exit 0;
+

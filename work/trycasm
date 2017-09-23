@@ -1,0 +1,55 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ ! "$1" ]; then
+    echo -e "\nUsage: $0 options\n"
+    exit 1
+fi
+
+prefix=`cat .prefix` || exit 1
+
+nuc_opts="$*"
+
+eval set -- `cat $prefix.options`
+while [ "$1" -a "$2" ]
+do
+    eval "export $1='$2'"
+    shift
+    shift
+done
+
+CASM="$nuc_opts"
+
+seq="`get_link input.seq`.seq"
+
+rsync -av --delete $prefix.bank/ try.bank/
+bank-unlock try.bank
+rm -f try.bank/{LAY,CTG}*
+
+if [ -s out.delta ]; then
+    echo using out.delta 1>&2
+    run "casm-layout $CASM -b try.bank -T try.tigr -U try.layout -C try.conflicts out.delta 2> try.casm.stderr"
+else
+    run "casm-layout $CASM -b try.bank -T try.tigr -U try.layout -C try.conflicts $prefix.delta.final 2> try.casm.stderr"
+fi
+echo contigs before
+grep "^C" $prefix.layout | wc
+echo contigs now
+grep "^C" try.layout | wc
+
+run "make-consensus $CONS -b -B try.bank > try.consensus 2> try.consensus.errs"
+echo -n "forced before: "
+grep -i force log.txt | wc -l
+echo -n "forced now: "
+grep -i force try.consensus.errs | wc -l
+run "bank2fasta -b try.bank > try.fasta"
+run "draw_mapped_contigs -l '\d+' reference.fa try.fasta"
+
+# blat.filtered reference.fa try.fasta try.blat -minScore=100 -minMatch=10 -tileSize=15
+# blat.filtered reference.fa try.fasta try.blast -minScore=100 -minMatch=10 -tileSize=15 -out=blast
+# psl.get_best_hit -a qname try.blat > try.blat.best
+# echo before
+# ncols match mismatch tstart tend qgapcount qgapbases tgapcount tgapbases < $prefix.blat-best | expand -t 11
+# echo mismatches now
+# ncols match mismatch tstart tend qgapcount qgapbases tgapcount tgapbases < try.blat.best | expand -t 11

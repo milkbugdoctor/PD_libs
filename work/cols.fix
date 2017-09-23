@@ -1,0 +1,44 @@
+#!/usr/bin/perl
+
+use Cols;
+use Getopt::Std;
+getopts('h');
+
+(@ARGV >= 2 && @ARGV % 2 == 0) || die "\nUsage: $0 col expr ... < infile > outfile
+
+    Options:
+	-h	there is no input header, so use numeric column names
+
+    Valid expressions:
+
+	s/orig/new
+	tr/orig/new
+	'{some_col}'+1    =>    'col_text'+1
+
+";
+
+$in = 'STDIN';
+$out = 'STDOUT';
+
+my $cols = Cols::new($in, $opt_h);
+$cols->print_header($out);
+while (my $row = $cols->get_row()) {
+    my @args = @ARGV;
+    while (my ($col, $col_expr) = splice(@args, 0, 2)) {
+	my $expr = $col_expr;
+	while ($expr =~ /\{([^}]+)\}/) {
+	    my $param = $1;
+	    my $val = $row->{$param};
+	    $expr =~ s/\{$param\}/$val/g;
+	}
+	my $val = $row->{$col};
+	if ($expr =~ m|^s/| or $expr =~ m|^tr/|) {
+	    eval "\$val =~ $expr";
+	}
+	else {
+	    $val = eval $expr;
+	}
+	$row->{$col} = $val;
+    }
+    $cols->print_row(STDOUT, $row);
+}

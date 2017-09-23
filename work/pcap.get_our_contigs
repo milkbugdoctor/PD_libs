@@ -1,0 +1,77 @@
+#!/usr/bin/perl
+
+require 'need.pl';
+require 'fasta.pl';
+
+my $default_pattern = '\d+(:\d+-\d+,\d+-\d+)?';
+
+@ARGV >= 2 || die "\nUsage: $0 directory output-prefix [contig-name-pattern]
+
+    Pattern is anchored, so it must match entire contig name.
+    Default pattern: $default_pattern
+
+";
+
+my $dir = shift;
+my $prefix = shift;
+my $pattern = shift || $default_pattern;
+
+warn "using pattern '$pattern'\n";
+
+my %contigs;
+open(FILE, "$dir/reads.placed") || die "can't read $dir/reads.placed";
+while (<FILE>) {
+    if (/^\* $pattern /) {
+	my $pat = $&;
+	if (/ (Contig\S+)/) {
+	    $contigs{$1} = $1;
+	}
+    }
+}
+
+open(FILE, "$dir/contigs.bases") || die "can't read $dir/contigs.bases";
+open(OUT, ">$prefix.fa") || die "can't $prefix.fa";
+while ((my ($key, $desc, $seq) = read_fasta3(FILE)) == 3) {
+    if ($contigs{$key}) {
+	print OUT ">$key\n";
+	print_wrapped(OUT, $seq);
+    }
+}
+
+open(FILE, "$dir/contigs.quals") || die "can't read $dir/contigs.quals";
+open(OUT, ">$prefix.qual") || die "can't $prefix.qual";
+while ((my ($key, $desc, $seq) = read_fasta3(FILE)) == 3) {
+    if ($contigs{$key}) {
+	print OUT ">$key\n";
+	print_wrapped(OUT, $seq);
+    }
+}
+
+__END__
+
+ $prefix.merged-contigs.txt; then
+    grep " $pattern
+    get_ace_reads $prefix.ace | cols.select "{id} =~ /^$pattern\$/" \
+	| cols.change_header start qstart end qend len qlen > $tmp.contigs.txt
+    fasta.get_headers $prefix.fa > $tmp.headers
+    join_files -add len $tmp.contigs.txt $tmp.headers id \
+	| cols.select "{qlen} >= .9 * {len}" | ncols -h contig | sort -u > $prefix.merged-contigs.txt
+fi
+if need $prefix.singlets $tmp.our-singlets; then
+    fasta.get_headers $prefix.singlets | ncols id \
+	| cols.select "{id} =~ /^$pattern\$/" | tail +2 > $tmp.our-singlets
+fi
+if need $prefix.contigs $prefix.merged-contigs.txt $prefix.our-contigs.merged.fa; then
+    fasta.remove_descriptions $prefix.contigs | sed 's/>.*Contig/>Contig/' > $tmp.contigs
+    cat $prefix.merged-contigs.txt | fasta.get_matching $tmp.contigs \
+	> $prefix.our-contigs.merged.fa
+fi
+if need $prefix.singlets $tmp.our-singlets $prefix.our-contigs.singlets.fa; then
+    cat $tmp.our-singlets | fasta.get_matching $prefix.singlets \
+    | fasta.remove_descriptions > $prefix.our-contigs.singlets.fa
+    rm -f $tmp.our-singlets
+fi
+if need $prefix.our-contigs.merged.fa $prefix.our-contigs.singlets.fa $prefix.our-contigs.fa; then
+    cat $prefix.our-contigs.merged.fa $prefix.our-contigs.singlets.fa > $prefix.our-contigs.fa
+fi
+rm -f $tmp.*

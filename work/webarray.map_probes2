@@ -1,0 +1,173 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('w');
+
+my $debug = 1;
+
+$0 =~ s|.*/||;
+(@ARGV == 5) || die "
+Usage: $0 [options] gene-file probe-file probe-id-col probe-symbol-col probe-seq-col > overlaps
+
+    This program does some of the work for webarray.map_probes.
+
+    Loads genes into memory, then finds overlaps with probes.
+
+	<probe-hits>:	id chr strand start end file
+
+    Output format:
+	Adds \"gene_symbol\" column that looks like this:
+	    IR gene1 - gene2	marker hits in between gene1 and gene2
+	    gene1[/gene2]	marker overlaps genes
+        Other columns look like this:
+	    text1[/text2]
+
+    Options:
+        -w      pick the best hit for WebArray
+";
+
+use Cols;
+require 'markers.pl';
+
+my $gene_file = shift;
+my $probe_file = shift;
+my $probe_id_col = shift;
+my $probe_symbol_col = shift;
+my $probe_seq_col = shift;
+my $cover = 1; # only need to overlap gene by one base
+
+my $marker_columns = Cols::new($gene_file);
+my $probe_columns = Cols::new($probe_file);
+
+$probe_columns->add_header_comments(<<FOO
+# gene_symbol - the locus_tag from GenBank
+# gene_gene   - the gene name
+# gene_title  - the gene's product or function, plus any notes
+FOO
+);
+
+$probe_columns->add_col('gene_symbol');
+$probe_columns->add_col('probe_sequence');
+
+my @added_columns = qw/gene_gene gene_title gene_strand gene_start gene_end/;
+for my $col (@added_columns) {
+    $probe_columns->add_col($col);
+}
+$probe_columns->print_header(STDOUT);
+
+my $count = 0;
+my $markers1 = new markers('use_refs');
+$marker_columns->add_col('gene_title');
+while (my $row = $marker_columns->get_row()) {
+    my @desc;
+    push(@desc, $row->{gene_product}) if $row->{gene_product} ne '';
+    push(@desc, $row->{gene_note}) if $row->{gene_note} ne '';
+    $row->{gene_title} = join('; ', @desc);
+    die "need id for marker!" if $row->{gene_id} eq '';
+    if ($row->{gene_start} > $row->{gene_end}) {
+	die "start > end for $row->{gene_id}\n";
+	($row->{gene_start}, $row->{gene_end}) = ($row->{gene_end}, $row->{gene_start});
+    }
+    die "got bad strand [$row->{gene_strand}]\n" if $row->{gene_strand} !~ /^(\+|-)$/;
+    $markers1->add_marker($row->{gene_chr}, $row->{gene_strand},
+	$row->{gene_start}, $row->{gene_end}, $row->{gene_id}, $row);
+    $markers1->add_marker($row->{gene_chr}, 'any',
+	$row->{gene_start}, $row->{gene_end}, $row->{gene_id}, $row);
+    warn "adding marker chr=$row->{gene_chr} $row->{gene_strand} $row->{gene_start}-$row->{gene_end} id=$row->{gene_id}\n" if $debug >= 2;
+    warn "loaded $count markers\n" if $debug and ++$count % 10000 == 0;
+}
+warn "loaded $count markers\n" if $debug;
+
+my $count = 0;
+while (my $row = $probe_columns->get_row()) {
+    my $chr = $row->{chromosome};
+    my $strand = $row->{probe_strand}; # ignored
+    my $s = $row->{probe_start};
+    my $e = $row->{probe_end};
+    # warn "bad position [$chr/$strand/$s-$e] at line: $row->{row_string}" if $chr eq '' || $strand eq '' || $s eq '' || $e eq '';
+    $strand = 'any';
+
+    my $marker_strand = 'any';
+    my @markers = $markers1->get_covering_markers($cover, $chr, $marker_strand, $s, $e);
+    my $result;
+    if (@markers == 0) {
+        my $offset = ($cover > 0) ? $cover - 1 : 0;
+        my ($left)  = $markers1->get_nearest_markers($chr, $marker_strand, $s + $offset, $e - $offset, -1);
+        my ($right) = $markers1->get_nearest_markers($chr, $marker_strand, $s + $offset, $e - $offset, 1);
+        if (defined $left || defined $right) {
+            my ($ll, $rr) = ($left->[4], $right->[4]);
+            $ll = 'start' if $ll eq '';
+            $rr = 'end' if $rr eq '';
+            $result = sprintf "IR %s - %s", $ll, $rr;
+            if (0) { # don't annotate IRs
+                push(@markers, $left) if defined $left;
+                push(@markers, $right) if defined $right;
+            }
+        }
+        else {
+            $result = "";
+        }
+    }
+    else {
+        my @tmp;
+        for my $marker (@markers) {
+            my ($m_chr, $m_strand, $m_s, $m_e, $m_id) = @$marker;
+            die "chr mismatch [$m_chr] vs [$chr]" if $m_chr ne $chr;
+            push(@tmp, $m_id);
+        }
+        $result = join('/', @tmp);
+    }
+    $probe_columns->set_col($row, 'gene_symbol', $result);
+    $probe_columns->set_col($row, 'probe_sequence', $row->{$probe_seq_col});
+    for my $col (@added_columns) {
+        my $val = join('/', get_combined($col, \@markers));
+        $probe_columns->set_col($row, $col, $val);
+    }
+    if (@markers > 1) {
+        my @title;
+        for my $marker (@markers) {
+            my ($m_chr, $m_strand, $m_s, $m_e, $m_id, $gene) = @$marker;
+            push(@title, sprintf "{%s: %s}", $row->{$probe_symbol_col}, $gene->{gene_title});
+        }
+        $probe_columns->set_col($row, 'gene_title', join(' ', @title));
+    }
+    process_row($row);
+    warn "processed $count \"me\" sequences\n" if $debug and ++$count % 10000 == 0;
+}
+flush_rows();
+
+my (@rows, $last_id);
+sub process_row {
+    my ($row) = @_;
+    my $id = $row->{$probe_id_col};
+    if ($id ne $last_id) { flush_rows(); }
+    $last_id = $id;
+    push(@rows, $row);
+}
+
+sub flush_rows {
+    return if @rows == 0;
+    @rows = sort { $a->{gene_symbol} cmp $b->{gene_symbol} } @rows;
+    my @IR    = grep($_->{gene_symbol} =~ /^IR /, @rows);
+    my @genes = grep($_->{gene_symbol} !~ /^IR /, @rows);
+    @rows = (@genes, @IR);
+    if ($opt_w) {
+        @rows = (shift @rows);
+    }
+    for my $row (@rows) {
+        $probe_columns->print_row(STDOUT, $row);
+    }
+    @rows = ();
+}
+
+sub get_combined {
+    my ($col, $markers) = @_;
+    my @tmp;
+    for my $marker (@$markers) {
+        my ($m_chr, $m_strand, $m_s, $m_e, $m_id, $row) = @$marker;
+        push(@tmp, $row->{$col}) if $row->{$col} ne '';
+    }
+    return @tmp;
+}
+
+exit 0;

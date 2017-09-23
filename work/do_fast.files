@@ -1,0 +1,75 @@
+#!/bin/bash
+
+debug=
+
+if [ $# -lt 2 ]; then
+    echo -e "\nUsage: $0 template infiles > outfile
+
+	template	needs to have %s placeholder for input file
+"
+    exit 1
+fi
+
+tmpdir=/usr/local/tmp/do_fast.$$
+mkdir -p $tmpdir || exit 1
+
+cleanup()
+{
+    echo "$0: removing directory $tmpdir" 1>&2
+    rm -rf "$tmpdir"
+    exit 1
+}
+
+# ZZZ FIX
+# trap 'cleanup got signal' HUP INT KILL QUIT TERM
+
+template="$1"; shift
+
+key="do_fast.$$"
+
+outs=
+errs=
+jobtmp=`mktemp -u /tmp/tmp.XXXXXXXXXX`
+filenum=0
+for i in "$@"
+do
+    line=`printf "$template" "$i"`
+    if ! echo "$line" | fgrep "$tmp" > /dev/null; then
+	line="< $tmp $line"
+    fi
+    cat <<FOO >> $jobtmp
+	$line > $tmpdir/$filenum.o 2> $tmpdir/$filenum.e
+	status=\$?
+	exit \$status
+SEPARATOR
+FOO
+    outs="$outs $filenum.o"
+    errs="$errs $filenum.e"
+    : $((filenum++))
+done
+
+echo job.add_multiple -s SEPARATOR -l 1 "$key" $jobtmp 1>&2
+job.add_multiple -s SEPARATOR -l 1 "$key" $jobtmp
+echo waiting for "$key" 1>&2
+job.wait "$key %"
+if ! job.wait "$key %"; then
+    echo "job.wait failed: maybe one of your jobs failed" 1>&2
+    echo "retaining directory $tmpdir" 1>&2
+    echo "retaining input job file $jobtmp" 1>&2
+    exit 1
+fi
+echo recombining files... 1>&2
+if ! (cd $tmpdir ; unsplit_files +h $outs); then
+    echo "unsplit_files failed, leaving $tmpdir for inspection" 1>&2
+    echo "retaining input job file $jobtmp" 1>&2
+    exit 1
+fi
+(cd $tmpdir; cat $errs) 1>&2
+
+if [ "$debug" ] ; then
+    echo not deleting $tmpdir 1>&2
+else
+    # why sleep? I don't remember...
+    (sleep 20 ; rm -f $jobtmp; rm -rf "$tmpdir") &
+fi
+exit 0

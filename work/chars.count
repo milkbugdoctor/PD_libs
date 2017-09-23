@@ -1,0 +1,19 @@
+#!/usr/bin/perl
+
+use POSIX;
+
+# while ((my $c = getc(STDIN)) != 0) {
+while (<>) {
+    for my $c (split //) {
+	$hash{$c}++;
+    }
+}
+for my $key (sort keys %hash) {
+    my $num = $hash{$key};
+    if (isprint($key)) {
+	printf "got char %3d [$key] $num times\n", ord($key), $num;
+    }
+    else {
+	printf "got char %3d     $num times\n", ord($key), $num;
+    }
+}

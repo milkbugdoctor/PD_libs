@@ -1,0 +1,23 @@
+#!/usr/bin/perl
+
+if (@ARGV < 1) {
+        print STDERR "\n\nUsage: $0 files\n\n";
+        exit 1;
+}
+
+for $file (@ARGV) {
+	print "$file -> ";
+	open(FOO, "$file") || die "open $file";
+	$file =~ s/\..*/.fa/;	# remove extension and add .fa
+	print "$file\n";
+	open(GOO, ">$file") || die "could not create $file";
+	$file =~ s/.*\///;	# remove directory
+	$file =~ s/\..*//;	# remove extension
+	print GOO ">$file\n";
+	while (read(FOO, $foo, 70)) {
+		print GOO "$foo\n";
+	}
+	close(FOO);
+	close(GOO);
+}
+

@@ -1,0 +1,74 @@
+#!/usr/bin/perl
+#
+#   Get best tagged NimbleGen probes
+#
+
+$debug = 0;
+
+if ($ARGV[0] eq "-nd") {
+    $no_delete = shift;
+}
+(@ARGV >= 4) || die "\nUsage: $0 [-nd] probes.txt tag1 tag2 plen > output.txt
+
+	-nd	don't delete bad probes
+	tag1	left tag to be added to probe
+	tag2	right tag to be added to probe
+	plen	primer length
+
+	Adds columns:
+		probe_tagged_seq
+		3'_match
+
+	Deletes bad probes based on good_probe().
+
+";
+
+require 'columns.pl';
+require 'probes.pl';
+require 'NimbleGen.pl';
+require 'read_markers.pl';
+
+my ($filename, $tag1, $tag2, $primer_len) = @ARGV;
+
+my $fd;
+open($fd, $filename) || die "can't open $filename";
+my @header = get_header($fd);
+my $comment = get_header_comments(@header);
+my @marker_cols = find_marker_columns(\@header, "probe");
+
+$" = "\t";
+
+add_col(\@header, "3'_match");
+add_col(\@header, "probe_tagged_seq");
+print "$comment@header\n";
+
+my @marker;
+while (my @row = get_row($fd)) {
+    @marker = get_marker(\@header, \@row) or die "can't get marker in row @row";
+    my ($id, $chr, $strand, $start, $end, $len) = @marker;
+    my $seq = get_col(\@header, \@row, 'probe_seq');
+    next if ! $no_delete and ! good_probe($tag1 . $seq . $tag2);
+    my $tagged_seq = $tag1 . $seq . $tag2;
+    set_col(\@header, \@row, "probe_tagged_seq", $tagged_seq);
+    my $primer1 = substr($tagged_seq, 0, $primer_len);
+    my $primer2 = rc(substr($tagged_seq, -$primer_len));
+    my $rc = rc($seq);
+    for my $num_bases (1 .. 10) {
+	for my $primer ($primer1, $primer2) {
+	    my $three = substr($primer, -$num_bases);
+	    my $len = length($three);
+	    if ($seq =~ /$three/i or $rc =~ /$three/i) {
+		$primer_end_hit{$len}++;
+		set_col(\@header, \@row, "3'_match", $len);
+	    }
+	}
+    }
+    print "@row\n";
+}
+
+printf STDERR "seqs %d N %d 8mer %d self %d primer$num_bases %d good %d total %d\n",
+	$seq_num, $N, $rep8, $self, $good_probes, $total_probes;
+printf STDERR "primer_end_hits %primer_end_hit\n";
+
+exit 0;
+

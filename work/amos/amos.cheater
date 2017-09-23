@@ -1,0 +1,5 @@
+#!/bin/bash
+
+export CHEATER_INVOCATION=`basename $0`
+amos.java $java_opts fred.amos.Cheater "$@"
+

@@ -1,0 +1,62 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 primers
+
+    Match is when 3' end of one primer matches anywhere in another primer.
+
+";
+
+for my $seq (@ARGV) {
+    if ($seq =~ /[^ACGTacgt]/) {
+	warn "bad primer $seq\n";
+	next;
+    }
+    push(@primers, $seq);
+}
+for my $i (0 .. $#primers) {
+    for my $j (0 .. $#primers) {
+	my $match = longest_match($primers[$i], $primers[$j]);
+	my $num = $match + 0;
+	push(@{$matches{$num}}, $match);
+    }
+}
+my $best = (sort { $b <=> $a } keys %matches)[0];
+for my $pair (@{$matches{$best}}) {
+    print "$pair\n";
+}
+exit 0;
+
+
+
+
+sub has_match {
+    my ($len, $a, $b) = @_;
+    return 0 if $len == 0;
+    my $first = "\U$a";
+    my $second = "\U$b";
+    my $end = substr($a, -$len);
+    $end = reverse "\U$end";
+    $end =~ tr/ACGT/TGCA/;
+    if ($b =~ /$end/i) {
+	my $pos = length($`);
+	my $end = substr($a, -$len);
+	$end = "\L$end";
+	substr($first, -$len) = $end;
+	my $match = substr($second, $pos, $len);
+	$match = "\L$match";
+	substr($second, $pos, $len) = $match;
+	return "$len $first $second";
+    }
+    return '';
+}
+
+sub longest_match {
+    my ($a, $b) = @_;
+    for (my $len = length($a); $len >= 1; $len--) {
+	if (my $match = has_match($len, $a, $b)) {
+	    return $match;
+	}
+    }
+    return '';
+}
+

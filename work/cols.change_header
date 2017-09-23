@@ -1,0 +1,20 @@
+#!/usr/bin/perl
+
+$0 =~ s|.*/||;
+@ARGV >= 2 && @ARGV % 2 == 0
+    || die "\nUsage: $0 old-col new-col ... < infile > outfile\n\n";
+
+use Columns;
+
+my $columns = Columns::new(STDIN);
+while (my ($old, $new) = splice(@ARGV, 0, 2)) {
+    $columns->change_col($old, $new);
+}
+
+$columns->print_header(STDOUT);
+
+while (my $row = $columns->get_row()) {
+    $columns->print_row(STDOUT, $row);
+}
+close(STDIN);
+

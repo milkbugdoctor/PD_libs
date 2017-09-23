@@ -1,0 +1,32 @@
+#!/bin/bash
+
+. /usr/local/install/assembly/staden-linux-x86-1-7-1b/staden.profile
+PATH=${PATH}:/usr/local/install/assembly/staden-linux-x86-1-7-1b/linux-bin
+
+. subs.sh
+
+if [ $# -ne 1 ]; then
+    echo -e "\nUsage: $0 file.sff\n"
+    exit 1
+fi
+
+sff="$1" ; shift
+
+tmp=/tmp/sff.$$
+list=/tmp/list.$$
+
+echo -e "\ndumping $sff\n" 1>&2
+
+run "hash_sff -o $tmp $sff"
+run "hash_list $tmp > $list"
+exit
+for name in `cat $list`
+do
+    scf=/tmp/$name.$$
+    hash_extract $tmp $name > $scf && trace_dump $scf
+    echo
+    rm -f $scf
+done
+
+rm -f $tmp $list
+exit 0

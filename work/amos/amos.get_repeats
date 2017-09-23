@@ -1,0 +1,65 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+use Cols;
+use Getopt::Std;
+getopts('lm:r');
+
+require 'misc.pl';
+require 'primers.pl';
+
+@ARGV || die "\nUsage: $0 [options] input.fa > output.txt
+
+    -r		use real sequence names in output, not numbers
+    -l		loose and imperfect
+    -m min	minimum base length
+
+";
+
+my $infile = shift;
+
+my @headers = `fasta.get_headers "$infile"`;
+my $genome_counter = 0;
+for my $i (2 .. @headers) {
+    my ($ref) = split /\t/, $headers[$i - 1];
+    $genome{$ref} = ++$genome_counter;
+}
+
+if ($opt_l) {
+    $strict = "-b 20";
+}
+else {
+    $strict = "-b 1";
+}
+
+shell("nucmer -c 20 --maxmatch --nosimplify $strict $infile $infile -p /tmp/$$ 2> /dev/null") or die "nucmer: $!";
+$delta = "/tmp/$$.delta";
+if (!$strict) {
+    shell("delta-filter -i 90 $delta > $delta.90") or die "delta-filter: $!";
+    $delta = "$delta.90";
+}
+my $cmd = "amos.get_read_hits -s $delta";
+open(PIPE, "$cmd |") or die "'$cmd' failed: $!";
+print_tabbed(STDOUT, "scaff1 start1 end1 scaff2 start2 end2 len strand ident\n");
+my $cols = Cols::new(PIPE);
+while (my $r = $cols->get_row()) {
+    my $ident = $r->{'ident%'};
+    my $tname = $r->{tname};
+    my $tstart = $r->{tstart};
+    my $tend = $r->{tend};
+    my $rid = $r->{rid};
+    my $rstart = $r->{rstart};
+    my $rend = $r->{rend};
+    my $len = $r->{rlen};
+    my $trev = $r->{tdir};
+    my $rrev = $r->{rdir};
+    next if $tname eq $rid and $tstart == $rstart and $tend == $rend and $trev eq $rrev;
+    next if $len < $opt_m;
+    my $strand = ($trev == $rrev) ? "+" : "-";
+    if (!$opt_r) {
+	$tname = $genome{$tname};
+	$rid = $genome{$rid};
+    }
+    print join("\t", $tname, $tstart, $tend, $rid, $rstart, $rend, $len, $strand, $ident), "\n";
+}

@@ -1,0 +1,24 @@
+#!/usr/bin/perl
+
+
+(@ARGV == 3) || die "\nUsage: $0 file1.fa block-size overlap-size\n\n";
+my ($file, $mer_size, $overlap) = @ARGV;
+
+require 'fasta.pl';
+require 'primers.pl';
+
+open(FASTA, $file) || die "can't open $file";
+while ((my ($key, $desc, $seq) = read_fasta3(FASTA)) == 3) {
+    my $length = length($seq);
+    my $num = 0;
+    my $last = -1;
+    my $len;
+    for (my $i = 0; $i < $length; $i += $len - $overlap) {
+	    my $seq = substr($seq, $i, $mer_size);
+	    $len = length($seq);
+	    last if $i + $len <= $last;
+	    $last = $i + $len;
+	    printf ">$key:%d-%d\n", $i + 1, $last;
+	    print_wrapped(STDOUT, $seq);
+    }
+}

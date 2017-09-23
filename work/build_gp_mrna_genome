@@ -1,0 +1,91 @@
+#!/usr/bin/perl
+
+sub usage {
+    $0 =~ s|.*/||;
+    die "\nUsage: $0 { ref | kg } genome-dir mrna-output-directory
+
+	ref		build mRNAs from RefSeq exons
+	kg		build mRNAs from Known Gene exons
+	genome-dir	directory containing chr1.txt, etc.
+
+\n";
+}
+
+(($type, $genome_dir, $mrna_dir) = @ARGV) == 3 || &usage;
+
+if ($type =~ /^ref/i) {
+    $type = 'ref';
+}
+elsif ($type =~ /^kg/i) {
+    $type = 'kg';
+}
+else {
+    &usage;
+}
+
+require 'golden_path.pl';
+require 'misc.pl';
+require 'fasta.pl';
+require 'primers.pl';
+
+system "mkdir -p $mrna_dir 2> /dev/null";
+open(POS, ">$mrna_dir/mrna.txt") || die "couldn't create $mrna_dir/markers.txt";
+print_tabbed(POS, "mrna_id mrna_type mrna_name");
+print_tabbed(POS, " virt_id virt_chr virt_strand virt_start virt_end virt_len virt_exons virt_num_exons");
+print_tabbed(POS, " real_id real_chr real_strand real_start real_end real_len real_exons real_num_exons\n");
+
+open(FASTA, ">$mrna_dir/mrna.fa") || die "couldn't create $mrna_dir/mrna.fa";
+
+my $last_chr;
+my $pos = 1;
+my $counter = 0;
+for my $trans (get_gp_track($type)) {
+    my ($id, $mrna, $chr, $strand, $tx_start, $tx_end, $tx_len, $exons, $introns) = split /\t/, $trans;
+    my @real_exons = split /,/, $exons;
+    my @real_introns = split /,/, $introns;
+
+    my $file = "$genome_dir/$chr.txt";
+    my $mrna_seq = "";
+    my @virt_exons;
+    if ($last_chr ne $chr) {
+	close(FOO);
+	open(FOO, ">$mrna_dir/$chr.fa") || die "can't create $mrna_dir/$chr.fa";
+	print FOO ">$chr virtual mRNA chromosome\n";
+	$pos = 1;
+	$last_chr = $chr;
+    }
+    my $virt_pos = $pos;
+    my $v_start = $pos;
+    for (my $i = 0; $i <= $#real_exons; $i++) {
+	my ($s, $l) = split /:/, $real_exons[$i];
+	$mrna_seq .= get_file_seq($file, $s, $l);
+	push(@virt_exons, sprintf "%d:%d", $virt_pos, $l);
+	$virt_pos += $l;
+    }
+    $v_end = $virt_pos - 1;
+    my $fasta_seq = ($strand eq '-') ?  rc($mrna_seq) : $mrna_seq;
+    printf FASTA ">$mrna (sense strand) id $counter virt: $chr $strand $v_start-$v_end (%d) real: " .
+	    "$chr $strand $tx_start-$tx_end\n", length($mrna_seq);
+    print_wrapped(FASTA, $fasta_seq);
+    my $len = length($mrna_seq);
+    my $end = $pos + $len - 1;
+    my $real_exons = join(",", @real_exons);
+    my $virt_exons = join(",", @virt_exons);
+    my $real_num_exons = scalar @real_exons;
+    my $virt_num_exons = scalar @virt_exons;
+    print_tabbed(POS, "$counter $type $mrna $counter $chr $strand $pos $end $len" .
+	    " $virt_exons $virt_num_exons $counter $chr $strand" .
+	    " $tx_start $tx_end $tx_len $real_exons $real_num_exons\n");
+    $mrna_seq .= "N" x 1500;
+    $len = length($mrna_seq);
+    print_wrapped(FOO, $mrna_seq);
+    $pos += $len;
+    $counter++;
+}
+close(FOO);
+close(POS);
+
+exit;
+
+command("fasta2text $mrna_dir/chr*.fa");
+command("blat_convert_fasta $mrna_dir/chr*.fa");

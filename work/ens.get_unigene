@@ -1,0 +1,20 @@
+#!/bin/ksh
+
+mysql homo_sapiens_core_16_33 <<FOO
+drop table if exists mmcc.unigene_positions;
+create table mmcc.unigene_positions
+SELECT hit_name, daf.analysis_id, a.logic_name, daf.contig_start, daf.contig_end, daf.contig_strand,
+    (daf.contig_end - daf.contig_start + 1) as length,
+    sgp.contig_ori, chr.name chr_name,
+    if (sgp.contig_ori < 0, sgp.chr_end + sgp.contig_start - daf.contig_end,
+	chr_start + daf.contig_start - sgp.contig_start) chr_start,
+    if (sgp.contig_ori < 0, sgp.chr_end + sgp.contig_start - daf.contig_start,
+	chr_start + daf.contig_end - sgp.contig_start) chr_end
+FROM dna_align_feature daf
+inner join analysis a on daf.analysis_id=a.analysis_id
+inner join contig on daf.contig_id=contig.contig_id
+inner join assembly sgp on daf.contig_id=sgp.contig_id
+inner join chromosome chr using (chromosome_id)
+where logic_name = "Unigene";
+
+FOO

@@ -1,0 +1,12 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 filename\n\n";
+
+use Cwd qw(cwd getcwd abs_path);
+
+my $file = shift;
+if (-l $file) {
+    chomp(my $link = `ls -l "$file"`);
+    $link =~ / -> (.*)/;
+    print "$1\n";
+}

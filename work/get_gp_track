@@ -1,0 +1,44 @@
+#!/usr/bin/perl
+#
+#   Get introns, exons, and transcripts from a Golden Path track.
+#
+
+$debug = 0;
+
+use Getopt::Std;
+getopts('c:');
+
+@ARGV >= 2 || die "\nUsage: $0 track transcripts.out
+
+    track	ens (Ensembl)
+		est (EST)
+		kg (Known Genes)
+		ref (RefSeq)
+		mi (miRNA)
+		mrna (Human mRNA)
+		uni (UniGene)
+		u95 (Affy U95 probes)
+		u133 (Affy U133 probes)
+		u133plus2 (Affy U133Plus2 probes)
+
+
+";
+my ($track, $marker_file) = @ARGV;
+
+open(MARKERS, ">$marker_file") || die "can't create '$marker_file'";
+
+require 'golden_path.pl';
+require 'misc.pl';
+
+my @cols = get_gp_track_header($track);
+grep(s/^/${track}_/, @cols);
+$" = "\t";
+
+print MARKERS "@cols\n";
+my $reader = gp_reader::new($track, $opt_c);
+my $item;
+while (($item = $reader->get_next()) ne '') {
+    print MARKERS "$item\n";
+}
+
+exit 0;

@@ -1,0 +1,103 @@
+#!/usr/bin/perl -w
+
+# convert BLAT's "maf" output format so SAM format
+#
+
+my $sample = <<FOO;
+a score=5106.000000
+s S_Abortusovis_MZ1476[S_Abortusovis_MZ1476] 2520 60 + 4690224 tatgccgacttcctgcgtgaaggattccatgtggtgacgccgaacaagaaagcgaacacc
+s zzz                                           0 58 +      58 tatgccgacttcctgcgtgaagga--ccatgtggtgacgccgaacaagaaagcgaacacc
+FOO
+
+use strict;
+use warnings;
+use Getopt::Std;
+use IO::Handle;
+
+my %opts;
+getopts('i', \%opts);
+die "\nUsage: $0 [options] [filename]
+
+    Options:
+	-i      handle Illumina paired reads
+
+" if (@ARGV == 0 && -t STDIN);
+
+my $count = 0;
+
+my @stack;
+my $last = '';
+while (<>) {
+    chomp;
+    next unless (/^s /);
+    my @cols = split; shift @cols;
+    my ($rname, $rstart, $rlen, $rstrand, $rsize, $rseq) = @cols;
+    chomp($_ = <>);
+    @cols = split; shift @cols;
+    my ($qname, $qstart, $qlen, $qstrand, $qsize, $qseq) = @cols;
+    my $qend = $qstart + $qlen;
+    my $rend = $rstart + $rlen;
+    $rstart++;
+    $qstart++;
+    # qstart and qend are reversed if strand is negative
+
+    my @s;
+    $s[0] = $qname; # query name (QNAME)
+    $s[1] = 0;
+    # see if it looks like an Illumina read
+    if ($opts{i} && $s[0] =~ m|^[^:]+:\d+:\d+:\d+:\S+#[^/]+/(\d)$|) {
+	my $which = $1;
+	$s[1] |= 1;    # paired read
+	$s[1] |= 0x08; # mate is unmapped
+	$s[1] |= 0x40 if $which == 1; # first read in pair
+	$s[1] |= 0x80 if $which == 2; # second read in pair
+	$s[0] =~ s|/\d||;
+    }
+    # see if it looks like a "St. Louis" read
+    if ($opts{i} && $s[0] =~ m/^.+[.](b1|g1)$/) {
+	my $which = $1;
+	$s[1] |= 1;    # paired read
+	$s[1] |= 0x08; # mate is unmapped
+	$s[1] |= 0x40 if $which == 'b1'; # first read in pair
+	$s[1] |= 0x80 if $which == 'g1'; # second read in pair
+	$s[0] =~ s|/\d||;
+    }
+    $s[1] |= 0x10 if $qstrand ne $rstrand;
+    @s[2..4] = ($rname, $rstart, 255);
+    @s[6..10] = ('*', 0, 0, '*', '*');
+    $s[9] = $qseq; $s[9] =~ s/-//g;
+
+    my $clip5 = $qstart - 1;
+    my $clip3 = $qsize - $qend;
+
+    my $cigar = '';
+    for my $i (1 .. length($qseq)) {
+	my $q = substr($qseq, $i - 1, 1);
+	my $r = substr($rseq, $i - 1, 1);
+	if ($q eq '-') {
+	    $cigar .= "D";
+	}
+	elsif ($r eq '-') {
+	    $cigar .= "I";
+	}
+	else {
+	    $cigar .= "M";
+	}
+    }
+    $s[5] = compress_align_string($cigar);
+    $s[5] = sprintf("%dH", $clip5) . $s[5] if $clip5 > 0; # 5'-end clipping
+    $s[5] .= sprintf("%dH", $clip3) if $clip3 > 0; # 3'-end clipping
+
+    print join("\t", @s), "\n";
+}
+
+sub compress_align_string {
+    my ($str) = @_;
+    my $result = '';
+    while ($str =~ /(D+|I+|=+|X+|M+|H+)/g) {
+        my $run = $1;
+	$result .= length($run) . substr($run, 0, 1);
+    }
+    return $result;
+}
+

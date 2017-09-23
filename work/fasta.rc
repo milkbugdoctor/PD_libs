@@ -1,0 +1,16 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 infile.fa > outfile.fa
+
+    Reverse-complement the sequences.
+
+";
+
+require 'fasta.pl';
+require 'primers.pl';
+
+while ((my ($head, $seq) = read_fasta(ARGV)) == 2) {
+    $seq = rc($seq);
+    print "$head\n";
+    print_wrapped(stdout, $seq);
+}

@@ -1,0 +1,120 @@
+#!/usr/bin/perl
+
+my $debug = 1;
+
+my $block_size = 2000;
+my $prefix = "probe";
+
+@ARGV >= 1 || die "\nUsage: $0 target [probe-file]
+
+    Remove probes is dense regions first.
+
+	target		number of probes to keep
+
+";
+
+my $target = shift;
+
+require 'misc.pl';
+require 'columns.pl';
+require 'Boxes.pm';
+
+my %box_hash;
+my @marker_array;
+
+my @header     = get_header('ARGV');
+my $comments   = get_header_comments(@header);
+my $chr_col    = find_prefixed_col(\@header, 'chr', 1, $prefix);
+my $strand_col = find_prefixed_col(\@header, 'strand', 0, $prefix);
+my $start_col  = find_prefixed_col(\@header, 'start', 1, $prefix);
+my $end_col    = find_prefixed_col(\@header, 'end', 0, $prefix);
+my $len_col    = find_prefixed_col(\@header, 'len', 0, $prefix);
+die "can't find 'end' or 'len' column"
+    if ! defined $end_col and ! defined $len_col;
+my $exact_col  = has_col(\@header, 'exact_hits');
+my $tm_col     = has_col(\@header, 'tm');
+my $avg_tm_col = has_col(\@header, 'avg_tm');
+
+$" = "\t";
+
+print_header(STDOUT, @header);
+
+my $num_probes = 0;
+while (my @row = get_row("ARGV")) {
+    my $chr        = get_col(\@header, \@row, $chr_col);
+    my $strand     = get_col(\@header, \@row, $strand_col);
+    my $start      = get_col(\@header, \@row, $start_col);
+
+    add_marker($chr, $strand, $start, @row);
+    $num_probes++;
+    warn "$num_probes\n" if $num_probes % 10000 == 0;
+}
+
+my %boxes;
+for my $strand (keys %box_hash) {
+    for my $chr (keys %{$box_hash{$strand}}) {
+	my $boxes = $box_hash{$strand}{$chr};
+	for my $i (0 .. $boxes->last_box()) {
+	    my $box = $boxes->box_ref($i);
+	    my $box_size = scalar @$box;
+	    push(@{$boxes{$box_size}}, $box) if $box_size > 0;
+	}
+    }
+}
+
+while ($num_probes > $target) {
+    warn "$num_probes\n" if $num_probes % 10000 == 0;
+    my $box_size = (sort { $b <=> $a } keys %boxes)[0];
+    my $best_box = pop @{$boxes{$box_size}};
+    delete $boxes{$box_size} if @{$boxes{$box_size}} == 0;
+    last if $box_size <= 0;
+
+    my ($best_index, $least_bad);
+    for my $index (@$best_box) {
+	my $line = $marker_array[$index];
+	my @row = split /\t/, $line;
+	my $bad = line_val(@row);
+	if (!$least_bad or $bad < $least_bad) {
+	    $least_bad = $bad;
+	    $best_index = $index;
+	}
+    }
+    splice(@$best_box, $index, 1);
+    $box_size--;
+    $num_probes--;
+    push(@{$boxes{$box_size}}, $best_box) if $box_size > 0;
+}
+
+for my $key (keys %boxes) {
+    for my $box (@{$boxes{$key}}) {
+	for my $index (@$box) {
+	    my $line = $marker_array[$index];
+	    print "$line\n";
+	}
+    }
+}
+
+sub line_val {
+    my @row = @_;
+    my $tm     = get_col(\@header, \@row, "tm");
+    my $hits   = get_col(\@header, \@row, "exact_hits");
+    my $avg_tm = get_col(\@header, \@row, $avg_tm_col);
+    my $tm_diff = abs($avg_tm - $tm);
+    my $badness = $hits * 100 + $tm_diff;
+    return $badness;
+}
+
+
+sub add_marker {
+    my ($chr, $strand, $start, @rest) = @_;
+    my $index = scalar @marker_array;
+    push(@marker_array, join("\t", @rest));
+    my $boxes = $box_hash{$strand}{$chr};
+    if (! defined $boxes) {
+	$boxes = new Boxes ($block_size, 'nohash');
+	$box_hash{$strand}{$chr} = $boxes;
+    }
+    my ($box_num) = $boxes->box_num($start);
+    $boxes->add_value($index, $box_num);
+}
+

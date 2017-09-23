@@ -1,0 +1,16 @@
+#!/usr/bin/perl
+
+use Cols;
+
+@ARGV || die "\nUsage: $0 infile.delta > chaos-outfile\n\n";
+
+my $delta = shift;
+
+open(DELTA, "delta.list $delta |") || die "[delta.list $delta] failed";
+my $cols = new Cols DELTA;
+while (my $row = $cols->get_row()) {
+    printf "%s %d %d; ", $row->{qname}, $row->{qstart}, $row->{qend};
+    printf "%s %d %d; ", $row->{rname}, $row->{rstart}, $row->{rend};
+    my $score = $row->{match} - $row->{mis};
+    printf "score = %s (%s)\n", $score, $row->{qstrand};
+}

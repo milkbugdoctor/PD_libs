@@ -1,0 +1,61 @@
+#!/usr/bin/perl
+
+use IO::Handle;
+use Getopt::Std;
+getopts('ms');
+
+if ($opt_s) {
+    $opt_s = "-d" if $opt_s;
+}
+if ($opt_m) {
+    $opt_m = "-b";
+}
+
+require 'misc.pl';
+
+(@ARGV >= 1) || die "\nUsage: $0 [options] file.delta [bank] > tabbed.txt
+
+    Options:
+	-s		include strand (orientation) information
+	-m		try to merge overlapping
+
+    If bank is specified then read names will be added.
+
+";
+
+my $delta_file = shift;
+my $bank = shift;
+
+use Columns;
+
+open(PIPE, "show-coords $delta_file -l -T -H -r $opt_s -c $opt_m |") or die "pipe: $!";
+my @cols = qw{tstart tend rstart rend tlen rlen}; 
+push(@cols, "ident%") if ! $opt_m;
+push(@cols, qw{tcov rcov tsize rsize});
+push(@cols, qw{tdir rdir}) if $opt_s;
+push(@cols, qw{tname rid});
+
+if (-d $bank) {
+    open(OUT, "| amos.add_read_name $bank") || die "amos.add_read_name: $!";
+    select OUT;
+}
+
+print join("\t", @cols), "\n";
+while (<PIPE>) {
+    chomp;
+    my @values = split /\t/;
+    my ($tstart, $tend, $rstart, $rend, $tlen, $rlen) = splice(@values, 0, 6);
+    my ($ident) = splice(@values, 0, 1) if ! $opt_m;
+    my ($tsize, $rsize, $tcov, $rcov) = splice(@values, 0, 4);
+    my ($tstrand, $rstrand) = splice(@values, 0, 2) if $opt_s;
+    my ($tname, $rid) = splice(@values, 0, 2);
+
+    ($tstart, $tend) = sort { $a <=> $b } ($tstart, $tend);
+    ($rstart, $rend) = sort { $a <=> $b } ($rstart, $rend);
+    my @out = ($tstart, $tend, $rstart, $rend, $tlen, $rlen);
+    push(@out, $ident) if ! $opt_m;
+    push(@out, $tcov, $rcov, $tsize, $rsize);
+    push(@out, $tstrand, $rstrand) if $opt_s;
+    push(@out, $tname, $rid);
+    print join("\t", @out), "\n";
+}

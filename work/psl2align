@@ -1,0 +1,3 @@
+#!/bin/bash
+
+exec psl2caf -t "$@"

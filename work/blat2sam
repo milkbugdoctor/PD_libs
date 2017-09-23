@@ -1,0 +1,122 @@
+#!/bin/bash
+
+. subs.sh
+
+hosts="
+    dell1 dell1 dell1 dell1 dell1 dell1 dell1 dell1
+    dell2 dell2 dell2 dell2 dell2 dell2 dell2 dell2
+    dell5 dell5 dell5 dell5 dell5 dell5 dell5 dell5
+    dell5 dell5 dell5 dell5 dell5 dell5 dell5 dell5
+    dell6 dell6 dell6 dell6 dell6 dell6 dell6 dell6
+    dell7 dell7 dell7 dell7 dell7 dell7 dell7 dell7
+    dell3 dell3
+"
+
+parallel=
+blatopts=
+samopts=
+noheader=
+while  [[ "$1" =~ ^- ]]; do
+    if [ "$1" = '-b' ]; then
+	samopts="$samopts -b"
+    elif [ "$1" = '-p' ]; then
+	parallel=1
+    elif [ "$1" = '-p2' ]; then
+	parallel=2
+    elif [ "$1" = '-h' ]; then
+        noheader=1
+    else
+	blatopts="$blatopts $1"
+    fi
+    shift
+done
+
+if [ $# -lt 2 ]; then
+    echo -e "\nUsage: $0 [options] reference query.fa [outfile]
+
+    Run BLAT and convert output to SAM or BAM format.
+
+    Options:
+	-b	output BAM instead of SAM
+	-p      run BLAT in parallel on Dell servers
+	-h	do not output SAM header
+
+    Run \"blat\" to see blat options.
+"
+    exit 1
+fi
+
+ref="$1" ; shift
+query="$1" ; shift
+outfile="$1" ; shift
+
+ext=`get_last_extension "$ref"`
+
+if [ "$ext" = .2bit ]; then
+    base=`strip_last_extension "$ref"`
+    if [ -s "$base.fa" ]; then
+	fasta="$base.fa"
+    elif [ -s "$base.fasta" ]; then
+	fasta="$base.fasta"
+    elif [ ! "$noheader" ]; then
+	echo -e "\nCould not find $base.fa or $base.fasta\n"
+	exit 1
+    fi
+else
+    fasta="$ref"
+fi
+
+if [ ! "$noheader" ]; then
+    if need $fasta $fasta.fixed; then
+	run "fasta.fix $fasta > $fasta.fixed"
+    fi
+    if need $fasta.fixed $fasta.fixed.fai; then
+	run "samtools faidx $fasta.fixed"
+    fi
+    samtools="| samtools view $samopts -S -h -t $fasta.fixed.fai -"
+fi
+
+if [ "$outfile" = stdout ]; then
+    outfile=
+fi
+if [ "$outfile" ]; then
+    out="> $outfile"
+else
+    out=
+fi
+
+if [ "$parallel" ]; then
+    tmp=/tmp/blat.commands.$$
+    rm -f $tmp
+    cwd=`pwd`
+
+    for host in $hosts
+    do
+	if [ "$parallel" = 1 ]; then
+	    blat="blat2sam -h $blatopts"
+	else
+	    blat="blat $blatopts -out=maf"
+	fi
+	cmd="$blat $ref stdin stdout"
+	if [ "`hostname -s`" = $host ]; then
+	    echo "$cmd" >> $tmp
+	elif [[ "$host" =~ dell[4] ]]; then
+	    rsync $ref $host:/tmp
+	    tmpbase=`basename "$ref"`
+	    cmd="$blat /tmp/$tmpbase stdin stdout"
+	    echo "ssh $host '$cmd'" >> $tmp
+	else
+	    echo "ssh $host 'cd $cwd && $cmd'" >> $tmp
+	fi
+    done
+    if [ "$query" = stdin ]; then
+	query=/dev/stdin
+    fi
+    if [ "$parallel" = 1 ]; then
+	run "java.multiplexer fasta $query $tmp $samtools $out"
+    else
+	run "java.multiplexer -maf fasta $query $tmp | java.maf2sam $samtools $out"
+    fi
+else
+    Run -q "blat $blatopts -out=maf $ref $query stdout | java.maf2sam $samtools $out"
+fi

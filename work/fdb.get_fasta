@@ -1,0 +1,8 @@
+#!/bin/bash
+
+if [ $# -ne 1 ]; then
+    echo -e "\nUsage: $0 read-id\n"
+    exit 1
+fi
+
+fdb.get reads $1 > $1.fa

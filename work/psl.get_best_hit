@@ -1,0 +1,108 @@
+#!/usr/bin/perl
+
+my $debug = 2;
+
+use Getopt::Std;
+getopts('acs');
+
+$contiguous = $opt_c;
+$get_all = $opt_a;
+
+$0 =~ s|.*/||;
+@ARGV == 2 || die "\nUsage: $0 [-a] [-c] column psl-infile > psl-outfile
+
+    Input must be in Fred's psl format (use psl_filter).
+
+    Sorts psl file by <column>, then finds best hit for each name in <column>.
+    \"Best hit\" is defined as the alignment with most matching bases.
+
+	-a	get all best, not just first
+	-c	best contiguous match
+	-s      ignore matches where tname eq qname
+	column	qname or tname
+
+";
+
+my $col = shift;
+
+my $other_col;
+if ($col eq 'qname') {
+    $other_col = 'tname';
+}
+elsif ($col eq 'tname') {
+    $other_col = 'qname';
+}
+else {
+    die "Column must be 'qname' or 'tname'\n";
+}
+
+use Columns;
+require 'misc.pl';
+
+open(PSL, "cat '$ARGV[0]' | sort_file $col |") or die "$!";
+my $cols = Columns::new(PSL);
+$cols->print_header(STDOUT);
+
+my ($last_class, @lines);
+while (my $row = $cols->get_row()) {
+    my $class = $cols->get_col($row, $col);
+    if ($class ne $last_class and $last_class ne '') {
+	&do_lines($last_class, \@lines);
+	@lines = ();
+    }
+    $last_class = $class;
+    push(@lines, $row);
+}
+&do_lines($last_class, \@lines);
+
+sub do_lines {
+    my ($class, $lines_ref) = @_;
+
+    my ($best_val, @best_lines);
+    for my $line (@$lines_ref) {
+	my $name = $cols->get_col($line, $other_col);
+	next if $opt_s && $name eq $class;			# dont' match self
+	my $match;
+	if ($contiguous) {
+	    $match = get_contig_match($line);
+	}
+	else {
+	    $match = $cols->get_col($line, 'match');
+	}
+	if (!@best_lines or $match > $best_val) {
+	    $best_val = $match;
+	    @best_lines = ($line);
+	}
+        elsif ($get_all and $match >= $best_val) {
+	    push(@best_lines, $line);
+	}
+    }
+    for my $best_line (@best_lines) {
+	$cols->print_row(STDOUT, $best_line) if $best_line;
+    }
+    @$lines_ref = ();
+}
+
+
+sub get_contig_match {
+    my ($row) = @_;
+    my @q_blocks = split /,/, $row->[21];
+    my @db_blocks = split /,/, $row->[22];
+    die "can't use contig option with no contigs!" if ! @q_blocks or ! @db_blocks;
+    my $max_match;
+    for my $b (0 .. $#q_blocks) {
+	my $count = 0;
+	my $q = $q_blocks[$b];
+	my $db = $db_blocks[$b];
+	my $len = length($q);
+	for my $i (1 .. $len) {
+	    my $a = substr($q, $i - 1, 1);
+	    my $b = substr($db, $i - 1, 1);
+	    if ("\U$a" eq "\U$b") {
+		$count++;
+	    }
+	}
+	$max_match = $count if ($count > $max_match);
+    }
+    return $max_match;
+}

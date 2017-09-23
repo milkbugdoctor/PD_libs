@@ -1,0 +1,16 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ $# -ne 1 ]; then
+    echo -e "\nUsage: $0 prefix\n"
+    exit 1
+fi
+
+prefix="$1" ; shift
+dir="`dirname $prefix`"
+fasta=`abs_path -1 $dir/input.seq`
+
+if need $fasta.txt $prefix.read-hits.txt $prefix.missed-reads.txt; then
+    run "join_files -r $fasta.txt $prefix.read-hits.txt id/rname | ncols -h id > $prefix.missed-reads.txt"
+fi

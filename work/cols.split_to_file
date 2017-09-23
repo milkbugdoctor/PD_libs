@@ -1,0 +1,66 @@
+#!/usr/bin/perl
+
+$debug = 0;
+
+use Getopt::Std;
+getopts('hp:f:');
+
+$opt_f = 50 if $opt_f == 0;
+
+@ARGV >= 1 || die "
+Usage: $0 [options] name-col infile
+
+    Options:
+	-h	    infile has no header
+	-p fmt      sprintf format string for output file name
+	-f num      maximum number of open files
+
+";
+
+use Cols;
+require 'misc.pl';
+
+my $col_name = shift;
+
+my (%fd_hash, %time, %created);
+
+my $c = Cols::new(ARGV, $opt_h);
+while (my $r = $c->get_row()) {
+    my $name = $r->{$col_name};
+    die "$col_name column is blank!" if $name eq '';
+    write_to_file($r, $name);
+}
+
+sub write_to_file {
+    my ($r, $name) = @_;
+    $file_name = $name;
+    $file_name = sprintf $opt_p, $name if $opt_p ne '';
+    if (!$created{$name}) {
+	warn "creating $file_name\n";
+	open(FOO, ">$file_name") or die "can't create '$file_name': $!";
+	$c->print_header(FOO);
+	close FOO;
+	$created{$name} = 1;
+    }
+    my $fd = get_fd($file_name);
+    $c->print_row($fd, $r);
+}
+
+sub get_fd {
+    my ($name) = @_;
+    if (my $fd = $fd_hash{$name}) {
+	$time{$name} = time;	# ZZZ need something more precise
+	return $fd;
+    }
+    if (keys %fd_hash >= $opt_f) {
+	my $lowest = sort { $time{$a} <=> $time{$b} } keys %time;
+	delete $time{$lowest};
+warn "closing $lowest\n";
+	close $fd_hash{$lowest};
+	delete $fd_hash{$lowest};
+    }
+warn "opening $name\n";
+    open($fd_hash{$name}, ">>$name") or die "can't open $name: $!";
+    $time{$name} = time;	# ZZZ need something more precise
+    return $fd_hash{$name};
+}

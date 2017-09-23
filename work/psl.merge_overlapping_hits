@@ -1,0 +1,110 @@
+#!/usr/bin/perl
+
+$debug = 0;
+
+our $opt_o = 1;
+use Getopt::Std;
+getopts('o:e:q');
+
+@ARGV >= 1 || die "
+Usage: $0 [options] markers.psl > outfile
+
+    Options:
+	-o bases    overlap needed to merge hits (default 1)
+                        Note: use negative number to allow gaps
+	-e b        expand hits <b> bases on each size before merging
+	-q	    only merge hits from same query sequence
+
+    Output columns: id chr start end len
+
+";
+
+use Columns;
+require 'psl.pl';
+
+my @cols = ("qname", "tstart", "tend", "tname");
+
+require 'misc.pl';
+require 'markers.pl';
+
+my ($infile) = @ARGV;
+
+warn "reading blat hits\n";
+my $c = Columns::new($infile);
+while (my $r = $c->get_row()) {
+    my ($tsize) = $c->get_col($r, 'tsize');
+    my @hits = psl_to_hits($c, $r);
+    for my $hit (@hits) {
+	my ($id, $s, $e, $len, $ref) = split /\t/, $hit;
+	if ($opt_e) {
+	    $s = max(1, $s - $opt_e);
+	    $e = min($tsize, $e + $opt_e);
+	}
+	if ($opt_q) {
+	    push(@{$genes{"$ref $id"}}, "$s $e $id");
+	}
+	else {
+	    push(@{$genes{$ref}}, "$s $e $id");
+	}
+    }
+}
+warn "done reading blat hits\n";
+
+while (1) {
+    my $did_something = 0;
+    for my $chr (keys %genes) {
+	warn "merging on $chr...\n" if $debug;
+	$did_something += &merge_transcripts($genes{$chr});
+    }
+    last if ! $did_something;
+}
+
+my @big_cols = qw{id chr start end len};
+print join("\t", @big_cols), "\n";
+
+
+my $gene_id = 0;
+for my $chr (keys %genes) {
+    for my $gene (@{$genes{$chr}}) {
+	my ($s, $e, @trans) = split /\s+/, $gene;
+	my $len = $e - $s + 1;
+	if ($opt_q) {
+	    my ($c, $id) = split / /, $chr;
+	    print join("\t", $id, $c, $s, $e, $len), "\n";
+	}
+	else {
+	    print join("\t", $gene_id, $chr, $s, $e, $len), "\n";
+	}
+	$gene_id++;
+    }
+}
+
+exit 0;
+
+#########################################################################
+
+sub merge_transcripts {
+    my ($array) = @_;
+    my $did_something = 0;
+    @$array = sort {
+	my ($a_start, $a_end) = split /\s+/, $a;
+	my ($b_start, $b_end) = split /\s+/, $b;
+	return $a_start <=> $b_start or $a_end <=> $b_end;
+    } @$array;
+    for (my $i = 0; $i < $#{$array}; $i++) {
+	my ($a_start, $a_end, @a_trans) = split /\s+/, $array->[$i];
+	my ($b_start, $b_end, @b_trans) = split /\s+/, $array->[$i + 1];
+	my $s = max($a_start, $b_start);
+	my $e = min($a_end, $b_end);
+	if ($e - $s + 1 >= $opt_o) {
+	    my $s = min($a_start, $b_start);
+	    my $e = max($a_end, $b_end);
+# warn "$a_start - $a_end [@a_trans] + $b_start - $b_end [@b_trans] -> $s $e @a_trans @b_trans\n";
+	    $array->[$i] = "$s $e @a_trans @b_trans";	# merge 
+	    splice(@{$array}, $i + 1, 1);		# remove 2nd
+	    $did_something = 1;
+	}
+    }
+    return $did_something;
+}
+

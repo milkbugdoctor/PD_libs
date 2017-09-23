@@ -1,0 +1,59 @@
+#!/bin/bash
+
+if [ $# -ne 7 ]; then
+    echo -en "
+Usage: $0 PREFIX FASTA PROBES PROBE_ID PROBE_SYMBOL PROBE_SEQ GENES
+
+Probes are read from PROBES and mapped to the FASTA file by nucmer,
+and results are stored in the file \"PREFIX.hits\".
+
+Then the probe hits are mapped to the GENES file, and the results are
+stored in \"PREFIX.gene_mapping\".
+
+The GENES file must be in the format output by \"get_ncbi_genes\", which contains the following columns:
+    gene_id gene_chr gene_strand gene_start gene_end gene_gene gene_type
+    gene_product gene_note gene_comment
+
+"
+    exit 1
+fi
+
+. subs.sh
+
+prefix="$1" ; shift
+fasta="$1" ; shift
+probes="$1" ; shift
+probe_id="$1" ; shift
+probe_sym="$1" ; shift
+probe_seq="$1" ; shift
+genes="$1" ; shift
+
+base=`basename "$prefix"`
+tmp="/tmp/$base"
+
+old_probes=$probes
+probes="$tmp.probes"
+
+if need "$old_probes" "$probes"; then
+    run "cols.add_unique_id zzz_probe_order < \"$old_probes\" > \"$probes\""
+fi
+
+hits=$prefix.hits
+if need "$fasta" "$probes" "$hits"; then
+    run "time -p nucmer.map_sequences -c 'score rname rstart rend qstrand' \
+        $probe_id $probe_seq \"$probes\" 100 \"$tmp.nucmer\" \"$fasta\" \
+        | cols.change_header \
+            rname chromosome qstrand probe_strand \
+            rstart probe_start rend probe_end > $hits"
+fi
+
+probe_cols="$probe_id chromosome probe_strand probe_start probe_end"
+
+result="$prefix.gene_mapping.all_hits"
+result2="$prefix.gene_mapping.webarray"
+if need "$probes" "$hits" "$genes" "$result"; then
+    Run -r "webarray.map_probes2 \"$genes\" \"$hits\" $probe_id $probe_sym $probe_seq | cols.delete zzz_probe_order > \"$result\""
+fi
+if need "$probes" "$hits" "$genes" "$result2"; then
+    Run -r "webarray.map_probes2 -w \"$genes\" \"$hits\" $probe_id $probe_sym $probe_seq | cols.delete zzz_probe_order > \"$result2\""
+fi

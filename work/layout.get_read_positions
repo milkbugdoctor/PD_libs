@@ -1,0 +1,26 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 infile.layout\n\n";
+
+my $layout = shift;
+
+open(INFILE, $layout) or die "$layout: $!";
+print "read_id\tcontig_id\tcontig_start\tcontig_end\tstrand\tread_start\tread_end\tread_len\tread_ident\n";
+while (<INFILE>) {
+    chomp;
+    next if ! /^C (\d+)\t(\d+)\t(\S+)\t(\S+)/;
+    my ($contig, $reads, $ref, $pos) = ($1, $2, $3, $4);
+    $pos =~ /(-?\d+)-(-?\d+)/;
+    my ($contig_start, $contig_end) = ($1, $2);
+    for my $i (1 .. $reads) {
+	my $line = <INFILE>;
+        my ($id, $start, $end, $trim1, $trim2, $perc) = split /\s+/, $line;
+	my $len = abs($end - $start) + 1;
+	my $strand = ($start <= $end) ? "+" : "-";
+	($start, $end) = ($end, $start) if $start > $end;
+	$start++;
+	$end++;
+	print join("\t", $id, $contig, $contig_start, $contig_end, 
+	    $strand, $start, $end, $len, $perc), "\n";
+    }
+}

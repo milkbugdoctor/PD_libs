@@ -1,0 +1,197 @@
+#!/usr/bin/perl
+#
+#   Note: goldenpath start positions are 0-based, but ends are 1-based
+#
+
+use Getopt::Std;
+getopts('df:F:g:km:r');
+
+my $debug = $opt_d;
+
+$old_db = "gp_nov8";
+$db = "gp_hg18";
+my $max_dist = 20000;
+
+$db = $opt_g if $opt_g;
+$refseq_db = $db;	# for refseq.pl
+
+warn "using database [$db]\n" if $debug;
+
+@ARGV == 2 || die "\nUsage: $0 [options] sequence-file prefix
+
+    Find nearby RefSeq and/or KnownGene for each marker.
+
+    Options:
+	-d		debug
+	-g db		alternate gp database (default \"$db\", prev \"$old_db\")
+	-k		want KnownGenes
+	-r		want RefSeqs
+	-f outfile	output closest RefSeq and/or KnownGene, on same line
+	-F outfile	output all nearby genes, one per line
+	-m dist		maximum distance to RefSeq or KnownGene (default $max_dist)
+
+";
+
+$max_dist = $opt_m if $opt_m;
+
+die "need -k or -r" if $opt_k eq '' && $opt_r eq '';
+die "need -f or -F" if $opt_f eq '' && $opt_F eq '';
+
+my $output_file = $opt_f;
+my $refseq_file = $opt_F;
+($input_file, $prefix) = @ARGV;
+
+require 'misc.pl';
+require 'columns.pl';
+require 'refseq.pl';
+require 'read_markers.pl';
+
+open(IN, $input_file) || die "couldn't read $input_file";
+my @header     = get_header(IN);
+my $comments   = get_header_comments(@header);
+find_marker_columns(\@header, $prefix);
+print $comments;
+
+my @gene_types;
+push(@gene_types, 'refseq') if $opt_r;
+push(@gene_types, 'known') if $opt_k;
+
+for my $gene_type (@gene_types) {
+    for my $contig ("exon", "intron", "all") {
+	warn "loading $gene_type/$contig\n" if $debug;
+	load_markers($gene_type, $contig);
+    }
+}
+
+$" = "\t";
+
+my @in_cols = ($chr_col, $start_col, $end_col, $len_col);
+
+if ($opt_f) {
+    our @out_cols = @header;
+    push(@out_cols,
+	"refseq_id", "refseq_chr", "refseq_strand", "refseq_start", "refseq_end",
+	"refseq_len", "refseq_5'", "refseq_3'", "refseq_5'_dist", "refseq_3'_dist",
+	"refseq_yp_dist", "refseq_overlaps") if $opt_r;
+    push(@out_cols,
+	"kg_id", "kg_chr", "kg_strand", "kg_start", "kg_end",
+	"kg_len", "kg_5'", "kg_3'", "kg_5'_dist", "kg_3'_dist",
+	"kg_yp_dist", "kg_overlaps",
+	"kg_affy_U133", "kg_affy_U133Plus2") if $opt_k;
+    our $out;
+    if ($opt_f =~ /stdout/i) {
+	$out = \*STDOUT;
+    }
+    else {
+	open($out, ">$opt_f") || die "couldn't create $opt_f";
+    }
+    print $out join("\t", @out_cols), "\n";
+}
+
+if ($opt_F) {
+    our @refseq_cols = (@header,
+	"gene_type", "gene_id", "gene_chr", "gene_strand",
+	"gene_start", "gene_end", "gene_len", "gene_5'", "gene_3'",
+	"gene_5'_dist", "gene_3'_dist", "gene_yp_dist", "gene_overlaps",
+	"gene_affy_U133", "gene_affy_U133Plus2");
+    our $out2;
+    if ($opt_F =~ /stdout/i) {
+	$out2 = \*STDOUT;
+    }
+    else {
+	open($out2, ">$opt_F") || die "couldn't create $opt_F";
+    }
+    print $out2 join("\t", @refseq_cols), "\n";
+}
+
+while (my @line = get_row(*IN)) {
+    my ($id, $chr, $strand, $start, $end, $len) = get_marker(\@header, \@line);
+    my @marker = ($chr, $start, $end, $len);
+    my @genes = get_nearby_genes($max_dist, $chr, $start, $end);
+    my %best;
+    for my $gene (@genes) {
+	my @gene = split /\t/, $gene;
+	my @affy = get_affy($gene[1]);
+	push(@gene, @affy);
+	warn "got @gene\n" if $debug;
+	my ($type, $dist) = @gene[0, 11];
+	warn "\ttype $type dist $dist\n" if $debug;
+	next if abs($dist) > $max_dist;
+	print $out2 join("\t", @line, @gene), "\n" if $out2;
+	my $best_dist = $best{$type}{'dist'};
+	if (! defined $best_dist or abs($dist) < abs($best_dist)) {
+	    $best{$type}{'dist'} = $dist;
+	    $best{$type}{'gene'} = [ @gene ];
+	}
+    }
+    my @best_refseq = @{$best{'refseq'}{'gene'}}[1..12];
+    my @best_known = @{$best{'known'}{'gene'}}[1..14];
+    my @row;
+    push(@row, @line);
+    push(@row, @best_refseq) if $opt_r;
+    push(@row, @best_known) if $opt_k;
+    print $out join("\t", @row), "\n";
+    $marker_count++;
+}
+
+exit 0;
+
+sub get_nearby_genes {
+    my ($max_dist, $chr, $left, $right) = @_;
+    warn "doing marker $chr $left $right dist $max_dist\n" if $debug;
+    @overlap_name = ('none', 'exon', 'intron', 'both');
+    my @result;
+    for my $gene_type (@gene_types) {
+	for my $strand ("+", "-") {
+	    warn "\tdoing $gene_type $strand\n" if $debug;
+	    my $mult = $strand . "1";
+	    my @pos = ($chr, $strand, $left, $right);
+	    my %overlap;
+	    for my $contig ("exon", "intron") {
+		my @indexes = get_covering_gene_indexes($gene_type, $contig, 'any', @pos);
+		for my $i (@indexes) {
+		    $overlap{'all'}{$i} = 1;
+		    $overlap{$contig}{$i} = 1;
+		}
+		warn "\tgot $contig indexes @indexes\n" if $debug;
+	    }
+	    for my $i (keys %{$overlap{'all'}}) {
+		my $overlap = 0;
+		$overlap |= 1 if $overlap{'exon'}{$i};
+		$overlap |= 2 if $overlap{'intron'}{$i};
+		$overlap = $overlap_name[$overlap];
+		$overlap{$i} = $overlap; # overloading hash, but that's OK
+	    }
+	    @pos = ($chr, $strand, $left - $max_dist, $right + $max_dist);
+	    my @indexes = get_covering_gene_indexes($gene_type, 'all', 'any', @pos);
+	    warn "\tgot 'all' indexes @indexes\n" if $debug;
+	    for my $i (@indexes) {
+		my $overlap = $overlap{$i} || 'none';
+		my @gene = get_gene_by_index($gene_type, 'all', $i);
+		my ($chr, $strand, $s, $e, $id) = @gene;
+		my ($five, $three) = ($strand eq '+') ? ($s, $e) : ($e, $s);
+		my $dist5 = min(abs($left - $five), abs($right - $five));
+		my $dist3 = min(abs($left - $three), abs($right - $three));
+		my $ypdist;
+		if ($left <= $five and $five <= $right) {
+		    $ypdist = 0;
+		}
+		elsif ($five < $left) {
+		    $ypdist = $mult * ($five - $left);
+		}
+		else {
+		    $ypdist = $mult * ($five - $right);
+		}
+		$dist5 = 0 if $left <= $five and $five <= $right;
+		$dist3 = 0 if $left <= $three and $three <= $right;
+		my @dist = ($dist5, $dist3, $ypdist);
+		my $len = $e - $s + 1;
+		@gene = ($id, $chr, $strand, $s, $e, $len, $five, $three);
+		my @ret = ($gene_type, @gene, @dist, $overlap);
+		push(@result, join("\t", @ret));
+	    }
+	}
+    }
+    return @result;
+}
+

@@ -1,0 +1,28 @@
+#!/usr/bin/perl
+
+if ($ARGV[0] =~ /^-h/) {
+    shift;
+    $header = shift;
+}
+@ARGV == 1 || die "\n\nUsage: $0 [-h 'header'] input.txt > output.fa
+
+";
+
+my $infile = shift;
+
+if ($header eq '') {
+    $header = $infile;
+    $header =~ s/\.txt//;
+    $header =~ s|.*/||;
+}
+
+open(INFILE, $infile) or die "can't open '$infile'";
+
+print ">$header\n";
+
+my $foo;
+
+while (read(INFILE, $foo, 70)) {
+    $foo =~ s/\s+//g;
+    print "$foo\n";
+}

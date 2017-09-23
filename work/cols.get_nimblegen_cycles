@@ -1,0 +1,18 @@
+#!/usr/bin/perl
+
+require 'NimbleGen.pl';
+use Cols;
+
+@ARGV || die "\nUsage: $0 seq-col < infile > outfile\n\n";
+
+my $seq_col = shift;
+
+my $cols = Cols::new(STDIN);
+$cols->add_col('cycles');
+$cols->print_header(STDOUT);
+while (my $row = $cols->get_row()) {
+    my $seq = $row->{$seq_col};
+    my $c = NimbleGen::get_cycles($seq);
+    $row->{cycles} = $c;
+    $cols->print_row(STDOUT, $row);
+}

@@ -1,0 +1,171 @@
+#!/usr/bin/perl
+#
+#   Get introns that are always introns (wrt Known Genes).
+#   Introns can be interrupted by exons on either strand.
+#
+#   Goldenpath start positions are 0-based, but ends are 1-based.
+#
+
+$debug = 1;
+
+@ARGV >= 3 || die "\nUsage: $0 markers.in introns.out intron-markers.out\n\n";
+
+my ($infile, $intron_outfile, $marker_outfile) = @ARGV;
+
+open(INTRONS, ">$intron_outfile") || die "can't create $intron_outfile";
+open(MARKERS, ">$marker_outfile") || die "can't create $marker_outfile";
+
+use Boxes;
+require 'misc.pl';
+require 'markers.pl';
+require 'marker_reader.pl';
+
+my @box_params = ('hash', 700);
+my $exons = markers::new(@box_params);
+my %genes;
+
+my $reader = marker_reader::new($infile,
+    'id name chr strand start end len exons introns');
+
+#
+#   Create exons and introns
+#
+while (my $row = $reader->read_marker()) {
+    ($kg_id, $kg_name, $chr, $strand, $s, $e, $len, $ex, $in) = @$row;
+    $genes{$kg_id} = join("\t", @$row);
+    for my $exon (split /,/, $ex) {
+	my ($start, $len) = split /:/, $exon;
+	my $end = $start + $len - 1;
+	$exons->add_marker($chr, $strand, $start, $end);
+    }
+    for my $intron (split /,/, $in) {
+	my ($start, $len) = split /:/, $intron;
+	my $end = $start + $len - 1;
+	push(@{$introns{$strand}{$chr}{$kg_id}}, "$start $end");
+    }
+}
+warn "done reading markers\n" if $debug;
+$| = 1;
+
+for my $strand (keys %introns) {
+    for my $chr (keys %{$introns{$strand}}) {
+	warn "strand $strand chr $chr\n" if $debug;
+	for my $kg_id (keys %{$introns{$strand}{$chr}}) {
+
+	    my @done_introns;
+	    &merge_introns($introns{$strand}{$chr}{$kg_id});
+	    do {
+		$no_change = 1;
+		my @new_introns;
+		for my $intron (@{$introns{$strand}{$chr}{$kg_id}}) {
+		    my @split_intron;
+		    my ($i_start, $i_end) = split / /, $intron;
+		    my $intron_changed = 0;
+		    my @exons = $exons->get_covering_markers('any', $chr, "+", $i_start, $i_end);
+		    my @exons2 = $exons->get_covering_markers('any', $chr, "-", $i_start, $i_end);
+		    push(@exons, @exons2); # exons from both strands
+		    for my $exon (@exons) {
+			my @exon = split /\t/, $exon;
+			my ($ex_chr, $ex_strand, $ex_start, $ex_end) = @exon;
+			my $left = max($ex_start, $i_start);
+			my $right = min($ex_end, $i_end);
+			if ($left <= $right) {
+			    if ($i_start < $left) {
+				my $new = sprintf("%d %d", $i_start, $left - 1);
+				push(@split_intron, $new);
+			    }
+			    if ($i_end > $right) {
+				my $new = sprintf("%d %d", $right + 1, $i_end);
+				push(@split_intron, $new);
+			    }
+			    $intron_changed = 1;
+			    last;
+			}
+			else {
+			    die "left > right? huh?";
+			}
+		    }
+		    if ($intron_changed) {
+			push(@new_introns, @split_intron);
+		    }
+		    else {
+			push(@done_introns, $intron);
+		    }
+		}
+		&merge_introns(\@new_introns);
+		if (@new_introns) {
+		    $no_change = 0;
+		    @{$introns{$strand}{$chr}{$kg_id}} = @new_introns;
+		}
+	    } until $no_change;
+	    @{$introns{$strand}{$chr}{$kg_id}} = @done_introns;
+
+	}
+    }
+}
+
+undef $exons;
+
+my %unique_introns;
+for my $strand (keys %introns) {
+    for my $chr (keys %{$introns{$strand}}) {
+	for my $kg_id (keys %{$introns{$strand}{$chr}}) {
+	    &merge_introns($introns{$strand}{$chr}{$kg_id});
+	    for my $intron (@{$introns{$strand}{$chr}{$kg_id}}) {
+		my @intron = split / /, $intron;
+		my ($intron_start, $intron_end) = @intron;
+		$" = "\t";
+		push(@{$unique_introns{"$chr\t$strand\t@intron"}}, $kg_id);
+	    }
+	}
+    }
+}
+
+my $intron_id = 0;
+my %unique_genes;
+print INTRONS join("\t", qw{intron_id intron_chr intron_strand intron_start
+	intron_end intron_len kg_ids}), "\n";
+for my $intron (keys %unique_introns) {
+    my ($chr, $strand, $intron_start, $intron_end) = split /\t/, $intron;
+    my $intron_len = $intron_end - $intron_start + 1;
+    my $kg_ids = join(",", @{$unique_introns{$intron}});
+    print INTRONS join("\t", $intron_id, $chr, $strand, 
+	    $intron_start, $intron_end, $intron_len, $kg_ids), "\n";
+    for my $kg_id (@{$unique_introns{$intron}}) {
+	push(@{$unique_genes{$kg_id}}, $intron_id);
+    }
+    $intron_id++;
+}
+
+print_tabbed(MARKERS, "kg_id kg_name kg_chr kg_strand kg_start kg_end kg_len intron_ids\n");
+for my $kg_id (keys %unique_genes) {
+    my $gene = $genes{$kg_id};
+    my ($g_id, $g_name, $g_chr, $g_strand, $g_start, $g_end, $g_len)
+	= split /\t/, $gene;
+    $g_start++;
+    my @intron_ids = @{$unique_genes{$kg_id}};
+    my $intron_ids = join(",", @intron_ids);
+    print MARKERS join("\t", $g_id, $g_name, $g_chr, $g_strand, 
+	$g_start, $g_end, $g_len, $intron_ids), "\n";
+}
+
+exit 0;
+
+#########################################################################
+
+#
+#   merge identical introns
+#
+sub merge_introns {
+    my ($array) = @_;
+    @$array = sort {
+	my ($a_start, $a_end) = split / /, $a;
+	my ($b_start, $b_end) = split / /, $b;
+	return $a_start <=> $b_start or $a_end <=> $b_end;
+    } @$array;
+    for (my $i = 0; $i <= $#{$array}; $i++) {
+	while (${$array}[$i] eq ${$array}[$i + 1]) {
+	    splice(@{$array}, $i, 1);
+	}
+    }
+}

@@ -1,0 +1,9 @@
+#!/bin/bash
+
+if [ $# -ne 2 ]; then
+    echo -e "\nUsage: $0 ref.fa reads.fa > layout\n"
+    exit 1
+fi
+
+blat.filtered -minIdentity=0 -minScore=0 -out=pslx "$1" "$2" stdout \
+    | sort_file tname tstart/n | tee ooo | psl2layout -g 10 -

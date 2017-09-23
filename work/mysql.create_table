@@ -1,0 +1,100 @@
+#!/usr/bin/perl
+
+require 'mysql.pl';
+require 'misc.pl';
+
+@ARGV >= 2 || die "\nUsage: $0 db input-file [-c 'columns'] [-i 'indexes']
+
+    Create table from tab-separated input file.  The table name is taken
+    from the name of the input file.
+
+";
+
+my ($db, $file, @args) = @ARGV;
+
+my $args = "@args";
+if ($args =~ /-c\s+([[\w\s]+)/) {
+    @header = split(/\s+/, $1);
+}
+if ($args =~ /-i\s+([[\w\s]+)/) {
+    @indexes = split(/\s+/, $1);
+}
+
+@max_int = ();
+@non_int = ();
+
+open(FOO, $file) || die "$file";
+my @lengths;
+while (<FOO>) {
+    chomp;
+    my @line = split /\t/;
+    if (!@header) {
+	for my $col (@line) {
+	    if (!($col =~ /^[A-Za-z_0-9]+$/)) {
+		die "bad column name [$col]\n";
+	    }
+	}
+	@header = @line;
+    }
+    for (my $i = 0; $i <= $#line; $i++) {
+	my $len = length($line[$i]);
+	$lengths[$i] = $len if $len > $lengths[$i];
+	if ($line[$i] =~ /^\d+$/) {
+	    $max_int[$i] = max($line[$i], $max_int[$i]);
+	}
+	else {
+	    $non_int[$i] = 1;
+	}
+    }
+}
+
+my $table = convert($file);
+mysql_query("create database if not exists $db ; drop table if exists $db.$table");
+my $cmd = "create table $db.$table ( \n";
+my @cols;
+for (my $i = 0; $i <= $#header; $i++) {
+    my $name = convert($header[$i]);
+    if ($names{$name}) {
+	my $num = 2;
+	while ($names{"${name}_$num"}) {
+	    $num++;
+	}
+	$name .= "_$num";
+    }
+    $names{$name} = 1;
+    my $len = $lengths[$i];
+    if ($len > 255) {
+	push(@cols, "$name\ttext");
+    }
+    else {
+	if ($non_int[$i]) {
+	    $len = 1 if $len == 0;
+	    push(@cols, "$name\tvarchar($len)");
+	}
+	else {
+	    push(@cols, "$name\tinteger");
+	}
+    }
+}
+$cmd .= join(",\n", @cols) . ");\n";
+
+# print $cmd; exit;
+
+mysql_query($cmd);
+# sleep 5; # I don't know why this is necessary
+$load = "load data local infile '$file' into table $db.$table ".
+    "fields optionally ENCLOSED BY '\"' ignore 1 lines\n";
+print mysql_query($load);
+
+for my $index (@indexes) {
+    print mysql_query("ALTER TABLE $db.$table ADD INDEX($index);");
+}
+
+sub convert {
+    my $thing = $_[0];
+    $thing =~ s/\.txt$//;
+    $thing =~ s/[\.\- ]/_/g;
+    $thing =~ s/.*\///g;
+    $thing = "\L$thing";
+    return $thing;
+}

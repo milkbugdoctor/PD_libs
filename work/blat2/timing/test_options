@@ -1,0 +1,30 @@
+#!/bin/bash
+
+chr=~/work/chr/gp.17.35/chr22.2bit
+testfile=short-test.fa
+
+ttt()
+{
+    blat2_big_query $1 60% -tileSize=$3 -minMatch=$2 \
+	-stepSize=$4 -maxGap=$5 2> /tmp/foo > /tmp/stdout
+    /usr/bin/time -p blat2_big_query $1 60% -tileSize=$3 -minMatch=$2 \
+	-stepSize=$4 -maxGap=$5 2> /tmp/foo > /tmp/stdout
+    set -- `grep real /tmp/foo`
+    time=$2
+    set -- `wc -l /tmp/stdout`
+    echo $time $1
+}
+
+sss()
+{
+    set -- `ttt $*` `ttt $*` `ttt $*`
+    avg_time=`echo $3 + $5 | bc -l`
+    echo $avg_time $2
+}
+
+echo match tile step maxgap 
+while read match tile step maxgap 
+do
+    echo match $match tile $tile step $step maxgap $maxgap
+    ttt $testfile $match $tile $step $maxgap
+done

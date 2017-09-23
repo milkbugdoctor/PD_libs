@@ -1,0 +1,149 @@
+#!/usr/bin/perl
+#
+#	adds:
+#		probe_gp_start
+#		probe_gp_end
+#		probe_gp_contigs
+#		probe_trans_id
+#		virt_num_exons
+#
+
+(@ARGV == 2) || die "\nUsage: $0 probe-file seq-file > new-probefile
+
+	Adds these columns:
+		probe_gp_start
+		probe_gp_end
+		probe_gp_contigs
+		probe_trans_id		mrna_id/virt_start/contig indexes
+		virt_num_exons
+
+";
+
+require 'columns.pl';
+require 'misc.pl';
+require 'probes.pl';
+use JoinFiles;
+
+my @join_keys = ('virt_id');
+my ($infile, $joinfile) = @ARGV;
+
+my $join = JoinFiles::new('inner', 1, $infile, $joinfile, @join_keys);
+
+$" = "\t";
+my @left_header = $join->get_header('left');
+my $left_comments = get_header_comments(@left_header);
+my @right_header = $join->get_header('right');
+add_col(\@left_header,
+	'probe_gp_start', 'probe_gp_end', 'probe_gp_contigs',
+	'probe_trans_id', 'virt_num_exons');
+print "$left_comments@left_header\n";
+
+while (($left, $right) = $join->get_match) {
+    last if $left eq '' or $right eq '';
+    die "too many lines from right side" if @$right > 1;
+    my @right = split /\t/, $right->[0];
+    my %probes;
+    for my $l (@$left) {
+	my @row = split /\t/, $l;
+	my $id = get_col(\@left_header, \@row, 'virt_id');
+	my $virt_start = get_col(\@right_header, \@right, 'virt_start');	# virt-mrna top strand
+	my $virt_len = get_col(\@right_header, \@right, 'virt_len');
+	my $virt_end = $virt_start + $virt_len - 1;
+	my $probe_start = get_col(\@left_header, \@row, 'probe_start');		# virt-mrna top strand
+	my $probe_seq = get_col(\@left_header, \@row, 'probe_seq');
+	my $strand = get_col(\@left_header, \@row, 'strand');
+	my @row = split /\t/, $right->[0];
+
+	my $exons = get_col(\@right_header, \@right, 'real_exons');
+	my @exons = split /,/, $exons;
+	my $probe_len = length($probe_seq);
+	my $probe_end = $probe_start + $probe_len - 1;
+	my $probe_offset1 = $probe_start - $virt_start;
+	my $probe_offset2 = $probe_offset1 + $probe_len - 1;
+	my ($gp_start) = map_probe($probe_offset1, @exons);
+	my ($gp_end) = map_probe($probe_offset2, @exons);
+	my ($gp_contigs, $indexes) = map_probe_contigs($probe_offset1, $probe_offset2, @exons);
+	my @gp_contigs = @$gp_contigs;
+if ($debug) {
+warn "virt_start $virt_start virt_len $virt_len virt_end $virt_end\n";
+warn "probe_start $probe_start len $probe_len end $probe_end strand $strand\n";
+warn "off1 $probe_offset1 off2 $probe_offset2\n";
+warn "exons @exons\n";
+warn "[@gp_contigs] [$indexes]\n";
+}
+	my $trans = "$id/$virt_start/$indexes";
+	my @row = split /\t/, $l;
+	set_col(\@left_header, \@row, 'probe_gp_start', $gp_start);
+	set_col(\@left_header, \@row, 'probe_gp_end', $gp_end);
+	set_col(\@left_header, \@row, 'probe_gp_contigs', join(',', @gp_contigs));
+	set_col(\@left_header, \@row, 'probe_trans_id', $trans);
+	set_col(\@left_header, \@row, 'virt_num_exons', scalar @exons);
+	$" = "\t";
+	my $line = "@row\n";
+	push(@{$probes{$indexes}}, $line);
+    }
+    &process_probes(\%probes);
+}
+$join->cleanup;
+
+#
+#   map_probe(probe_offset, @contigs)
+#
+#   returns (pos, contig index, contig start, contig len)
+#
+sub map_probe {
+    my ($probe_offset, @contigs) = @_;
+    my $pos;
+    for (my $i = 0; $i <= $#contigs; $i++) {
+	my $contig = $contigs[$i];
+	my ($s, $l) = split /:/, $contig;
+	if ($l <= $probe_offset) {
+	    $probe_offset -= $l;
+	    $pos = $s + $probe_offset;
+	}
+	else {
+	    $pos = $s + $probe_offset;
+	    return ($pos, $i, $s, $l);
+	}
+    }
+    warn "can't map probe";
+    die "probe_offset: $probe_offset contigs: @contigs\n";
+}
+
+sub map_probe_contigs {
+    my ($offset1, $offset2, @contigs) = @_;
+    my (@result, @indexes);
+    my ($pos1, $c1, $start1, $len1) = map_probe($offset1, @contigs);
+    my ($pos2, $c2, $start2, $len2) = map_probe($offset2, @contigs);
+    my $rest1 = $len1 - ($pos1 - $start1);
+    $" = ' ';
+    if ($c1 == $c2) {
+	my $len = $pos2 - $pos1 + 1;
+	push(@result, "$pos1:$len");
+	push(@indexes, $c1);
+	return (\@result, "@indexes");
+    }
+    push(@result, "$pos1:$rest1");
+    push(@indexes, $c1);
+    for my $i ($c1 + 1 .. $c2 - 1) {
+	push(@result, $contigs[$i]);
+	push(@indexes, $i);
+    }
+    my $first2 = ($pos2 - $start2) + 1;
+    push(@result, "$start2:$first2");
+    push(@indexes, $c2);
+    return (\@result, join(",", @indexes));
+}
+
+
+sub process_probes {
+    my ($probes) = @_;
+    my @keep;
+    for my $key (keys %$probes) {
+	my @probes = @{$probes->{$key}};
+	push(@keep, @probes);
+    }
+    for my $probe (@keep) {
+	print $probe;
+    }
+}

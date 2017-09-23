@@ -1,0 +1,25 @@
+#!/usr/bin/perl
+
+require 'fasta.pl';
+require 'TMPred.pl';
+
+use LWP;
+use HTML::FormatText;
+use HTML::TreeBuilder;
+
+(@ARGV == 2) || die "\nUsage: $0 fasta-file output-file\n\n";
+
+open(FOO, "$ARGV[0]") || die "huh?";
+open(GOO, ">$ARGV[1]") || die "huh?";
+while (1) {
+    my ($done, $name, $seq) = read_fasta_entry(FOO);
+    last if $name eq '';
+    $name =~ s/\s+$//;
+    my $pred = get_pred($seq);
+    print GOO "$name TMPRED<$pred>TMPRED\n";
+    print_wrapped(GOO, $seq);
+    last if $done;
+}
+close FOO;
+close GOO;
+

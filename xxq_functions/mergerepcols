@@ -1,0 +1,155 @@
+#!/usr/bin/env python
+
+'''
+The purpose is to merge columns which share the same column name.
+
+Usage:
+	python merge2UniCol.py  [options]  parameters
+
+Options:
+	-h, --help:	Display this message, then exit
+	--version:	Print version information
+
+	-i, --input:	Input file name (STDIN will be converted to sys.stdin). If not provided, pop the first value in {parameters}, or STDIN
+	-o, --output:	Output file name (STDOUT will be converted to sys.stdout). If not provided, pop the first value in {parameters}, or STDOUT
+
+	--sep:	The string used to join different values. The default is ' /// '
+	--skip-blank:	Skip the blank cells as valid values. The default is to keep them.
+	--remove-reps:	Remove replicate values. The default is to keep them.
+
+parameters:
+	Input file, Output file:	If these augments are not provided in Options.
+'''
+
+import os, sys
+from basetools import exitMsg, TableFile
+from versiontools import *
+
+__version__ = '0.0.1'
+
+def Main(fsrc, fobj, join_str=' /// ', skip_blank=False, remove_reps=False, sep='\t', linesep=os.linesep):
+	fsrc = TableFile(fsrc)
+	head = fsrc.next()
+	# get column names with replicates
+	cols = {} # { col_name : [i1, i2, ...], ... }
+	for k, i in zip(head, range(len(head))):
+		cols.setdefault(k, []).append(i)
+	cols = filter(lambda a:len(a[1]) > 1, cols.items()) # remove col names without replicates
+	repidx = []
+	map(lambda a:repidx.extend(a[1][1:]), cols)
+	repidx.sort(reverse=True)
+	fobj = isinstance(fobj, str) and open(fobj, 'w') or fobj
+	map(head.pop, repidx)
+	fobj.write(sep.join(head) + linesep)
+	for line in fsrc:
+		for col, idx in cols:
+			vals = map(line.__getitem__, idx)
+			if skip_blank: vals = filter(bool, vals)
+			if remove_reps:
+				univals = []
+				valset = set()
+				for val in vals:
+					if val not in valset:
+						valset.add(val)
+						univals.append(val)
+				vals = univals
+			line[idx[0]] = join_str.join(vals)
+		map(line.pop, repidx)
+		fobj.write(sep.join(line) + linesep)
+
+if __name__ == '__main__':
+	from getopt import getopt
+	optlst, args = getopt(sys.argv[1:], 'hi:o:', ['help', 'version', 'input=', 'output=', 'sep=', 'skip-blank', 'remove-reps'])
+	repopts = [] # options that can have multiple values, e.g., '--rep-opt'
+	mustopts = [] # options that musted be supplied, e.g., '--must-opt'
+	autopts = [(str, '--sep', 'join_str', ' /// '), (bool, '--skip-blank', 'skip_blank', False), (bool, '--remove-reps', 'remove_reps', False)] # options that will be automatically dealt with. e.g. [(int, ('-n', '--num'), 'num', 3), ...] -- (type, (option names), target variable names, default values). type can be int, float, str, or bool.
+	matchopts = [] # tuples for options that should have the same length, e.g., ('gene_chr', 'gene_strand', 'gene_file')
+	err = []
+
+	if not repopts:
+		optdic = dict(optlst)
+	else:
+		try:
+			from newdicts import RepDict
+			optdic = RepDict(optlst)
+			for k, v in optdic.items():
+				if isinstance(v, list) and k not in repopts:
+					err.append('Error: "%s" should be unique, but was provided for %d times' % (k, len(v)))
+			# change repopts into list
+			for k in repopts:
+				if k in optdic and not isinstance(optdic[k], list):
+					optdic[k] = [optdic[k]]
+		except:
+			sys.stderr.write('Warning: the "newdict" module cannot be found! Then only the last value for multiple options ("%s") will be used!' % '", "'.join(repopts))
+			optdic = dict(optlst)
+
+	# print help information
+	if '-h' in optdic or '--help' in optdic:
+		exitMsg(__doc__)
+	if '--version' in optdic:
+		exitMsg(__file__ + ': ' + __version__)
+
+	# check availability of mandatory options
+	if mustopts:
+		mustopts = [opt for opt in mustopts if opt not in optdic]
+		if mustopts:
+			err.append('Error - mandatory options ("%s") missing!' % '", "'.join(mustopts))
+
+	# auto options
+	if autopts:
+		_funs = {bool:lambda a,b=optdic:a in b}
+		for _tp, _opts, _var, _default in autopts:
+			_fun = _funs.get(_tp, lambda a,b=optdic:(isinstance(b[a], list) and [map(_tp, b[a])] or [_tp(b[a])])[0]) #_funs.get(_tp, lambda a,b=optdic:_tp(b[a]))
+			if not isinstance(_opts, (tuple, list)):
+				_opts = [_opts]
+			_opts = [_opt for _opt in _opts if _opt in optdic] 
+			if len(_opts) > 1: # allow different option names for the same variable
+				if len(_opts) > 1: # multiple options names provided
+					if _opts[0] not in repopts:
+						err.append('Error - options ("%s") should not be supplied simultaneously!' % '", "'.join(_opts))
+					else: # allow multiple values!
+						_val = []
+						map(lambda a,b=_val,c=optdic:b.extend(_fun(c[a])), _opts)
+			elif len(_opts) == 0:
+				vars()[_var] = _default
+			else: # must be 1
+				try: # use vars to set new variables.
+					vars()[_var] = _fun(_opts[0])
+				except:
+					err.append('Error - invalid value for option ("%s")' % _opts[0])
+
+	# check options that should be matching
+	for opts in matchopts:
+		if not opts or not isinstance(opts, (tuple, list)) or len(opts)<=1: continue
+		opt0 = optdic.get(opts[0], [])
+		ln0 = not isinstance(opt0, (tuple, list)) and 1 or len(opt0)
+		for opt in opts[1:]:
+			opt1 = optdic.get(opt, [])
+			ln1 = not isinstance(opt1, (tuple, list)) and 1 or len(opt1)
+			if ln1 != ln0:
+				err.append('Error - the numbers of parameters (%s) do not match!' % (', '.join(opts)))
+				break
+
+	# specific options can be added over here
+	try:
+		fsrc = optdic.get('-i', optdic.get('--input', None)) or args.pop(0)
+		if fsrc == 'STDIN':
+			fsrc = sys.stdin
+	except: fsrc = sys.stdin
+	try:
+		fobj = optdic.get('-o', optdic.get('--output', None)) or args.pop(0)
+		if fobj == 'STDOUT':
+			fobj = sys.stdout
+	except: fobj = sys.stdout
+
+	if args:
+		err.append('Error - unrecognized parameters:\n\t%s' % ', '.join(args))
+
+	# quit on error
+	if err:
+		err.append('\n\nPlease type "%s -h " for help.\n' % sys.argv[0])
+		exitMsg(err, out=sys.stderr)
+	
+	# start job
+	Main(fsrc, fobj, join_str=join_str, skip_blank=skip_blank, remove_reps=remove_reps)
+	

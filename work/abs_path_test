@@ -1,0 +1,7 @@
+#!/usr/bin/perl
+
+use Cwd qw(cwd getcwd abs_path);
+
+my $file = "/home/flong/.bashrc/..";
+
+print abs_path($file), "\n";

@@ -1,0 +1,58 @@
+#!/bin/bash
+
+. subs.sh
+
+set_options "1p:" "$@"
+set -- "${new_args[@]}"
+
+if [ $# -lt 2 ]; then
+    echo -e "\nUsage: $0 [options] first.fa second.fa [first_name second_name]
+
+    Options:
+	-1	use 'delta-filter -1' instead of 'delta-filter -q'
+	-p	output prefix
+"
+    exit 1
+fi
+
+base="$1" ; shift
+query="$1" ; shift
+b="$1" ; shift
+q="$1" ; shift
+if [ "$opt_p" ]; then
+    prefix=$opt_p
+else
+    if [ "$b" = "" ]; then
+	b=`filename_base $base`
+    fi
+    if [ "$q" = "" ]; then
+	q=`filename_base $query`
+    fi
+    prefix=${b}_$q
+fi
+if need $base $query $prefix.delta.q; then
+    run "nucmer.get_best_hits -p $prefix $base $query"
+fi
+if [ "$opt_1" ]; then
+    filters=1
+else
+    filters=q
+fi
+for i in $filters
+do
+    if [ "$i" = all ]; then
+	if need $prefix.delta $prefix.delta.$i; then
+	    run "ln $prefix.delta $prefix.delta.$i"
+	fi
+    else
+	if need $prefix.delta $prefix.delta.$i; then
+	    run "delta-filter -$i $prefix.delta > $prefix.delta.$i"
+	fi
+    fi
+    if need $prefix.delta.$i $prefix.aligns.$i.txt; then
+	run "delta.list $prefix.delta.$i > $prefix.aligns.$i.txt"
+    fi
+    if need $prefix.aligns.$i.txt $prefix.dotplot.$i.png; then
+	run "dot_plot 4000 $prefix.aligns.$i.txt $prefix.dotplot.$i.png"
+    fi
+done

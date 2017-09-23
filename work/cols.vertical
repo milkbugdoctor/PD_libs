@@ -1,0 +1,31 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('hs');
+
+use Cols;
+
+@ARGV || die "\nUsage: $0 [options] infile
+
+    Converts tab-delimited file to \"vertical\" output.
+
+    Options:
+	-h	no header; use numbers
+	-s	sort output columns
+
+";
+
+my $infile = shift;
+
+my $cols = Cols::new($infile, $opt_h);
+my @header = $cols->get_header();
+@header = sort @header if $opt_s;
+while (my $row = $cols->get_row()) {
+    if ($opt_h) {
+	@header = (1 .. scalar(keys %$row));
+    }
+    for my $key (@header) {
+	printf "%s: %s\n", $key, $row->{$key};
+    }
+    print "\n";
+}

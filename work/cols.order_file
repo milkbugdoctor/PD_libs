@@ -1,0 +1,32 @@
+#!/usr/bin/perl
+
+use Cols;
+
+@ARGV == 3 || die "\nUsage: $0 key_column file1 file2 > ordered
+
+    Outputs file2 in same order as file1.
+
+";
+
+my $key_col = shift;
+my $file1 = shift;
+my $file2 = shift;
+
+my %hash;
+dbmopen(hash, "/tmp/foo.ndbm.$$", 0600);
+
+my $cols = Cols::new($file2);
+$cols->print_header(STDOUT);
+while (my $row = $cols->get_row()) {
+    my $key = $row->{$key_col};
+    $hash{$key} = $cols->{row_string};
+}
+
+my $cols = Cols::new($file1);
+while (my $row = $cols->get_row()) {
+    my $key = $row->{$key_col};
+    my $line = $hash{$key};
+    print $line;
+}
+
+dbmclose(hash);

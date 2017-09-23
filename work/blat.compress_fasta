@@ -1,0 +1,13 @@
+#!/usr/bin/perl
+
+if (@ARGV < 1) {
+        print "\nUsage: $0 files\n\n";
+        exit 1;
+}
+
+for my $file (@ARGV) {
+	my $base = $file;
+	$base =~ s/\..*//g;
+	# system "faToNib $file $base.nib";
+	system "faToTwoBit $file $base.2bit";
+}

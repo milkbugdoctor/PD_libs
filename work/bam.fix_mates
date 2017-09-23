@@ -1,0 +1,34 @@
+#!/bin/bash
+
+. subs.sh
+
+ref=template/Salmonella_multi_fasta_unix.fasta
+template=template/Salmonella_multi_fasta_unix.fasta.index
+tmp=/tmp/sam.$$
+
+if [ $# -lt 1 ]; then
+    echo -e "\nUsage: $0 file.bam [...]
+
+    Sorts BAM file by read name and finds/fixes mates.
+    Creates file.fixed.bam.
+"
+    exit 1
+fi
+
+for sam in "$@"
+do
+    base=`strip_last_extension $sam`
+    bam="$base.bam"
+    sorted="$base.nsorted.bam"
+    if [ ! -s "$sorted" ]; then
+	sorted="/tmp/nsorted.$$"
+    fi
+    fixed="$base.fixed"
+
+    if need $bam $fixed.bam; then
+	run "samtools sort -n -m 2000000000 $bam $sorted"
+	# run "samtools fixmate $sorted.bam $fixed.bam"
+	run "java -jar /home/flong/java/packages/picard-tools-1.44/FixMateInformation.jar \
+	    I=$sorted.bam O=$fixed.bam VALIDATION_STRINGENCY=SILENT"
+    fi
+done

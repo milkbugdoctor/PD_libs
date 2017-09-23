@@ -1,0 +1,35 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ ! "$1" ]; then
+    echo -e "\nUsage: $0 max-diff (e.g., .05)\n"
+    exit 1
+fi
+
+maxdiff="$1" ; shift
+
+prefix=`cat .prefix` || exit 1
+
+eval set -- `cat $prefix.options`
+while [ "$1" -a "$2" ]
+do
+    eval "export $1='$2'"
+    shift
+    shift
+done
+
+rsync -av --delete $prefix.bank/ try.bank/
+bank-unlock try.bank
+rm -f try.bank/{LAY,CTG}*
+
+run "amos.fix_layout -d $maxdiff $prefix.layout > try.layout"
+
+run "make-consensus $CONS -P -B try.layout try.bank > try.consensus 2> try.consensus.errs"
+echo -n "forced before: "
+grep -i force log.txt | wc -l
+echo -n "forced now: "
+grep -i force try.consensus.errs | wc -l
+run "bank2fasta -b try.bank > try.fasta"
+run "draw_mapped_contigs -l '\d+' reference.fa try.fasta"
+

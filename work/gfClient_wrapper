@@ -1,0 +1,46 @@
+#!/usr/bin/perl
+
+my ($host, $port, $dir, $infile, $outfile, @options) = @ARGV;
+
+$SIG{PIPE} = 'IGNORE';
+
+if (0) {
+    warn "gfClient @ARGV\n";
+    system "gfClient @ARGV";
+    warn "gfClient done\n";
+}
+else {
+    warn "gfClient_wrapper started for $ARGV[0]\n";
+    $tmp = "/tmp/foo.$$";
+    $out = "/tmp/out.$$";
+    my $in_file;
+    if ($infile eq 'stdin') {
+	$in_file = *STDIN{IO};
+    }
+    else {
+	open($in_file, $infile) || die "$infile";
+    }
+    open(FOO, ">$tmp") || die "$tmp";
+    $lines = 0;
+    while (<$in_file>) {
+	$lines++;
+	print FOO $_;
+    }
+    close FOO;
+    if ($outfile eq 'stdout') {
+	my $out_fd = fileno(STDOUT);
+	warn "stdout is mapped to $out_fd\n";
+    }
+    $ARGV[3] = $tmp;
+    $ARGV[4] = $out;
+    warn "$infile closed, got $lines lines\n";
+    warn "gfClient @ARGV\n";
+    system "gfClient @ARGV";
+    warn "gfClient done\n";
+    open(FOO, $out) || die "$out";
+    while (<FOO>) {
+	my $sent = syswrite(STDOUT, $_, length($_));
+	die "$!" if $sent <= 0;
+    }
+    close FOO;
+}

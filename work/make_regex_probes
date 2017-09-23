@@ -1,0 +1,205 @@
+#!/usr/bin/perl
+
+my $debug = 1;
+
+my $slow_tm = 0;
+
+use strict 'vars';
+
+use Getopt::Long qw(:config no_ignore_case);
+
+my (@bad_patterns, @needed_patterns, $require_nimblegen,
+    $in_columns, $add_tm, $seq_prefix, $add_id, $both_strands);
+GetOptions(
+    "r=s@" => \@needed_patterns,
+    "R=s@" => \@bad_patterns,
+    "c=s" => \$in_columns,
+    "s=s" => \$seq_prefix,
+    "N" => \$require_nimblegen,
+    "b" => \$both_strands,
+    "i" => \$add_id,
+    "t" => \$add_tm);
+
+my $bad_pattern  = join("|", grep(s/(.*)/($1)/, @bad_patterns));
+# warn "bad pattern: $bad_pattern\n"; exit;
+
+(@ARGV >= 3) || die "\nUsage: $0 [options] infile prefix length [max-length]
+
+    Create fixed-size probes from input file.  Default input file format is Fasta.
+
+    options:
+	-b			make probes for both strands
+	-c cols			input columns for tabbed infile in this format \"id/chr/strand/start/seq\"
+	-N			add Nimblegen requirement
+	-r regex		add regex that probe must match
+	-R regex		add regex that probe must NOT match
+	-s prefix		prefix for input sequences, if you want them included in output			
+	-i			add unique probe id
+	-t			add probe Tm
+
+    parameters:
+	infile			name of Fasta file or tabbed text file
+	prefix			probe name prefix, e.g., \"i\" for intron, \"m\" for mRNA
+	length			length of probe
+
+";
+
+my ($filename, $prefix, $probe_len, $max_probe_len) = @ARGV;
+
+$max_probe_len = $probe_len if $max_probe_len < $probe_len;
+
+use Cols;
+require 'NimbleGen.pl';
+require 'fasta.pl';
+require 'perl_tm.pl';
+require 'melting.pl';
+
+start_tm_server() if $add_tm && $slow_tm;
+
+print "# make_regex_probes:\n";
+if ($seq_prefix) {
+    printf "#     %-17s - name or id of input sequence\n", "${seq_prefix}_id";
+    printf "#     %-17s - chromosome of input sequence\n", "${seq_prefix}_chr";
+    printf "#     %-17s - strand of input sequence relative to chromosome\n", "${seq_prefix}_strand";
+    printf "#     %-17s - top-strand starting position of input sequence relative to chromosome\n", "${seq_prefix}_start";
+    printf "#     %-17s - top-strand ending position of input sequence relative to chromosome\n", "${seq_prefix}_end";
+    printf "#     %-17s - length of input sequence relative to chromosome\n", "${seq_prefix}_len";
+}
+printf "#     %-17s - unique id of probe sequence\n", "${prefix}_id" if $add_id;
+printf "#     %-17s - probe chromosome\n", "${prefix}_chr";
+printf "#     %-17s - probe strand relative to chromosome of input sequence\n", "${prefix}_strand";
+printf "#     %-17s - top-strand starting position of probe relative to chromosome\n", "${prefix}_start";
+printf "#     %-17s - top-strand ending position of probe relative to chromosome\n", "${prefix}_end";
+printf "#     %-17s - length of probe\n", "${prefix}_len";
+printf "#     %-17s - probe offset in input sequence (not chromosome)\n", "${prefix}_offset";
+printf "#     %-17s - probe Tm\n", "${prefix}_tm" if $add_tm;
+
+print join("\t", "${seq_prefix}_id", "${seq_prefix}_chr", "${seq_prefix}_strand",
+    "${seq_prefix}_start", "${seq_prefix}_end", "${seq_prefix}_len", "") if $seq_prefix;
+print "${prefix}_id\t" if $add_id;
+print join("\t", "${prefix}_chr", "${prefix}_strand",
+    "${prefix}_start", "${prefix}_end", "${prefix}_len", "${prefix}_offset", "${prefix}_seq");
+print "\t${prefix}_tm" if $add_tm;
+print "\n";
+
+my $seq_num = 0;
+my $probe_num = 0;
+my %bad_probes;
+
+if ($in_columns) {
+    my ($id_col, $chr_col, $strand_col, $start_col, $seq_col)
+	= split m|/|, $in_columns;
+    our $cols = Cols::new($filename);
+    while (my $row = $cols->get_row()) {
+	do_seq($row->{$id_col}, $row->{$chr_col}, $row->{$strand_col},
+	    $row->{$start_col}, \$row->{$seq_col}, $probe_len);
+    }
+}
+else {
+    open(FILE, $filename) || die "can't open file [$filename]";
+    while ((my ($header, $seq) = read_fasta(FILE)) == 2) {
+	$header =~ /^>(\S+)/;
+	my $id = $1;
+	do_seq($id, $id, "+", 1, \$seq, $probe_len, $max_probe_len);
+    }
+}
+
+sub do_seq {
+    my ($id, $chr, $strand, $start, $seq_ref, $min_probe_len, $max_probe_len) = @_;
+    $seq_num++;
+    warn "doing seq $id\n" if $debug;
+    my $seq_len = length($$seq_ref);
+    for my $probe_strand ('+', '-') {
+	my $seq = $$seq_ref;
+	if ($probe_strand eq '-') {
+	    last if ! $both_strands;
+	    $seq = rc($seq);
+	}
+	for my $probe_len ($min_probe_len .. $max_probe_len) {
+	    my $max_pos = $seq_len - $probe_len;
+	    for (my $pos = 0; $pos <= $max_pos; $pos++) {
+		my $probe = substr($seq, $pos, $probe_len);
+		last if length($probe) != $probe_len;
+
+		if ($probe =~ /$bad_pattern/) {
+		    next;
+		}
+		my $good = 1;
+		for my $pat (@needed_patterns) {
+		    if ($probe !~ /$pat/) {
+			$good = 0;
+			last;
+		    }
+		}
+		next if ! $good;
+		next if ! check_probe($probe);
+		my $tm;
+		if ($add_tm) {
+		    if ($slow_tm) {
+			$tm = get_tm($probe);
+		    }
+		    else {
+			# my $tm = PerlTm::approx_tm($probe);
+			$tm = PerlTm::exact_tm($probe);
+		    }
+		}
+
+		# probe is good, print it
+		my ($probe_start, $probe_end);
+		my $real_pos = $pos;
+		if ($strand ne $probe_strand) {
+		    $probe_start = ($start + $seq_len - 1) - $pos - ($probe_len - 1);
+		    $real_pos = $seq_len - $pos - $probe_len;
+		}
+		else {
+		    $probe_start = $start + $pos;
+		}
+		$probe_end = $probe_start + $probe_len - 1;
+
+		if ($seq_prefix) {
+		    print join("\t", $id, $chr, $strand, $start, $start + $seq_len - 1, $seq_len, "");
+		}
+		print "$probe_num\t" if $add_id;
+		print join("\t", $chr, $probe_strand, $probe_start, $probe_end, $probe_len, $real_pos, $probe);
+		print "\t$tm" if $add_tm;
+		print "\n";
+
+		$probe_num++;
+	    }
+	}
+    }
+}
+
+sub check_probe {
+    my ($probe) = @_;
+    my $bad = 0;
+    if ($probe =~ /N/i) {
+	$bad_probes{N}++;
+	warn "N\t$probe\n" if $debug >= 2;
+	$bad = 1;
+    }
+    if ($probe =~ /AAAAAAAA|TTTTTTTT|CCCCCCCC|GGGGGGGG|GTGTGTGT|CACACACA/i) {
+	$bad_probes{repeat}++;
+	warn "REPEAT\t$probe\n" if $debug >= 2;
+	$bad = 1;
+    }
+    if (self_anneal(10, $probe)) {
+	$bad_probes{hairpin}++;
+	warn "HAIRPIN\t$probe\n" if $debug >= 2;
+	$bad = 1;
+    }
+    if ($require_nimblegen && !NimbleGen::good_probe($probe)) {
+	warn "NIMBLE\t$probe\n" if $debug >= 2;
+	$bad_probes{nimblegen}++;
+	$bad = 1;
+    }
+    return ! $bad;
+}
+
+my @bad = %bad_probes;
+printf STDERR "@bad\n";
+
+kill_tm_server() if $add_tm && $slow_tm;
+
+exit 0;
+

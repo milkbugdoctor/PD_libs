@@ -1,0 +1,58 @@
+#!/usr/bin/perl
+
+#
+#    1. Keep all of the parent's probes if there are <= $min_probes
+#    2. Else try tiling the probes $tile_distance apart
+#    3. Try to reduce distance until we get 3
+#
+
+(@ARGV >= 4) || die "\nUsage: $0 class-col min-probes max-probes min-keep [file]
+
+Randomly chooses number between min-probes and max-probes as target for each class.
+
+	class-col	which column specifies probe class
+	min-probes	min probes per class
+	max-probes	max probes per class
+	min-keep	number of probes to keep if less than min-probes
+
+";
+
+require 'columns.pl';
+require 'probes.pl';
+
+my $class_col = shift;
+my $min_probes = shift;
+my $max_probes = shift;
+my $min_keep = shift;
+
+my @header = get_header("ARGV");
+must_col(\@header, $class_col);
+
+$" = "\t";
+print "@header\n";
+
+while (my @row = get_row("ARGV")) {
+    my $class = get_col(\@header, \@row, $class_col);
+
+    if ($class ne $last_class and $last_class ne '') {
+	&do_probes($last_class, $min_probes, $max_probes, \@lines);
+    }
+    $last_class = $class;
+    push(@lines, \@row);
+}
+&do_probes($last_class, $min_probes, $max_probes, \@lines);
+
+sub do_probes {
+    my ($class, $min_probes, $max_probes, $lines_ref) = @_;
+    my @good_lines = @$lines_ref;
+    if (@$lines_ref < $min_probes) {
+        @good_lines = trim_probes($keep_probes, @$lines_ref);
+    }
+    else {
+        @good_lines = trim_probes_random($min_probes, $max_probes, @$lines_ref);
+    }
+    for my $row (@good_lines) {
+	print "@$row\n";
+    }
+    @{$lines_ref} = ();
+}

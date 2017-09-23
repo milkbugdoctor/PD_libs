@@ -1,0 +1,785 @@
+
+use Bit::Vector;
+use IO::File;
+
+$cover_check_thresh = 30000;
+$min_cardinality = 2;
+$max_primers = 1000000; # unused
+$too_much = 20000;
+
+#
+# globals: $min_gc $max_gc
+#          $min_tm $max_tm
+#          %primer_tm
+#
+# allow 4-mer repeats in the middle
+# allow 2-mer repeats at the 3' end
+# disallow x-mer on 3' to match anything (rev comp), x = $primer_dimer
+#
+sub good_primer {
+	my ($primer) = @_;
+
+        if (!$primer) {
+            die "good_primer(primer, min_gc, max_gc)"
+        }
+
+        # check for repeats of 5 or more
+        if ($primer =~ /AAAAA/ or $primer =~ /CCCCC/ or
+                $primer =~ /GGGGG/ or $primer =~ /TTTTT/) {
+            print STDERR "$primer has 5-repeat\n" if $debug >= 2;
+            $bad_primers{'mid_repeat'}++;
+            return 0;
+        }
+
+        # allow 2 on the end
+        if ($primer =~ /AAA$/ or $primer =~ /CCC$/ or
+                $primer =~ /GGG$/ or $primer =~ /TTT$/) {
+            print STDERR "$primer has 2-repeat on 3' end\n" if $debug >= 2;
+            $bad_primers{'end_repeat'}++;
+            return 0;
+        }
+
+        if ($min_gc ne '' && $max_gc ne '') {
+            my $gc_content = &gc_content($primer);
+            if ($gc_content < $min_gc || $gc_content > $max_gc) {
+                print STDERR "$primer gc = $gc_content\n" if $debug >= 2;
+                $bad_primers{'gc'}++;
+                return 0;
+            }
+
+            # $gc_content = &gc_content(substr($primer, -5));
+            # return 0 if $gc_content > .40;
+        }
+
+	return &no_align($primer, $primer);
+}
+
+sub print_primers {
+    for $primer (@_) {
+        # print STDERR "$primer gc=", &gc_content($primer), " tm=", $primer_tm{$primer}, "\n";
+        print STDERR &gc_content($primer), "\t", $primer_tm{$primer}, "\t$primer\n";
+    }
+}
+
+sub rc {
+    my @res;
+    for my $seq (@_) {
+	my $foo = $seq;
+	$foo =~ tr/ACGT/TGCA/;
+        push(@res, scalar reverse $foo);
+    }
+    return $res[0] if (@res == 1);
+    return @res;
+}
+
+#
+#       Check for match of last $primer_dimer bases on 3' end.
+#
+sub no_align {
+	my ($left, $right) = @_;
+        die '$primer_dimer not set' if !defined($primer_dimer);
+        my $ll = &rc(substr($left, -$primer_dimer));
+        my $rr = &rc(substr($right, -$primer_dimer));
+        if ($right =~ /$ll/) {
+            print STDERR "$right contains $ll\n" if $debug >= 2;
+            $bad_primers{'align'}++;
+            return 0;
+        }
+        if ($left =~ /$rr/) {
+            print STDERR "$left contains $rr\n" if $debug >= 2;
+            $bad_primers{'align'}++;
+            return 0;
+        }
+        return 1;
+}
+
+#
+#       The right sequence has been reversed and complemented to allow primers
+#       to be treated equally and uniformly.  So the right side of the sequence
+#       is closest to the SNP.
+#
+#       Check for bad case: LP RP on left       | SNP
+#                       or  RP LP on right      | SNP
+#
+sub good_pair_for_snp {
+	my ($left, $right, $snp, $pos_hash) = @_;
+        my @lp_left = split(/ /, $$pos_hash{"left $left $snp"});
+        my @rp_left = split(/ /, $$pos_hash{"left ".&rc($right)." $snp"});
+        my @rp_right = split(/ /, $$pos_hash{"right $right $snp"});
+        my @lp_right = split(/ /, $$pos_hash{"right ".&rc($left). " $snp"});
+        return &good_amp($left, $right, $snp, \@lp_left, \@rp_left) &&
+               &good_amp($left, $right, $snp, \@rp_right, \@lp_right);
+}
+
+sub good_amp {
+    my ($left, $right, $snp, $lp_left, $rp_left) = @_;
+    my @lp_left = @$lp_left;
+    my @rp_left = @$rp_left;
+    my $bad = 0;
+    if (@rp_left && @lp_left) {
+        # is right primer on the left and closer than left primer?
+        if ($lp_left[$#lp_left] < $rp_left[$#rp_left]) {
+            $bad = 1;
+        }
+        else {
+            # or does the pair amplify a region > 500 bases?
+            for my $pos (@rp_left) {
+                my $len = $pos - $lp_left[0];
+                if ($len >= 0 && $len <= 500) {
+                    $bad = 1;
+                    last;
+                }
+            }
+        }
+        if ($bad) {
+if ($debug >= 2) {
+print STDERR "bad amp on snp $snp\n";
+print STDERR "lp (@lp_left) rp (@rp_left)\n";
+print STDERR "5' to 3': lp $left rp $right [", &rc($right), "]\n";
+}
+            $bad_primers{'amp'}++;
+            return 0;
+        }
+    }
+    return 1;
+}
+
+sub good_primer2 {
+    my ($left, $right, $primer, $pos_hash) = @_;
+    return 0 if !&good_primer3($primer, $$left{$primer}, $$left{&rc($primer)}, $pos_hash);
+    return 0 if !&good_primer3($primer, $$right{$primer}, $$right{&rc($primer)}, $pos_hash);
+    return 1;
+}
+
+sub good_primer3 {
+	my ($primer, $left_set, $right_set, $pos_hash) = @_;
+
+        return 1 if !$right_set || !$left_set;
+        my $intersect = $left_set->Clone();
+        $intersect->Intersection($intersect, $right_set);
+        return 1 if $intersect->is_empty();
+        @snps = split(//, reverse $intersect->to_Bin());
+        for (my $i = 0; $i <= $#snps; $i++) {
+            next if $snps[$i] == 0;
+            if (!&good_pair_for_snp($primer, $primer, $i, $pos_hash)) {
+                return 0;
+            }
+        }
+	return 1;
+}
+
+sub good_pair {
+	my ($left, $right, $set, $pos_hash) = @_;
+        if (!&no_align($left, $right)) {
+print STDERR "pair $left $right might form primer dimer\n" if $debug >= 2;
+            return 0;
+        }
+        return &good_pair2;
+}
+
+#
+#
+#
+sub good_pair2 {
+	my ($left, $right, $intersect, $pos_hash) = @_;
+        return 1 if !$intersect;
+        return 1 if $intersect->is_empty();
+        @snps = split(//, reverse $intersect->to_Bin());
+        for (my $i = 0; $i <= $#snps; $i++) {
+            next if $snps[$i] == 0;
+            if (!&good_pair_for_snp($left, $right, $i, $pos_hash)) {
+print STDERR "pair $left / $right bad for snp $i\n" if $debug >= 2;
+                return 0;
+            }
+            next if $left eq $right;
+            if (!&good_pair_for_snp($left, $left, $i, $pos_hash)) {
+print STDERR "left primer $left [", &rc($left), "] bad for snp $i\n" if $debug >= 2;
+                return 0;
+            }
+            if (!&good_pair_for_snp($right, $right, $i, $pos_hash)) {
+print STDERR "right primer $right [", &rc($right), "] bad for snp $i\n" if $debug >= 2;
+                return 0;
+            }
+        }
+	return 1;
+}
+
+sub gc_content {
+	my ($primer) = @_;
+	my @primer = split('', $primer);
+	my @GC = grep(/[GC]/, @primer);
+	return scalar @GC / scalar @primer;
+}
+
+sub align {
+	my ($tseq, $bseq) = @_;
+	my $min_length = 3;
+
+	my %results;
+
+	for ($balign = - length($bseq); $balign < length($tseq); $balign++) {
+		$tstart = max(0, $balign);
+		$tend = min(length($tseq), $balign + length($bseq));
+		$match = "";
+		for ($tpos = $tstart; $tpos < $tend; $tpos++) {
+			$bpos = $tpos - $balign;
+			die "oops" if $bpos < 0 || $tpos < 0;
+			die "oops" if $bpos >= length($bseq);
+			die "oops" if $tpos >= length($tseq);
+			if (substr($tseq, $tpos, 1) eq substr($bseq, $bpos, 1)) {
+				$match .= substr($tseq, $tpos, 1)
+			}
+			else {
+				$match = "";
+			}
+			if (length($match) >= $min_length) {
+if ($debug >= 3) {
+$t = $tpos;
+$b = $bpos;
+print STDERR "match [$match] at $t, $b\n";
+print STDERR " " x (-$balign) if $balign < 0;
+print STDERR substr($tseq, 0, $t - length($match) + 1), " [$match] ",
+	substr($tseq, $t + 1), "\n";
+print STDERR " " x $balign if $balign > 0;
+print STDERR substr($bseq, 0, $b - length($match) + 1), " [$match] ",
+	substr($bseq, $b + 1), "\n";
+}
+				return 1;
+			}
+		}
+	}
+
+	return 0;
+}
+
+sub elements {
+    my ($set) = @_;
+    my @elements = split(//, reverse $set->to_Bin());
+    my @res;
+    for (my $i = 0; $i <= $#elements; $i++) {
+            push(@res, $i) if $elements[$i] != 0;
+    }
+    return @res;
+}
+
+sub min {
+	return $_[0] < $_[1] ? $_[0] : $_[1];
+}
+
+sub max {
+	return $_[0] > $_[1] ? $_[0] : $_[1];
+}
+
+#
+# globals: %total_left, %total_right, %total_primers, %total_pairs, $sequence_set
+#
+sub do_totals {
+    my ($pairs, $coverage) = @_;
+    my @total_pairs = @$pairs;
+    my @left = @total_pairs;
+    @left = grep(s/ .*//, @left);
+    @left = &unique(@left);
+    print "# used ", $#left+1, " unique left keys from pair cover\n";
+    my @right = @total_pairs;
+    @right = grep(s/.* //, @right);
+    @right = &unique(@right);
+    my @primers = &unique(@left, @right);
+    print "# used ", $#right+1, " unique right keys from pair cover\n";
+    my @tmp = (scalar @left, scalar @right,
+        scalar @primers, scalar @total_pairs,
+        ($num_seq - &cardinality($sequence_set))/$num_seq);
+    print "## $tmp[0] unique left primers\n";
+    print "## $tmp[1] unique right primers\n";
+    print "## $tmp[2] unique primers\n";
+    print "## $tmp[3] total pairs\n";
+    print "## $tmp[4] coverage\n";
+    print "### @tmp\n";
+    for my $tmp (@left) { $total_left{$tmp} = 1; }
+    for my $tmp (@right) { $total_right{$tmp} = 1; }
+    for my $tmp (@primers) { $total_primers{$tmp} = 1; }
+    for my $tmp (@total_pairs) { $total_pairs{$tmp} = 1; }
+}
+
+sub write_pairs {
+    my ($hash, $list) = @_;
+    for my $key (@$list) {
+        print "$key\t", cardinality($$hash{$key}),
+                    "\t", toString($$hash{$key}), "\n";
+    }
+}
+
+sub read_primers {
+    my ($filename) = @_;
+    open(FOO, $filename) || die "Can't open $filename";
+    my @primers;
+    while (<FOO>) {
+            chomp;
+            if ($_ =~ /^[ACGT]/) {
+                push(@primers, (split(/\t/))[0]);
+            }
+    }
+    close(FOO);
+    return @primers;
+}
+
+sub read_coverage {
+    my ($filename, $side, $good_hash) = @_;
+    open(FOO, $filename) || die "Can't open $filename";
+    $num_seq = <FOO> + 0;
+    my $seq;
+    my $good;
+    my %set_hash;
+    while (<FOO>) {
+            chomp;
+            if ($_ =~ /^[ACGT]/) {
+                ($seq, $card) = split(/\t/);
+                if ($card < $min_cardinality) {
+                    $good = 0;
+                    next;
+                }
+                if ($$good_hash{$seq}) {
+                    $set_hash{$seq} = new Bit::Vector($num_seq);
+                    $good = 1;
+                }
+                else {
+                    $good = 0;
+                }
+            }
+            elsif ($good) {
+                next if ! /^\t/;
+                my ($num, $pos, $rc_pos) = (split(/\t/))[1..3];
+die "num $num" if $num eq '';
+                my @pos = split(/ /, $pos);
+                my @rc_pos = split(/ /, $rc_pos);
+                if (!&good_amp($seq, &rc($seq), $num, \@pos, \@rc_pos)) {
+                    $good = 0;
+                    delete $set_hash{$seq};
+                    next;
+                }
+                $set_hash{$seq}->Bit_On($num);
+                $positions{"$side $seq $num"} = "$pos";
+            }
+    }
+    close(FOO);
+    return %set_hash;
+}
+
+sub read_results_file {
+    my ($filename) = @_;
+    my (@keys, @sets, %hash);
+    open(FOO, $filename) || die "Can't open $filename";
+    my $biggest = 0;
+    while (<FOO>) {
+        next if $_ =~ /^#/;
+        chomp;
+        @line = split(/\t/);
+        $num_seq = $line[1] if /^#num_seq/;
+        my ($key, $tmp, $set) = @line;
+        push(@keys, $key);
+        my @set = split(/[^\d]/, $set);
+        my $max_element = pop(@set);
+        $biggest = max($max_element, $biggest);
+        $hash{$key} = $set;
+    }
+    $biggest++;
+    $num_seq = max($num_seq, $biggest);
+    for my $key (@keys) {
+        $hash{$key} =~ s/\{(.*)\}/$1/; # remove { }
+        $hash{$key} = Bit::Vector->new_Enum($biggest, $hash{$key});
+    }
+    close(FOO);
+    return \%hash;
+}
+
+sub cardinality {
+    my $str = $_[0]->to_Bin();
+    $str =~ s/0//g;
+    return length($str);
+}
+
+sub toString {
+    my ($set) = @_;
+    return "{".$set->to_Enum()."}";
+}
+
+#
+# input:
+#       $hash           sets
+#       $list           list of keys
+#       $prev_hash      keys already used
+#
+sub cover {
+    $cover_num++;
+    my ($hash, $list, $prev_hash, $pair_check, $cover_type, $ratio, $universe) = @_;
+    return 0 if !$hash || !$list || !@$list;
+    my @keys;
+
+if (1) { # to sort, or not to sort
+
+    print STDERR "Sorting ", $#{$list}+1, " keys...\n" if $debug;
+$ttt = time;
+    my @list;
+    for my $key (@$list) {
+        push(@list, sprintf("%010d %s", cardinality($$hash{$key}), $key));
+    }
+    @keys = reverse sort @list;
+    grep(s/[^ ]+ ([^ ]+)/$1/, @keys);
+print STDERR time - $ttt, " seconds\n";
+print STDERR "first key $keys[0]\n";
+    print STDERR "Sorted ", $#keys+1, " keys done\n" if $debug;
+# write_pairs($hash, \@keys);
+}
+else {
+    # @keys = sort @$list; # FIX fjel
+    @keys = @$list;
+}
+
+    my $input = &build_cover_input($universe,
+        $hash, \@keys, $prev_hash, $pair_check, $cover_type);
+
+#
+#   cover check
+#
+    if ($ratio > 0 && $#keys + 1 > $cover_check_thresh) {
+        $keep_amount = &multiset_cover_check($input, \@keys, $universe);
+        $input = &build_cover_input($universe,
+            $hash, \@keys, $prev_hash, $pair_check, $cover_type);
+    }
+
+if (0) {
+my $file = "jjj.$cover_num.$$";
+open(JJJ, ">$file") || die "jjj";
+print JJJ $input;
+close(JJJ);
+}
+    $cover_type = "CoverMultiSet" if $cover_type eq "double";
+    @res = &cmd("./java $cover_type $ratio", $input);
+    grep(chomp, @res);
+    $universe->from_Bin($res[1]);
+    if (!$res[0]) {
+        print STDERR "failed to cover\n";
+        my @new_list = split('', reverse $res[2]);
+        @$list = ();
+        for (my $i = 0; $i <= $#new_list; $i++) {
+            push(@$list, $keys[$i]) if $new_list[$i];
+        }
+        return 0;
+    }
+    my @new_list = split('', reverse $res[2]);
+    @$list = ();
+    for (my $i = 0; $i <= $#new_list; $i++) {
+        push(@$list, $keys[$i]) if $new_list[$i];
+    }
+    print STDERR "Saved best ", $#$list+1, " to cover\n";
+    return 1;
+}
+
+sub cover_check {
+    my ($hash, $keys, $universe) = @_;
+
+    my @keys = @$keys;
+    my $best = @keys + 10;
+    while (1) {
+        my $cover = $universe->Clone();
+        my $success = 0;
+        my $best_card = 999999;
+        my $best_k = 0;
+        for ($k = 0; $k <= $#keys; $k++) {
+            $cover->Difference($cover, $$hash{$keys[$k]});
+            my $card = cardinality($cover);
+            if ($card == 0) {
+                print STDERR "cover check OK in ", $k+1, " keys\n";
+                if ($k + 1 >= $best) {
+                    print STDERR "can't do any better than $best\n";
+                    @$keys = @keys[0..$k];
+                    return $k + 1;
+                }
+                $best = $k + 1;
+                print STDERR "moving last key to top and trying again\n";
+                my $tmp = $keys[$k];
+                @keys = ($keys[$k], @keys[0..$k-1, $k+1..$#keys]);
+                $success = 1;
+                last;
+            }
+            if ($card < $best_card) {
+                $best_card = $card;
+                $best_k = $k;
+            }
+        }
+        if (!$success) {
+            print STDERR "cover check failed\n";
+            @$keys = @keys[0..$best_k];
+            return 0;
+        }
+    }
+}
+
+#
+# globals: $sequence_set
+#
+sub reduce_sets {
+    my ($hash, $list) = @_;
+    my @new_keys;
+    for my $key (@$list) {
+        $$hash{$key}->Intersection($$hash{$key}, $sequence_set);
+        push(@new_keys, $key) if cardinality($$hash{$key}) > 0;
+    }
+    @$list = @new_keys;
+}
+
+
+sub unique {
+    my (@primers) = @_;
+    my %hash;
+    for my $p (@primers) { $hash{$p}++; }
+    return keys %hash;
+}
+
+
+sub multiset {
+    my ($set, $dups) = @_;
+    my $result;
+    for (my $time = 0; $time < $dups; $time++) {
+        $result .= " " if $time != 0;
+        $result .= $set->to_Bin();
+    }
+    return $result;
+}
+
+
+sub multiset_cover_check {
+    my ($input, $keys) = @_;
+
+# open(FOO, ">jjj.check.$$"); print FOO $input; close(FOO);
+    @res = &cmd("./java CoverCheck", $input);
+# open(FOO, ">kkk.check.$$"); print FOO @res; close(FOO);
+    grep(chomp, @res);
+    if (!$res[0]) {
+        print STDERR "cover check failed\n";
+        @$keys = split("\t", $res[1]);
+        print STDERR "but saved best ", scalar @$keys, " keys\n";
+        if ($#$keys >= $too_much) {
+            $#$keys = $too_much - 1;
+            print STDERR "Too much : reduced to first $too_much keys\n";
+        }
+        return 0;
+    }
+    else {
+        @$keys = split("\t", $res[1]);
+        print STDERR "cover check ok in ", scalar @$keys, " keys\n";
+        return 1;
+    }
+}
+
+
+sub build_cover_input {
+    my ($universe, $hash, $keys, $prev_hash, $pair_check, $cover_type) = @_;
+    my $cover_set;
+    my @keys = @$keys;
+    print STDERR "doing cover check with delta $cover_check_delta\n" if $debug;
+    if ($cover_type eq "double") {
+        $cover_set = &multiset($universe, 2 + $cover_check_delta);
+    }
+    else {
+        $cover_set = &multiset($universe, 1 + $cover_check_delta);
+    }
+    my $input;
+    my @prev_keys;
+    for (my $k = 0; $k <= $#keys; $k++) {
+        $input .= $keys[$k] . "\n";
+        $input .= &toString($$hash{$keys[$k]}) . "\n";
+        if ($$prev_hash{$keys[$k]} ne '') {
+            print STDERR "we're using key $keys[$k] again : " .
+                &toString($$hash{$keys[$k]}) . "\n" if $debug >= 2;
+            push(@prev_keys, $k);
+        }
+    }
+    $input = $#keys + 1 . "\n" . $cover_set . "\n" .
+        "{" . join(",", @prev_keys) . "}" . "\n" . $input;
+    print STDERR "reusing ", @prev_keys+0, " primers\n" if $debug;
+    return $input;
+}
+
+sub verify_set {
+    my ($set, $seq_set) = @_;
+    my $foo = $set->Clone();
+    $foo->Difference($foo, $seq_set);
+    if (!$foo->is_empty()) {
+print STDERR "set is not empty: ", &toString($foo), "\n";
+exit 1;
+    }
+}
+
+sub make_hash {
+    my %hash;
+    for my $i (@_) {
+        $hash{$i} = 1;
+    }
+    return %hash;
+}
+
+sub add_good_primers1 {
+    my ($hash, $file) = @_;
+    my ($total, $good);
+    print STDERR "checking lexical goodness of primers from $file\n" if $debug;
+    open(TMP, $file) || die "$file";
+    while (<TMP>) {
+        chomp;
+        my $key = $_;
+        $total++;
+        if (&good_primer($key)) {
+            $good++;
+            $$hash{$key} = 1;
+        }
+    }
+    print STDERR "checked lexical goodness of $total primers\n" if $debug;
+    print STDERR "found $good lexically good primers\n" if $debug;
+}
+
+sub get_good_primers1 {
+    my ($leftfile, $rightfile) = @_;
+    my %hash;
+    my $left_tm = &get_good_tm_primers($leftfile);
+    &add_good_primers1(\%hash, $left_tm);
+    my $right_tm = &get_good_tm_primers($rightfile);
+    &add_good_primers1(\%hash, $right_tm);
+    return %hash;
+}
+
+#
+# globals: %left, %right
+#
+sub get_good_primers2 {
+    my ($leftfile, $rightfile, $good_hash) = @_;
+print STDERR "removing primers that amplify the wrong region\n" if $debug;
+    %left = &read_coverage($leftfile, "left", $good_hash);
+    %right = &read_coverage($rightfile, "right", $good_hash);
+    my @keys = &unique(keys %left, keys %right);
+print STDERR "trying ", $#keys+1, " unique primers\n" if $debug;
+    my @bad = grep(!&good_primer2(\%left, \%right, $_, \%positions), @keys);
+    my $num_removed = 0;
+    for my $bad (@bad) {
+        print STDERR "removing primer $bad\n" if $debug >= 2;
+        delete $left{$bad};
+        delete $right{$bad};
+        delete $good_hash{$bad};
+        $num_removed++;
+    }
+print STDERR "removed $num_removed bad primers\n" if $debug;
+    @keys = &unique(keys %left, keys %right);
+print STDERR "retained ", $#keys+1, " unique primers\n" if $debug;
+}
+
+sub get_good_tm_primers {
+    my ($file) = @_;
+    if (-e "$file.tm.$min_tm.$max_tm.done") {
+        if (-e "$file.tm.$min_tm.$max_tm") {
+            return "$file.tm.$min_tm.$max_tm";
+        }
+    }
+    print STDERR "reading primers\n";
+    my $tmp = "/tmp/primers.$$";
+    &filter_cardinality($file, $tmp, $min_cardinality);
+    print STDERR "checking tm of primers\n" if $debug;
+    my $good = &check_tm($tmp, "$file.tm.$min_tm.$max_tm");
+    print STDERR "retained $good primers with good tm\n" if $debug;
+    unlink($tmp);
+    if (-e "$file.tm.$min_tm.$max_tm.done") {
+        if (-e "$file.tm.$min_tm.$max_tm") {
+            return "$file.tm.$min_tm.$max_tm";
+        }
+    }
+    die "could not return $file.tm.$min_tm.$max_tm";
+}
+
+sub filter_cardinality {
+    my ($in, $out, $card) = @_;
+    open(TMP, $in) || die "$in";
+    open(TMP2, ">$out") || die "$out";
+    while (<TMP>) {
+        chomp;
+        my @line = split(/\t/);
+        print TMP2 "$line[0]\n" if $line[1] >= $card;
+    }
+    close(TMP2);
+    close(TMP);
+}
+
+#
+# find positions where $seq is found in $str
+#
+sub get_positions {
+    my ($seq, $str) = @_;
+    my $last = 0;
+    my @positions;
+    while (1) {
+        if ($str =~ /$seq/) {
+            push @positions, length($`);
+            substr($str, length($`), 1) = " ";
+        }
+        else {
+            last;
+        }
+    }
+    return @positions;
+}
+
+sub ambiguity {
+    my $observed = $_[0];
+    $observed =~ tr/acgt/ACGT/;
+    $observed =~ s/\///g;
+    $observed = join('', sort split(//, $observed));
+    return "A" if $observed eq "A";
+    return "C" if $observed eq "C";
+    return "G" if $observed eq "G";
+    return "T" if $observed eq "T";
+    return "M" if $observed eq "AC";
+    return "H" if $observed eq "ACT";
+    return "W" if $observed eq "AT";
+    return "Y" if $observed eq "CT";
+    return "V" if $observed eq "ACG";
+    return "R" if $observed eq "AG";
+    return "S" if $observed eq "CG";
+    return "K" if $observed eq "GT";
+    return "N" if $observed eq "ACGT";
+    return "D" if $observed eq "AGT";
+    return "B" if $observed eq "CGT";
+    warn "huh? $observed in &ambiguity($_[0])";
+    return "?";
+}
+
+
+#
+# ZZZ FIX - run multiple servers, or have multiple pipes
+#
+sub get_tm {
+    return -9999 if $_[0] eq '';
+    my $in = new IO::File;
+    my $out = new IO::File;
+    open($in, ">/tmp/tm_fifo_in") || die "$!";
+    my $old = select $in;
+    $| = 1;
+    select $old;
+    open($out, "</tmp/tm_fifo_out") || die "$!";;
+    print $in "$_[0]\n";
+    close($in);
+    while (<$out>) {
+	next if ! /Melting temp/;
+	return '' if /zero/;
+	chomp;
+	s/.*Melting temperature:\s+(\S+)\s.*/$1/;
+ 	close($out);
+	return $_;
+    }
+}
+sub start_tm_server {
+    system "killall tm_server 2> /dev/null";
+    system "tm_server &";
+    sleep 2;
+    system "pgrep tm_server" || die "could not start tm_server";
+}
+sub kill_tm_server {
+    system "killall tm_server";
+}
+
+1;

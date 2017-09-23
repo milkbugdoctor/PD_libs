@@ -1,0 +1,57 @@
+#!/usr/bin/perl
+
+@ARGV == 2 || die "\nUsage: $0 directory reads.fasta\n\n";
+
+my $dir = shift;
+my $fasta = shift;
+
+require 'fasta.pl';
+
+#######################################
+
+open(CONFIG, ">$dir/reads_config.xml") or die "$dir/reads_config.xml: $!";
+print CONFIG <<FOO;
+<?xml version="1.0"?>
+<!DOCTYPE configuration SYSTEM "configuration.dtd">
+
+<configuration>
+
+<rule>
+<name>set type of any as-yet-untyped reads to paired_production</name>
+<match><match_field>type</match_field><regex>^\$</regex></match>
+<action><set><set_field>type</set_field><value>unpaired_production</value></set></action>
+</rule>
+
+</configuration>
+FOO
+close CONFIG;
+
+#######################################
+
+open(TRACE, ">$dir/traceinfo/xml") or die "$dir/traceinfo/xml: $!";
+print TRACE <<FOO;
+<?xml version="1.0"?>
+<trace_volume>
+FOO
+
+my $counter = 1;
+open(FASTA, $fasta) or die "can't open file '$fasta'";
+while ((my ($header, $seq) = read_fasta(FASTA)) == 2) {
+    my $len = length($seq);
+    my @header = split(/\s+/, $header, 2);
+    $header[0] =~ s/^>//;
+    my ($id, $desc) = @header;
+    print TRACE <<FOO;
+        <trace>
+                <PLATE_ID>plate</PLATE_ID>
+                <TEMPLATE_ID>template$counter</TEMPLATE_ID>
+                <TRACE_END>F</TRACE_END>
+                <TRACE_NAME>$id</TRACE_NAME>
+                <WELL_ID>well$counter</WELL_ID>
+        </trace>
+FOO
+    $counter++;
+}
+
+print TRACE "</trace_volume>\n";
+close TRACE;

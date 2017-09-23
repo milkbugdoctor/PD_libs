@@ -1,0 +1,10 @@
+#!/bin/bash
+
+if [ $# -ne 1 ]; then
+    echo -e "\nUsage: $0 acc > output.gff\n"
+    exit 1
+fi
+
+acc="$1" ; shift
+
+id1_fetch -flat 5=$acc | asn2flat -format gff3

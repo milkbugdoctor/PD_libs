@@ -1,0 +1,26 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ $# -ne 1 ]; then
+    echo -e "\nUsage: $0 prefix\n"
+    exit 1
+fi
+
+prefix="$1" ; shift
+dir="`dirname $prefix`"
+fasta=`abs_path -1 $dir/input.seq`
+qual=`abs_path -1 $dir/input.qual`
+
+if need $fasta.txt $prefix.used-reads.txt $prefix.unused-reads.txt; then
+    run "join_files -r $fasta.txt $prefix.used-reads.txt id > $prefix.unused-reads.txt"
+fi
+if need $prefix.unused-reads.fa; then
+    run "make_fasta id seq $prefix.unused-reads.txt > $prefix.unused-reads.fa"
+fi
+if need $qual.txt $prefix.used-reads.txt $prefix.unused-reads.qual.txt; then
+    run "join_files -r $qual.txt $prefix.used-reads.txt id > $prefix.unused-reads.qual.txt"
+fi
+if need $prefix.unused-reads.qual.txt $prefix.unused-reads.qual.fa; then
+    run "make_fasta -s id qual $prefix.unused-reads.qual.txt > $prefix.unused-reads.qual.fa"
+fi

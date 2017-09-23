@@ -1,0 +1,67 @@
+#!/bin/bash
+
+. subs.sh
+
+best="get_best_hit qname score"
+use_seq=q
+use_pos=name
+while getopts aq:ps foo ; do
+    if [ "$foo" = 'a' ]; then
+	best=cat
+	use_pos=enc
+    elif [ "$foo" = 'q' ]; then
+        qual_file=$OPTARG
+    elif [ "$foo" = 's' ]; then
+	use_seq=r
+    elif [ "$foo" = 'p' ]; then
+	use_pos=enc
+    else
+	echo "unknown option [$foo]" 1>&2
+	exit 1
+    fi
+done
+shift $((OPTIND-1))
+use_seq="$use_seq$use_pos"
+
+if [ $# -ne 3 ]; then
+    echo -e "\nUsage: $0 [options] sequences.fa template.fa output_prefix
+
+    For each sequence in template.fa, find the best matching sequence
+    in sequence.fa.  Extract the matching portion of the sequence, and
+    output it with the name it had in template.fa.
+
+    E.g., sequence.fa might contain big contigs, and template.fa might contain
+    genes.
+
+    Options:
+	-a			get \"all\" best hits, even overlapping
+	-q sequences.fa		also create output_prefix.qual
+	-p			add position to name
+	-s			use sequence name in output, not template name
+
+" 1>&2
+    exit 1
+fi
+if need $1 $2 $3.delta.q; then
+    run "nucmer.get_best_hits -p $3 '$1' '$2'"
+fi
+if need $3.delta.q $3.best.txt; then
+    run "delta.list -x $3.delta.q | $best \
+	| cols.add -q renc \"'{rname}:{rstart}-{rend}:{qstrand}'\" \
+	| cols.add -q qenc \"'{qname}:{qstart}-{qend}:+'\" > $3.best.txt"
+fi
+if need $3.best.txt $3.best_seq.txt; then
+    run "add_seq_from_fasta $3.best.txt $1 rname rstart rend qstrand > $3.best_seq.txt"
+fi
+if need $3.best_seq.txt $3.fa; then
+    run "make_fasta $use_seq seq $3.best_seq.txt > $3.fa"
+fi
+
+if [ "$qual_file" ]; then
+    if need $3.best_seq.txt $3.best_seq+qual.txt; then
+	run "add_seq_from_fasta -o qual_ $3.best_seq.txt $qual_file rname rstart rend qstrand > $3.best_seq+qual.txt"
+    fi
+    if need $3.best_seq+qual.txt $3.qual; then
+	run "make_fasta $use_seq qual_seq $3.best_seq+qual.txt > $3.qual"
+    fi
+fi

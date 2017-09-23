@@ -1,0 +1,37 @@
+#!/usr/bin/perl
+
+use strict vars;
+
+my $debug = 1;
+
+(@ARGV == 3) || die "\nUsage: $0 column-1 column-2 infile > outfile.fa
+
+    Print out unique primers in two columns, ready for make_fasta.
+
+";
+
+use Cols;
+
+my $col1 = shift;
+my $col2 = shift;
+
+my $columns = Cols::new(ARGV);
+$columns->must_col($col1);
+$columns->must_col($col2);
+
+my %primers;
+print "primer_id\tprimer_seq\n";
+my $count = 0;
+while (my $row = $columns->get_row()) {
+    my $left = $row->{$col1};
+    my $right = $row->{$col2};
+    $primers{"\L$left"} = 1;
+    $primers{"\L$right"} = 1;
+    printf STDERR "$count lines, %d uniq primers\n", scalar keys %primers
+	if ++$count % 10000 == 0;
+}
+
+for my $p (sort keys %primers) {
+    next if $p =~ /^\s*$/;	# blank
+    print ">$p\n$p\n";
+}

@@ -1,0 +1,15 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 filename ...\n\n";
+
+for my $file (@ARGV) {
+    die "$file doesn't seem to be on NFS" if ! on_nfs($file);
+}
+
+sub on_nfs {
+    my ($file) = @_;
+    my $count = `find $file -maxdepth 0 -fstype nfs | wc -l` + 0;
+    return $count >= 1;
+}
+
+exit 0;

@@ -1,0 +1,54 @@
+#!/usr/bin/env activeperl
+#!/usr/bin/perl
+
+my $debug = 1;
+
+@ARGV || die "\nUsage: $0 xmlfile
+
+Just an example program that you can modify.
+
+";
+
+use XML::Parser;
+use XML::Parser::EasyTree;
+
+$XML::Parser::EasyTree::Noempty = 1;
+
+$p1 = new XML::Parser(Style => 'EasyTree');
+my $tree = $p1->parsefile($ARGV[0]);
+
+&traverse_tree($tree);
+
+sub traverse_tree {
+    my ($tree, @stack) = @_;
+    my @branches = @$tree;
+    printf STDERR "got %d brances from root\n", scalar(@branches) if $debug;
+    return if ! @branches;
+    for my $branch (@branches) {
+	traverse_node($branch);
+    }
+}
+
+sub traverse_node {
+    my ($node, @stack) = @_;
+    my $type = $node->{'type'};
+    my $name = $node->{'name'};
+    my $content = $node->{'content'};
+    my $attrib = $node->{'attrib'};
+    my @attrib = %$attrib;
+    if ($type eq 'e') {
+	warn "traversing node $name type $type attrib [@attrib]\n";
+	push(@stack, $name);
+	my @content = @$content;
+	for my $child (@content) {
+	    traverse_node($child, @stack);
+	}
+    }
+    if ($type eq 't') {
+	warn "got text node\n";
+	$content =~ s/^\s+//s;
+	$content =~ s/\s+$//s;
+	print "With parents '@stack' I found some text:\n$content\n"
+	    if $content ne '';
+    }
+}

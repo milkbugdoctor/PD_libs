@@ -1,0 +1,105 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('c');
+
+$pad = 50;
+$circular = $opt_c;
+
+@ARGV >= 7 || die "\nUsage: $0 [options] genes.txt sequences.fa chr start-col len-col strand-col seq-col [end-col]> outfile.txt
+
+    Options:
+	-c		circular
+
+    Parameters:
+	chr		name of sequence in Fasta file, or column which contains sequence name	
+
+    Looks for sequence in vicinity of purported position, fixes position columns,
+    and prints error if sequence can't be found.
+
+    Why is this necessary?  Mostly because of truncated NimbleGen probes
+    whose positions have not been adjusted.
+
+";
+
+use Columns;
+use Fasta;
+require 'misc.pl';
+require 'primers.pl';
+
+my $genes_file = shift;
+my $seq_file = shift;
+my $chr_col = shift;
+my $start_col = shift;
+my $len_col = shift;
+my $strand_col = shift;
+my $seq_col = shift;
+my $end_col = shift;
+
+my $fasta = Fasta::new($seq_file);
+$fasta->get_seq_positions(1);
+
+my $cols = Columns::new($genes_file);
+my $has_chr = $cols->has_col($chr_col);
+$cols->add_col($strand_col, $end_col);
+$cols->must_all($start_col, $len_col, $seq_col);
+$cols->print_header(STDOUT);
+while (my $row = $cols->get_row()) {
+    my ($first, $orig_len) = $cols->get_col($row, $start_col, $len_col);
+    my ($orig_seq) = $cols->get_col($row, $seq_col);
+    my $last = $first + length($orig_seq) - 1;
+    my $id = $has_chr ? $cols->get_col($row, $chr_col) : $chr_col;
+    if ($id eq '' || $first eq '') {
+	$cols->set_col($row, $len_col, length($orig_seq));
+	$cols->print_row(STDOUT, $row);
+	next;
+    }
+    if ($start_col eq $end_col) {
+	$first =~ /(\d+)[^\d]+(\d+)/;	# parse num..num
+	($first, $last) = ($1, $2);
+    }
+    
+    my ($start, $end, $upstream, $downstream, $orf);
+    ($start, $end) = ($first, $last);
+    $first = max(1, $first - $pad);
+    $last += $pad;
+warn "$loc, first $first start $start end $end last $last\n" if $debug;
+    my $len = $last - $first + 1;
+    if ($circular) {
+	$seq = $fasta->get_seq($id);
+	$seq .= $seq;
+	$seq = substr($seq, $first - 1, $len);
+    }
+    else {
+	$seq = $fasta->get_seq($id, $first, $len);
+    }
+    warn "could not grab all of padded seq" if length($seq) != $len;
+    $last = $first + length($seq) - 1;
+
+    $seqs{'+'} = $orig_seq;
+    my $rc_seq = rc($orig_seq);
+    $seqs{'-'} = $rc_seq;
+    my $offset;
+    my $strand;
+    for $s ("+", "-") {
+	$strand = $s;
+	if ($seq =~ /$seqs{$strand}/) {
+	    $offset = length($`);
+	    last;
+	}
+    }
+    if (defined $offset) {
+	my $len = length($orig_seq);
+	$cols->set_col($row, $len_col, length($orig_seq));
+	$cols->set_col($row, $strand_col, $strand);
+	$cols->set_col($row, $start_col, $first + $offset);
+	$cols->set_col($row, $end_col, $first + $offset + $len - 1) if $end_col;
+    }
+    else {
+	warn "no match for [@$row]:\n[$seq] vs [$orig_seq]/[$rc_seq]\n\n";
+	$cols->set_col($row, $strand_col, 'none');
+    }
+    $cols->print_row(STDOUT, $row);
+}
+close GENES;
+

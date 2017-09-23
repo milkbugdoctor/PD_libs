@@ -1,0 +1,21 @@
+#!/bin/bash
+
+if [ $# -ne 4 ]; then
+    echo -e "\nUsage: $0 fasta-dir qual-dir out.fa out.qual\n"
+    exit 1
+fi
+
+fa="$1"
+qual="$2"
+fa_out="$3"
+qual_out="$4"
+
+rm -f "$fa_out" "$qual_out"
+for i in $fa/*
+do
+    base=`basename $i .seq`
+    echo -n .
+    (cat $fa/$base.seq; echo) >> "$fa_out"
+    head -1 $fa/$base.seq >> "$qual_out"
+    (cat $qual/$base.qual; echo) >> "$qual_out"
+done

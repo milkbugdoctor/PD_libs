@@ -1,0 +1,304 @@
+#!/usr/bin/perl
+
+require 'misc.pl';
+
+my $debug = 0;
+
+# radial_box xc yc start_angle end_angle radius len color [outline-color thickness]
+# radial_line xc yc angle radius len color thick
+# radial_text xc yc angle radius color size halign valign "text"
+
+$PI = 3.14159265358979323846;
+$PI_2 = 1.57079632679489661923;
+
+$font = "/usr/local/lib/fonts/ttf/luxisb.ttf";
+
+$pixels = 8000;
+$ypixels = $pixels * 5 / 4;
+$scale = 105.0;
+$xoffset = (1 - 100/$scale) / 2 * $pixels;
+$yoffset = (1 - 100/$scale) / 2 * $pixels + ($ypixels - $pixels) / 2;
+
+$anti_aliased = 1;
+
+print qq{<?xml version="1.0"?>
+<svg width="100%" height="100%" viewBox="0 0 $pixels $ypixels" xmlns="http://www.w3.org/2000/svg" version="1.1">
+};
+
+init_colors($im);
+
+# radial_box xc yc start_angle end_angle radius len color [outline-color thickness]
+# radial_line xc yc angle radius len color thick
+# radial_text xc yc angle radius color size halign valign "text"
+
+while (<>) {
+    chomp;
+    warn "draw_gd got [$_]\n" if $debug;
+    if (/^#/) {
+    }
+    elsif (/^background (\S+)/) {
+	my $c = color($1);
+	print "<rect x='0' y='0' width='$pixels' height='$ypixels' fill='$c' stroke='none'/>\n";
+    }
+    elsif (/^arc /) {
+	my ($cmd, $xc, $yc, $radius, $color, $thick, $ang1, $ang2) = split /\s+/;
+	($first_angle, $last_angle) = ($ang1, $ang2);
+	($xc, $yc) = scale_xy($xc, $yc);
+	print "<!-- $_ -->\n";
+	$last_angle += 1 if $last_angle <= $first_angle;
+	my $c = color($color);
+	my $th = len($thick/100);
+	if ($last_angle - $first_angle >= 1) {
+	    my $r = scale_radius($radius);
+	    print "<ellipse cx='$xc' cy='$yc' rx='$r' ry='$r' stroke='$c' stroke-width='$th' fill='none'/>\n";
+	}
+	my $dir = 1;
+	my $large = (($last_angle - $first_angle) > .5) ? 1 : 0;
+	my $ang = "0 $large,1";
+	my ($xx, $yy) = from_polar($radius, $first_angle);
+	my ($x1, $y1) = polar_to_xy($radius, $first_angle, $xc, $yc);
+	my ($x2, $y2) = polar_to_xy($radius, $last_angle, $xc, $yc);
+	my $scaled_radius = sqrt($xx * $xx + $yy * $yy);
+	my $path = sprintf "M%s,%s\n", $x1, $y1;
+	$path .= sprintf "A%s,%s $ang %s,%s\n", $scaled_radius, $scaled_radius, $x2, $y2;
+	print "<path d='$path z' stroke='$c' stroke-width='$th' fill='none'/>\n";
+    }
+    elsif (/^radial_text/) {
+	my ($cmd, $xc, $yc, $angle, $radius, $color, $size, $halign, $valign) = split /\s+/;
+	$_ =~ /["'](.*)["']/;
+	my $string = $1;
+	($xc, $yc) = scale_xy($xc, $yc);
+	$color = color($color);
+	next if $color eq "";
+	my ($x, $y) = from_polar($radius - $len, $angle);
+	$x += $xc;
+	$y += $yc;
+	$size *= 2;
+	my $shift = shift_text($font, $size, $x, $y, $string, $halign, $valign);
+	print "<text x='$x' y='$y' font-family='Verdana' font-weight='bold' font-size='$size' fill='$color' $shift>$string</text>\n";
+    }
+    elsif (/^text/) {
+	my ($cmd, $x, $y, $color, $size, $halign, $valign) = split /\s+/;
+	$_ =~ /["'](.*)["']/;
+	my $string = $1;
+	($x, $y) = scale_xy($x, $y);
+	$color = color($color);
+	next if $color eq "";
+	$size *= 2;
+	my $shift = shift_text($font, $size, $x, $y, $string, $halign, $valign);
+	print "<text x='$x' y='$y' font-family='Verdana' font-weight='bold' font-size='$size' fill='$color' $shift>$string</text>\n";
+    }
+    elsif (/^line/) {
+	print "<!-- $_ -->\n";
+	my ($cmd, $x1, $y1, $x2, $y2, $color, $thick) = split /\s+/;
+	($x1, $y1) = scale_xy($x1, $y1);
+	($x2, $y2) = scale_xy($x2, $y2);
+	my $real_color = color($color);
+	my $th = len($thick/100);
+	print "<line x1='$x1' y1='$y1' x2='$x2' y2='$y2' stroke='$real_color' stroke-width='$th'/>\n";
+    }
+    elsif (/^radial_line/) {
+	my ($cmd, $xc, $yc, $start, $radius, $len, $color, $thick) = split /\s+/;
+
+	$angle = $start;
+	($xc, $yc) = scale_xy($xc, $yc);
+
+	next if $color eq "white";
+	next if $color eq "no data";
+	next if $color eq '';
+
+	my $real_color = color($color);
+	my ($x, $y) = polar_to_xy($radius, $angle, $xc, $yc);
+	my ($x2, $y2) = polar_to_xy($radius - $len, $angle, $xc, $yc);
+
+	my $path = sprintf "M$x,$y L$x2,$y2\n";
+	my $th = len($thick/50);
+	print "<line x1='$x' y1='$y' x2='$x2' y2='$y2' stroke='$real_color' stroke-width='$th'/>\n";
+    }
+    elsif (/^box/) {
+	my ($cmd, $xtop, $ytop, $xbot, $ybot, $color) = split /\s+/;
+	($xtop, $ytop) = scale_xy($xtop, $ytop);
+	($xbot, $ybot) = scale_xy($xbot, $ybot);
+	my $x = min($xtop, $xbot);
+	my $y = min($ytop, $ybot);
+	my $wid = abs($xtop - $xbot);
+	my $ht = abs($ytop - $ybot);
+	my $c = color($color);
+	next if $c eq '';
+	print "<rect x='$x' y='$y' width='$wid' height='$ht' fill='$c' stroke='none'/>\n";
+    }
+    elsif (/^radial_box/) {
+	my ($cmd, $xc, $yc, $start, $end, $radius, $len, $inner_color,
+	    $outer_color, $thick) = split /\s+/;
+	print "<!-- $_ -->\n";
+	$first_angle = $start;
+	$last_angle  = $end;
+	$last_angle += 1 if $last_angle <= $first_angle;
+	($xc, $yc) = scale_xy($xc, $yc);
+	print "<!-- $first_angle - $last_angle -->\n";
+	my $dir = 1;
+	my $large = (($last_angle - $first_angle) > .5) ? 1 : 0;
+	my $ang = "0 $large,1";
+	my ($xx, $yy) = from_polar($radius, $first_angle);
+	my ($x1, $y1) = polar_to_xy($radius, $first_angle, $xc, $yc);
+	my ($x2, $y2) = polar_to_xy($radius, $last_angle, $xc, $yc);
+	my ($x3, $y3) = polar_to_xy($radius - $len, $last_angle, $xc, $yc);
+	my ($x4, $y4) = polar_to_xy($radius - $len, $first_angle, $xc, $yc);
+	my $scaled_radius = sqrt($xx * $xx + $yy * $yy);
+	my $path = sprintf "M%s,%s\n", $x1, $y1;
+	$path .= sprintf "A%s,%s $ang %s,%s\n", $scaled_radius, $scaled_radius, $x2, $y2;
+	$path .= "L$x3,$y3\n";
+	$ang = "0 $large,0";
+	$path .= sprintf "A%s,%s $ang %s,%s\n", $scaled_radius, $scaled_radius, $x4, $y4;
+	$path .= "L$x1,$y1";
+	my $in = color($inner_color);
+	# my $out = 'none';
+	my $out = $in;
+	my $th = max(1, len($thick/10));
+	# my $th = len($thick/10);
+	if ($outer_color) {
+	    $out = color($outer_color);
+	}
+	print "<path d='$path z' fill='$in' stroke='$out' stroke-width='$th'/>\n";
+    }
+    else {
+	die "unknown command: $_\n";
+    }
+}
+print "</svg>\n";
+exit 0;
+
+sub init_colors {
+    my ($im) = @_;
+    # allocate some colors
+    %color_hash = (
+	"red", 		'red',
+	"green",	'rgb(0, 255, 0)',
+	"blue",		'blue',
+	"black",	'black',
+	"grey",		'rgb(128, 128, 128)',
+	"gray",		'rgb(128, 128, 128)',
+	"no data",	'rgb(255, 255, 255)',	# ZZZ
+	"white",	'white',
+	"orange",	'rgb(255, 128, 64)',
+	"pink",		'rgb(255, 128, 128)',
+	"purple",	'rgb(255, 0, 255)'
+    );
+}
+
+sub color {
+    my ($c) = @_;
+    return $color_hash{$c} if defined $color_hash{$c};
+    if ($c =~ m|([\d.]+)[,/]\s*([\d.]+)[,/]\s*([\d.]+)|) {
+	return "rgb($1, $2, $3)";
+    }
+    else {
+	die "Unknown color '$c'\n";
+    }
+}
+
+#
+#    input: 0 - 1, starts at top and goes clockwise
+#    output: 0 - 360 angle
+#
+sub get_angle {
+    my @angles;
+    for my $pos (@_) {
+        push(@angles, $ang = 360 + ($pos * 360 - 90));
+    }
+    @angles = sort {$a <=> $b} @angles;
+    return @angles;
+}
+
+sub scale_xy {
+    my ($x, $y) = @_;
+    $x = $xoffset + ($x / $scale) * $pixels;
+    $y = $yoffset + ($y / $scale) * $pixels;
+    return ($x, $y);
+}
+
+sub scale_radius {
+    my ($radius) = @_;
+    return $radius / $scale * $pixels / 2.0;
+}
+
+sub from_polar {
+    my ($radius, $angle) = @_;
+    $angle = $angle * 2 * $PI - $PI/2.0;
+    $x = cos($angle) * ($radius) / $scale * $pixels / 2.0;
+    $y = sin($angle) * ($radius) / $scale * $pixels / 2.0;
+    return ($x, $y);
+}
+
+sub polar_to_xy {
+    my ($radius, $angle, $xc, $yc) = @_;
+    my ($x, $y) = from_polar($radius, $angle);
+    return ($x + $xc, $y + $yc);
+}
+
+#
+#   angle = 0 - 1
+#
+sub polar_to_cartesian {
+    my ($radius, $angle) = @_;
+    $angle = $angle * 2 * $PI - $PI/2.0;
+    $x = cos($angle) * $radius;
+    $y = sin($angle) * $radius;
+    return ($x, $y);
+}
+
+sub len {
+    my ($radius) = @_;
+    my $len = $radius * $pixels / $scale;
+    return $len;
+}
+
+sub create_dot_brush {
+    my ($width, $color) = @_;
+    # Create a brush at an angle
+    my $brush = new GD::Image($width, $width);
+    my $t = $brush->colorAllocate(1, 2, 3);
+    my $c = $brush->colorAllocate(rgb($color));
+    $brush->transparent($t);
+    $brush->filledArc($width/2, $width/2, $width/2, $width/2, 0, 360, $c);
+    return $brush;
+}
+
+sub rgb {
+    if ($_[0] eq "red") 	{ return (255, 0, 0); }
+    if ($_[0] eq "green")	{ return (0, 255, 0); }
+    if ($_[0] eq "blue")	{ return (0, 0, 255); }
+    if ($_[0] eq "black")	{ return (0, 0, 0); }
+    if ($_[0] eq "grey")	{ return (128, 128, 128); }
+    if ($_[0] eq "no data")	{ return (255, 255, 255); }
+    if ($_[0] eq "white")	{ return (255, 255, 255); }
+    if ($_[0] eq "orange")	{ return (255, 128, 64); }
+    if ($_[0] eq "pink")	{ return (255, 128, 128); }
+    if ($_[0] eq "purple")	{ return (255, 0, 255); }
+    if ($_[0] =~ m|(\d+)[,/](\d+)[,/](\d+)|) {
+	return ($1, $2, $3);
+    }
+    die "Unknown color '$_[0]'";
+}
+
+sub shift_text {
+    my ($font, $size, $x, $y, $string, $halign, $valign) = @_;
+    my $str;
+    if ($halign eq 'center') {
+	$str .= "text-anchor='middle'";
+    }
+    elsif ($halign eq 'right') {
+	$str .= "text-anchor='end'";
+    }
+    if ($valign eq 'bottom') {
+	# $str .= " dy='$size'";
+    }
+    elsif ($valign eq 'top') {
+	$str .= " dy='$size'";
+    }
+    elsif ($valign eq 'center') {
+	$str .= sprintf " dy='%s'", $size/3;
+    }
+    return $str;
+}
+

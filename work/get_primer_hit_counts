@@ -1,0 +1,24 @@
+#!/bin/bash
+
+if [ $# -ne 2 ]; then
+	echo -e "\nUsage: $0 seqs.txt primer-len\n"
+	exit 1
+fi
+
+tmp="/usr/local/tmp/get_primer_hit_counts.$$"
+mkdir -p "$tmp" || exit 1
+
+runit()
+{
+    for i in `permute 3`
+    do
+	echo "nice fast_primer_hit_counts $i $2 < $1 > $tmp/$i 2> /dev/null" \
+		| job.add "fast_primer_hit_counts $i"
+    done
+}
+
+runit $1 $2
+
+job.wait fast_primer_hit_counts
+cat $tmp/*
+rm -rf $tmp

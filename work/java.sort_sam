@@ -1,0 +1,1 @@
+java -a fred.prog.SortSam "$@"

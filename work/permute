@@ -1,0 +1,20 @@
+#!/usr/bin/perl
+
+(($len) = @ARGV) == 1 || die "\nUsage: $0 len\n\n";
+
+sub next {
+    my ($seq) = @_;
+    for ($pos = length($seq) - 1; $pos >= length($prefix); $pos--) {
+        substr($seq, $pos, 1) =~ tr/ACGT/CGTA/;
+        last if substr($seq, $pos, 1) ne "A";
+    }
+    return "" if $pos < length($prefix);
+    return $seq;
+}
+
+$seq = "A" x $len;
+
+do {
+	print "$seq\n";
+}
+while ($seq = &next($seq));

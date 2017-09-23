@@ -1,0 +1,41 @@
+#!/usr/bin/perl
+
+(@ARGV >= 2) || die "\nUsage: $0 class-col max-lines [file]
+
+    Chooses first <max-lines> lines for each class, distinguished by
+    <class-col>.  File must be already sorted by <class-col>.
+
+	class-col	which column specifies the class
+	max-lines	max lines per class
+
+";
+
+use Cols;
+
+my $class_col = shift;
+my $max_lines = shift;
+
+my $cols = Cols::new(ARGV);
+$cols->must_col($class_col);
+$cols->print_header(STDOUT);
+
+while (my $row = $cols->get_row()) {
+    my $class = $row->{$class_col};
+    if ($class ne $last_class and $last_class ne '') {
+	&do_probes($cols, $max_lines, \@lines);
+    }
+    $last_class = $class;
+    push(@lines, $row);
+}
+&do_probes($cols, $max_lines, \@lines);
+
+sub do_probes {
+    my ($cols, $max_lines, $lines_ref) = @_;
+    if (@$lines_ref > $max_lines) {
+        @$lines_ref = splice(@$lines_ref, 0, $max_lines);
+    }
+    for my $row (@$lines_ref) {
+	$cols->print_row(STDOUT, $row);
+    }
+    @$lines_ref = ();
+}

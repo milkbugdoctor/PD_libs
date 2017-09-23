@@ -1,0 +1,24 @@
+#!/bin/bash
+
+. subs.sh
+
+ff=phrap.newbler.plasmids.med.vb80/phrap.our-contigs.fa
+qq=phrap.newbler.plasmids.med.vb80/phrap.our-contigs.qual
+extra="aaa.fa aaa.qual"
+
+n=0
+for i in SARB17.*
+do
+    : $((n++))
+    echo "$i"
+    if [ ! "$our" ]; then
+	our="$i/$i.fa $i/$i.qual"
+	rest="$extra"
+    else
+	rest="$i/$i.fa $i/$i.qual $extra"
+    fi
+
+    run "phrap.do_our_contigs -o '-minmatch 50 -maxmatch 50 -retain_duplicates' test.$n/phrap $our $rest"
+
+    our="test.$n/phrap.our-contigs.{fa,qual}"
+done

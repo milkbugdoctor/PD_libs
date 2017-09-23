@@ -1,0 +1,189 @@
+#!/usr/bin/perl
+
+#
+#   Do tm filtering for NimbleGen probes.
+#   Remove bases from the left to get closer to avg_tm.
+#
+#   Expects: probe_seq probe_id probe_start probe_strand
+#
+
+use Getopt::Std;
+getopts('i');
+
+require 'primers.pl';
+require 'columns.pl';
+require 'probes.pl';
+require 'perl_tm.pl';
+
+(@ARGV >= 4) || die "\nUsage: $0 min_len max_len max_tm_diff avg_tm file [class_col min_keep] > outfile
+
+    Shortens probes that are above average Tm, if possible.
+
+    Parameters:
+	class-col	column which contains probe's origin, e.g.: intron_id
+	min-keep	min. number of probes to keep per class, even if bad tm
+
+	Input file must be sorted by class_col if class_col is used.
+
+    Options:
+	-i		don't try to fix probe_id column
+
+";
+
+my $min_len = shift;
+my $max_len = shift;
+my $max_tm_diff = shift;
+my $avg_tm = shift;
+my $infile = shift;
+my $class_col = shift;
+my $min_keep = shift;
+
+$| = 1;
+
+open(INPUT, $infile) || die "can't read file '$infile'";
+my @header = get_header(INPUT);
+my $comments = get_header_comments(@header);
+
+my $probe_id_col = has_col(\@header, "PROBE_ID", "probe_id");
+my $probe_seq_col = must_col(\@header, "PROBE_SEQUENCE", "probe_seq");
+my $probe_pos_col = must_col(\@header, "POSITION", "probe_start");
+my $probe_end_col = must_col(\@header, "probe_end");
+my $probe_len_col = must_col(\@header, "probe_len");
+my $strand_col = must_col(\@header, "probe_strand", "strand");
+my $tm_col = has_col(\@header, "probe_tm", "tm") || 'tm';
+my $probe_offset_col = has_col(\@header, "probe_offset");
+
+my @new_header = @header;
+add_col(\@new_header, $probe_end_col);
+add_col(\@new_header, $probe_len_col);
+add_col(\@new_header, $tm_col);
+add_col(\@new_header, "avg_tm");
+$" = "\t";
+print "$comments@new_header\n";
+
+my $last_class;
+my @bad_probes;
+my @good_probes;
+my $num = 1;
+while (my @row = get_row(INPUT)) {
+    my $seq = get_col(\@header, \@row, $probe_seq_col);
+    my $probe_start = get_col(\@header, \@row, $probe_pos_col);
+    my $probe_id = $probe_id_col ? get_col(\@header, \@row, $probe_id_col) : undef;
+    my $offset = get_col(\@header, \@row, "probe_offset");	# offset in parent seq
+    my $tm = get_col(\@header, \@row, $tm_col);			# optional
+    my $strand = get_col(\@header, \@row, $strand_col);
+    my $class = get_col(\@header, \@row, $class_col) || $num++;
+
+    &do_probes($class, $last_class);
+    $last_class = $class;
+
+    $total++;
+    if ($tm eq '') {
+	$tm = calc_tm($seq);
+    }
+    my $probe_len = length($seq);
+    my $probe_end = $probe_start + $probe_len - 1;
+    set_col(\@new_header, \@row, $tm_col, $tm);
+    set_col(\@new_header, \@row, "avg_tm", $avg_tm);
+    set_col(\@new_header, \@row, $probe_end_col, $probe_end);
+    set_col(\@new_header, \@row, $probe_len_col, $probe_len);
+
+    if ($tm < $avg_tm - $max_tm_diff) {
+	$too_low++;
+	push(@bad_probes, \@row);
+	next;
+    }
+    elsif ($tm > $avg_tm) {
+	my $good_probe = 0;
+	my $del = 0;
+	for ($d = 1; ; $d++) {
+	    my $s = substr($seq, $d);
+	    my $len = length($s);
+	    last if $len < $min_len;
+	    next if $len > $max_len;
+	    $t = calc_tm($s);
+	    last if $t < $avg_tm;
+	    $del = $d;
+	    $tm = $t;
+	}
+	my $new_pos = $probe_start + $del;
+	if ($tm > $avg_tm + $max_tm_diff) {
+	    $too_high++;
+	    $good_probe = 0;
+	}
+	else {
+	    $good_probe = 1;
+	    $good++;
+	}
+
+
+	$seq = substr($seq, $del);
+	$probe_len = length($seq);
+	$offset += $del;
+	if ($strand =~ /^\+/) {
+	    $probe_start += $del;
+	}
+	my $probe_end = $probe_start + $probe_len - 1;
+	if ($del > 0 && ! $opt_i) {
+	    if ($probe_id =~ /(\d+):(\d+)$/) {
+		$probe_id = sprintf "%s%d:%d", $`, $probe_start, $probe_len;
+	    }
+	    elsif ($probe_id =~ /(\d+)$/) {
+		$probe_id = sprintf "%s%d:%d", $`, $start, $probe_len;
+	    }
+	    else {
+		die "unknown probe_id syntax: $probe_id";
+	    }
+	}
+	set_col(\@new_header, \@row, $probe_id_col, $probe_id) if $probe_id_col;
+	set_col(\@new_header, \@row, $probe_seq_col, $seq);
+	set_col(\@new_header, \@row, $probe_pos_col, $probe_start);
+	set_col(\@new_header, \@row, $tm_col, $tm);
+	set_col(\@new_header, \@row, $probe_offset_col, $offset) if $probe_offset_col;
+	set_col(\@new_header, \@row, $probe_end_col, $probe_end);
+	set_col(\@new_header, \@row, $probe_len_col, $probe_len);
+	if ($good_probe) {
+	    push(@good_probes, \@row);
+	}
+	else {
+	    push(@bad_probes, \@row);
+	}
+    }
+    else {
+	$good++;
+	push(@good_probes, \@row);
+    }
+}
+&do_probes();
+
+printf STDERR "total %d   good %d (%f%%)   tm-too-low %d (%f%%)   tm-too-high %d (%f%%)   force-keeps: %f\n",
+    $total, $good, $good/$total*100,
+    $too_low, $too_low/$total*100,
+    $too_high, $too_high/$total*100,
+    $kept;
+
+exit 0;
+
+sub do_probes {
+    my ($a, $b) = @_;
+    return if @bad_probes == 0 and @good_probes == 0;
+    return if $a ne '' and $a eq $b;	# still same class
+
+    if (@bad_probes and @good_probes < $min_keep) {
+	my $keep = $min_keep - @good_probes;
+	@bad_probes = trim_probes($keep, @bad_probes);
+	$kept += @bad_probes;
+	push(@good_probes, @bad_probes);
+    }
+    for $bad (@bad_probes) {
+	my $tm = get_col(\@header, $bad, 'tm');
+    }
+    for $good (@good_probes) {
+	print "@$good\n";
+    }
+    @bad_probes = @good_probes = ();
+}
+
+sub calc_tm {
+    return PerlTm::exact_tm($_[0]);
+}

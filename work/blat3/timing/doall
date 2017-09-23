@@ -1,0 +1,16 @@
+#!/bin/bash
+
+if [ ! "$1" ]; then
+    echo -e "\nUsage: $0 lines\n"
+    exit 1
+fi
+
+for i in chr1 chr10 chr11 chr14 chr15 chr16 chr17 chr18 chr19 chr2 chr20 chr3 chr4 chr5 chr6 chr8 chr9 chrX chrY chr12 chr13 chr21 chr22 chr7
+do
+    echo $i
+    echo -n "    blat2: "
+    (head -$1 test.fa | time -p blat2_big_query -c $i /dev/stdin 0 | wc) 2>&1 | head -1
+    echo -n "    blat3: "
+    (head -$1 test.fa | time -p blat3_big_query -c $i /dev/stdin 0 | wc) 2>&1 | head -1
+    echo
+done

@@ -1,0 +1,20 @@
+#!/bin/bash
+
+. blat2_info.sh
+
+bad=0
+
+chrs="`blat2_chrs`"
+if [ ! "$chrs" ]; then
+	echo "no servers"
+	exit 1
+fi
+
+for chr in $chrs
+do
+    if ! check_status $chr; then
+	bad=1
+    fi
+done
+
+exit $bad

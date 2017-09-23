@@ -1,0 +1,42 @@
+#!/usr/bin/perl
+
+while (<>) {
+    last if /^NUCMER/;
+}
+
+my @lines;
+my ($ref, $query, $ref_len, $query_len);
+while (<>) {
+    chomp;
+    if (/^>(\S+) (\S+) (\S+) (\S+)/) {
+	&doit;
+	($ref, $query, $ref_len, $query_len) = ($1, $2, $3, $4);
+    }
+    else {
+	push(@lines, $_);
+    }
+}
+&doit;
+
+sub doit {
+    return if @lines == 0;
+    for (my $i = 0; $i <= $#lines; $i++) {
+	my ($ref_start, $ref_end, $query_start, $query_end, $mismatch)
+	    = split /\s+/, $lines[$i];
+	my $query_align_len = abs($query_end - $query_start) + 1;
+	my $ref_align_len = abs($ref_end - $ref_start) + 1;
+warn "rs $ref_start re $ref_end qs $query_start qe $query_end mis $mismatch\n";
+	while (++$i <= $#lines) {
+	    my $d = $lines[$i];
+	    last if $d eq '0';
+	    if ($d < 0) {
+		$ref_align_len++;
+	    }
+	    else {
+		$query_align_len++;
+	    }
+	}
+warn "$ref_align_len $query_align_len\n";
+    }
+    @lines = ();
+}

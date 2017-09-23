@@ -1,0 +1,19 @@
+#!/bin/bash
+
+if [ $# -ne 3 ]; then
+    echo -e "\nUsage: $0 ref.fa query.fa wordsize > alignments.txt
+
+    Uses job.grabber to perform precise alignments via fred.amos.MakeLayout.
+"
+    exit 1
+fi
+
+ref="$1" ; shift
+query="$1" ; shift
+wordsize="$1" ; shift
+outfile="$1" ; shift
+
+cmd="java fred.amos.MakeLayout -t $ref %s $wordsize"
+
+fasta.do_fast "$cmd" 1000 $query
+

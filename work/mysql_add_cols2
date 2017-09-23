@@ -1,0 +1,22 @@
+#!/usr/bin/perl
+
+require 'mysql.pl';
+
+(($basetable, $jointable, $joincol1, $joincol2, @addcols) = @ARGV) >= 5 ||
+	die "\nUsage: $0 base-table join-table join-col1 join-col2 add-cols\n\n";
+
+for $col (@addcols) {
+	$col = "j.$col";
+}
+$cols = join(",\n\t", @addcols);
+
+$query = "SELECT $cols,
+    b.*
+FROM $basetable b
+left join $jointable j on (b.$joincol1=j.$joincol2)
+";
+
+$fd = mysql_output($query, 1);
+while (<$fd>) {
+	print;
+}

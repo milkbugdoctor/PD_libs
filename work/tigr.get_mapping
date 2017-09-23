@@ -1,0 +1,10 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 infile.asm\n\n";
+
+print join("\t", qw{new old}), "\n";
+while (<>) {
+    chomp;
+    $contig = $1 if /^asmbl_id\s+(\d+)/;
+    print "$contig\t$1\n" if /^seq_name\s+(\S+)/;
+}

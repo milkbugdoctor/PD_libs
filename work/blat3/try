@@ -1,0 +1,24 @@
+#!/bin/bash
+
+if [ "$1" = 0 ]; then
+    pkill blat3_server
+    sleep 2
+    port=$(($$ + 4000))
+    setsid ./blat3_server $port &
+    sleep 1
+    echo $port > port
+    echo restarted
+    exit
+fi
+
+if [ "$1" -lt 1 ]; then
+    echo -e "\nUsage: $0 restart | num_lines\n"
+    exit 1
+fi
+
+(echo " blat /home/flong/work/chr/gp.18.36/chr1.2bit stdin stdout   -noHead" ;
+head -$1 timing/test.fa ; cat <<FOO) | tell localhost `cat port`
+>FLUSH1
+>FLUSH2
+FOO
+

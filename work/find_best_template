@@ -1,0 +1,55 @@
+#!/bin/bash
+
+jobit=1
+unused=1
+
+. subs.sh
+
+if [ $# -lt 2 ]; then
+    echo -e "\nUsage: $0 templates.txt newbler.fa [blat options]\n"
+    exit 1
+fi
+
+mkdir -p data
+
+templates="$1" ; shift
+newbler="$1" ; shift
+
+nbase=`filename_base2 $newbler`
+
+for i in `cat $templates`
+do
+    base=`basename $i .fa`
+    if need $newbler $i data/$nbase.$base.mis.delta; then
+	delta="data/$nbase.$base.mis.delta"
+	cmd="blat2delta $i $newbler -tileSize=16 > $delta $*"
+	cmd="$cmd && delta-filter -q $delta > $delta.q"
+	if [ "$jobit" ]; then
+	    echo "$cmd" | job.add doit.$$
+	else
+	    run "$cmd"
+	fi
+    fi
+    if [ "$unused" ]; then
+	if need $newbler $i data/$nbase.$base.unused.fa; then
+	    if [ "$jobit" ]; then
+		echo "fasta.get_unused_pieces $i $newbler > data/$nbase.$base.unused.fa" | job.add doit.$$
+	    else
+		run "fasta.get_unused_pieces $i $newbler > data/$nbase.$base.unused.fa"
+	    fi
+	fi
+    fi
+done
+job.wait doit.$$
+
+echo -e "template\tused\tmis\tmis%\tunused"
+for i in `cat $templates`
+do
+    base=`basename $i .fa`
+    mis=`delta.list data/$nbase.$base.mis.delta.q | add | ncols -h mis`
+    used=`delta.list data/$nbase.$base.mis.delta.q | add | ncols -h qlen`
+    unused=`fasta.get_headers data/$nbase.$base.unused.fa | add | ncols -h len`
+    misp=`echo $mis / $used \* 100 | bc -l 2> /dev/null`
+    misp=`printf '%.3f' $misp`
+    echo -e "$i\t$used\t$mis\t$misp\t$unused"
+done

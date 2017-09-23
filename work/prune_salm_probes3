@@ -1,0 +1,182 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('b:c:no:p:');
+
+use POSIX;
+use Cols;
+require 'misc.pl';
+require 'perl_tm.pl';
+require 'markers.pl';
+require 'search.pl';
+
+my $buffer_size = $opt_b || 400;
+my $min_uncovered = 5;
+
+(@ARGV == 4) || die "\nUsage: $0 [options] min_overlap max_overlap avg_tm sorted-file
+
+    This is tricky code written for the LT2/14028 combo arrays.
+    It tries to perform a good tiling that meshes well with the probes
+    that have already been chosen.
+
+    Input file must be sorted by probe_chr, probe_start.
+
+    Pick probe closest to midpoint if Tm within 2 of average,
+    otherwise pick probe closest to average.
+
+    Note: assumes single chromosome
+
+    Options:
+	-b size		buffer size
+	-n		don't output prev probes, just new probes
+	-c chr		only load markers from this chromosome/contig
+	-p prev_file	file containing previously selected probes
+	-o opt_ov	optimal overlap (default: (min+max)/2)
+
+";
+
+my $min_overlap = shift;
+my $max_overlap = shift;
+my $avg_tm = shift;
+my $infile = shift;
+
+my $cols = Cols::new($infile);
+$cols->print_header(STDOUT);
+
+my $num_markers = 0;
+my $markers = markers::new('use_refs', 100);
+if ($opt_p) {
+    my $tmp_cols = Cols::new($opt_p);
+    while (my $row = $tmp_cols->get_row()) {
+	my $pseq = $row->{probe_seq};
+	next if $pseq =~ /N/i;	# should have done this earlier, but oh well.
+	my $pname = $row->{probe_id};
+	my $strand = $row->{probe_strand};
+	my $pstart = $row->{probe_start};
+	my $pend = $row->{probe_end};
+	my $pchr = $row->{probe_chr};
+	my $tm = $row->{probe_tm};
+	if ($tm eq '') {
+	    $tm = $row->{probe_tm} = PerlTm::exact_tm($pseq);
+	}
+	$cols->print_row(STDOUT, $row) if ! $opt_n;
+	next if $opt_c && $opt_c ne $pchr;
+	$markers->add_marker('chr', 'strand', $pstart, $pend, $row);
+	$num_markers++;
+	warn "$num_markers loaded\n" if $num_markers % 10000 == 0;
+    }
+}
+
+do_file($infile);
+
+sub do_file {
+    my ($infile) = @_;
+    my $cols = Cols::new($infile);
+    my @buffer;
+    while (my $row = $cols->get_row()) {
+	my $pseq = $row->{probe_seq};
+	next if $pseq =~ /N/i;	# should have done this earlier, but oh well.
+	my $pname = $row->{probe_id};
+	my $strand = $row->{probe_strand};
+	my $pstart = $row->{probe_start};
+	my $pend = $row->{probe_end};
+	my $tm = $row->{probe_tm};
+	if ($tm eq '') {
+	    $tm = $row->{probe_tm} = PerlTm::exact_tm($pseq);
+	}
+	push(@buffer, $row);
+	do_buffer(\@buffer) if @buffer >= $buffer_size;
+    }
+    do_buffer(\@buffer);
+}
+
+sub do_buffer {
+    my ($buffer) = @_;
+    @$buffer = sort { $a->{probe_start} <=> $b->{probe_start} } @$buffer;
+    my $first = $buffer->[0];
+    my $last = $buffer->[-1];
+    printf STDERR "doing range %d to %d\n", $first->{probe_start}, $last->{probe_start};
+    do_segment($buffer);
+    printf STDERR "keeping %d markers in buffer\n", scalar @$buffer;
+}
+
+#
+#   Do segment between kept markers.
+#
+sub do_segment {
+    my ($unused) = @_;
+
+    my $did_something = 1;
+    my @last_good;
+    my (%used);
+    while ($did_something) {
+	$did_something = 0;
+	printf STDERR "compute_scores for %d probes\n", scalar @$unused;
+	compute_scores($unused);
+	my ($best_probe, $best_probe_score, @good);
+	for my $m (@$unused) {
+	    next if $used{$m} || $m->{probe_score} eq '';
+	    if ($m->{probe_score} >= $best_probe_score) {
+		$best_probe_score = $m->{probe_score};
+		$best_probe = $m;
+	    }
+	    push(@good, $m);
+	}
+	if ($best_probe ne '') {
+	    $did_something = 1;
+	    printf STDERR "    found best probe: strand %s dist %s tm %s score %s, %s-%s\n", $best_probe->{probe_strand},
+		$best_probe->{probe_dist_score}, $best_probe->{probe_tm_score}, $best_probe->{probe_score},
+		$best_probe->{probe_start}, $best_probe->{probe_end};
+	    $cols->print_row(STDOUT, $best_probe);
+	    $markers->add_marker('chr', 'strand', $best_probe->{probe_start}, $best_probe->{probe_end}, $best_probe);
+	    @last_good = @good;
+	    $used{$best_probe} = 1;
+	}
+    }
+    @$unused = @last_good;
+}
+
+#
+#   FIX: same strand overlap (1000) should negate any +/- strand overlap (2000)
+#
+sub compute_scores {
+    my ($unused) = @_;
+    my @result;
+    for my $m (@$unused) {
+	my ($s, $e, $strand, $tm) = ($m->{probe_start}, $m->{probe_end}, $m->{probe_strand}, $m->{probe_tm});
+	my $len = $e - $s + 1;
+	my ($bad, $best_dist_score);
+	for my $prev ($markers->get_covering_markers('any', 'chr', 'strand', $s, $e)) {
+	    my $row = $prev->[4];
+	    my ($ps, $pe, $pstrand) = ($row->{probe_start}, $row->{probe_end}, $row->{probe_strand});
+	    my $plen = $pe - $ps + 1;
+	    my $left = max($s, $ps);
+	    my $right = min($e, $pe);
+	    my $ov = $right - $left + 1;
+	    if ($ov > $max_overlap) {	# can't use this probe
+		$bad = 1;
+		last;
+	    }
+	    if ($len - $ov < $min_uncovered || $plen - $ov < $min_uncovered) {
+		$bad = 1;
+		last;
+	    }
+	    if ($ov >= $min_overlap) {
+		$good = 1;
+		my $dist_score = ($strand ne $pstrand) ? 2000 : 1000;
+		my $mid = $opt_o || ($min_overlap + $max_overlap) / 2;
+		my $mid_dist = abs($ov - $mid) / ($max_overlap - $min_overlap) * 2;
+		my $mid_penalty = (.005) ** ($mid_dist * $mid_dist) - 1;
+		$dist_score += $mid_penalty * 5;
+		$best_dist_score = max($best_dist_score, $dist_score);
+	    }
+	}
+	next if $bad;
+	$m->{probe_dist_score} = $best_dist_score || 0;
+	$m->{probe_tm_score} = abs($avg_tm - $tm);
+	$m->{probe_score} = $m->{probe_dist_score} + $m->{probe_tm_score};
+	$m->{probe_score} += 500 if (($m->{probe_dist_score} <= 5) && ($m->{probe_tm_score} <= 2));
+	push(@result, $m);
+    }
+    @$unused = @result;
+}

@@ -1,0 +1,9 @@
+blat2_work=~flong/work/blat2 ; export blat2_work
+if [ "`uname -m`" = "x86_64" ]; then
+    dir=i386
+else
+    dir=i386
+fi
+PATH=${PATH}:~flong/bin/${dir}:${blat2_work}
+PERLLIB=${blat2_work}:$PERLLIB
+export PERLLIB PATH

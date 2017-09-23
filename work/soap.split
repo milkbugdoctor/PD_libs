@@ -1,0 +1,26 @@
+#!/usr/bin/perl
+
+@ARGV == 3 || die "\nUsage: $0 input.soap output.soap.a output.soap.b
+
+    Splits paired reads into separate output files.
+
+";
+
+my $infile = shift;
+my $outfile1 = shift;
+my $outfile2 = shift;
+
+open(INFILE, $infile) || die "can't read file [$infile]";
+open(OUTFILE1, ">$outfile1") || die "can't create file [$outfile1]";
+open(OUTFILE2, ">$outfile2") || die "can't create file [$outfile2]";
+while (<INFILE>) {
+    if (m|\S+/1\s|) {
+	print OUTFILE1 $_;
+    }
+    elsif (m|\S+/2\s|) {
+	print OUTFILE2 $_;
+    }
+    else {
+	die "unknown read format: $_";
+    }
+}

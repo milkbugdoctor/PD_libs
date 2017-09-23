@@ -1,0 +1,24 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ ! "$1" ]; then
+    echo -e "\nUsage: $0 prefix *.sff\n"
+    exit 1
+fi
+
+prefix="$1" ; shift
+
+ulimit -d 7000
+
+rm -f "$prefix.fa" "$prefix.qual" "$prefix.bmap"
+for i in "$@"
+do
+    tmp="/tmp/pyrobayes.$$"
+    run "PyroBayes -r PB. -m 1 -o $tmp -i '$i'"
+    cat $tmp.fasta >> "$prefix.fa"
+    cat $tmp.fasta.qual >> "$prefix.qual"
+    cat $tmp.bmap >> "$prefix.bmap"
+    rm -f $tmp.*
+done
+

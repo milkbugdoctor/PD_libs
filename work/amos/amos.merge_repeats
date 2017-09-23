@@ -1,0 +1,16 @@
+#!/bin/bash
+
+if [ ! "$1" ]; then
+    echo -e "\nUsage: $0 directory\n"
+    exit 1
+fi
+
+dir="$1" ; shift
+
+tmp=/tmp/merge_repeats.$$
+echo -e "rep_chr\trep_start\trep_end\trep_len" > $tmp
+ncols -h scaff start1 end1 len < $dir/reference.fa.repeats >> $tmp
+ncols -h scaff start2 end2 len < $dir/reference.fa.repeats >> $tmp
+add_col rep_id none rep_strand + < $tmp > $tmp.2
+merge_overlapping_markers $tmp.2 /dev/stdout /dev/null rep
+rm -f $tmp $tmp.2

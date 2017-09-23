@@ -1,0 +1,86 @@
+#!/usr/local/install/ActivePerl-5.8/bin/perl
+
+$debug = 1;
+
+(@ARGV == 2) || die "\nUsage: $0 js-col js-file > outfile
+
+";
+
+my $js_col = shift;
+
+use LWP;
+use HTML::FormatText;
+use HTML::TreeBuilder;
+use LWP::UserAgent;
+require 'TMPred.pl';
+require 'columns.pl';
+require 'misc.pl';
+
+$ua = LWP::UserAgent->new;
+$ua->agent("MyApp/0.1");
+
+$" = "\t";
+my @header = get_header(ARGV);
+add_col(\@header, 'sequence');
+print_header(STDOUT, @header);
+
+while (my @row = get_row(ARGV)) {
+    my $js = get_col(\@header, \@row, $js_col);
+    warn "doing $js\n" if $debug;
+    my $seq = get_seq($js);
+    die "huh?" if $seq eq '';
+    set_col(\@header, \@row, 'sequence', $seq);
+    print "@row\n";
+}
+
+sub get_seq {
+    my ($js) = @_;
+    my ($url, $avatar_version);
+    $js =~ /^JS(.)/;
+    $avatar_version = $1;
+    if ($avatar_version == 3) {
+        $url = "http://js-myu/cgi-bin/Avatar-3/avatar3_links.pl?id=$js";
+    }
+    elsif ($avatar_version == 4) {
+        $url = "http://js-myu/cgi-bin/Avatar-4/avatar4_links.pl?id=$js";
+    }
+    else {
+	die "bad avatar version number";
+    }
+
+    my $html;
+    for my $loop (1 .. 10) {
+	$html = do_request($url);
+	printf STDERR "got %d bytes from $url\n", length($html) if $debug;
+	last if length($html) > 0;
+    }
+    die "couldn't get sequence: $url" if length($html) == 0;
+
+    my $tree = HTML::TreeBuilder->new;
+    my $format = HTML::FormatText->new;
+    $tree->parse($html);
+    $tree->eof;
+    my $text = $format->format($tree);
+    $tree = $tree->delete;
+    $text =~ /Protein Sequence:.*?\n(.*)/s;
+    my $seq = $1;
+    my $result;
+    for my $line (split /\n/, $seq) {
+	if ($line =~ /^\s+([A-Z])$/) {
+	    $result .= $1;
+	}
+    }
+    return $result;
+}
+
+sub do_request {
+     my ($url) = @_;
+
+     my $req = HTTP::Request->new(GET => $url);
+     my $res = $ua->request($req);
+     if ($res->is_success) {
+	 return $res->content;
+     } else {
+	die $res->error_as_HTML;
+     }
+}

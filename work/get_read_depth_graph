@@ -1,0 +1,50 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+# getopts('b:c:no:p:t:');
+
+use Cols;
+require 'misc.pl';
+
+(@ARGV == 2) || die "\nUsage: $0 [options] step-size aligns.delta
+
+";
+
+my $step_size = shift;
+my $infile = shift;
+
+my $cols = Cols::new("delta.list $infile |");
+
+my $graph;
+my (%rsize, @chrs);
+while (my $row = $cols->get_row()) {
+    my $rname = $row->{rname} || die "rname not defined";
+    my $rstart = $row->{rstart}  || die "rstart not defined";
+    my $rend   = $row->{rend}    || die "rend not defined";
+    my $rsize  = $row->{rsize}   || die "rsize not defined";
+    my $first_box = box_num($rstart);
+    my $last_box = box_num($rstart);
+    if (! defined $rsize{$rname}) {
+	$rsize{$rname} = $rsize;
+	push(@chrs, $rname);
+    }
+print STDERR ".";
+    for my $box ($first_box .. $last_box) {
+	$graph->{$rname}[$box]++;
+    }
+}
+print STDERR "\n";
+
+print join("\t", qw/chr pos count/) . "\n";
+for my $chr (@chrs) {
+    my $rsize = $rsize{$chr};
+    my $last_box = box_num($rsize);
+    my $g = $graph->{$chr};
+    for my $box (0 .. $last_box) {
+	printf "%s\t%d\t%d\n", $chr, $box * $step_size + 1, $g->[$box];
+    }
+}
+
+sub box_num {
+    return int(($_[0] - 1)/ $step_size);
+}

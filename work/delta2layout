@@ -1,0 +1,107 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+use Delta;
+use Cols;
+use Getopt::Std;
+require 'misc.pl';
+require 'align_string.pl';
+
+getopts('cds');
+$debug = 1 if $opt_d;
+
+@ARGV || die "\nUsage: $0 [options] file.delta > file.layout
+
+    This is the old Perl version.  The new Java version (amos.delta2layout)
+    should be faster.
+
+    Options:
+
+	-d      debug
+	-s      don't include alignment string
+	-c      compress alignment string
+
+";
+
+my $delta = shift;
+my $tmp = "/tmp/delta2layout.$$";
+my $foo = Delta::new($delta);
+if (!$opt_s) {
+    warn "loading sequence positions\n";
+    $foo->load_sequences();
+    warn "done loading sequence positions\n";
+}
+
+warn "loading delta file into memory\n";
+my (%ref_size, %reads, %fd);
+while (my $entry = $foo->get_entry) {
+    next if ref($entry) ne "Entry";
+    my ($rname, $rsize, $qname, $qsize) = $entry->get_header();
+    my ($ident, $rgap, $tgap, $align_len, $score, $cover) = $entry->get_align_stats();
+    my ($rstart, $rend, $qstart, $qend, $rstrand, $qstrand, $mis) = $entry->get_align();
+    my $align_str;
+    if (!$opt_s) {
+	$align_str = $entry->get_alignment_string(0);
+	fix_alignment($rstart, $rend, $align_str);
+    }
+    my $rlen = $rend - $rstart + 1;
+    my $qlen = $qend - $qstart + 1;
+    $ident = fix_num($ident);
+    $score = fix_num($score);
+    my $ref = $rname;
+    $ref_size{$ref} = $rsize;
+    my $str;
+    $align_str = compress_align_string($align_str) if $opt_c;
+    if ($qstrand eq '+') {
+	$str = sprintf "%s %s %s\t%s\t%s\t%s\t%s\n",
+	    $qname, $rstart - 1, $rend - 1,
+	    $qstart - 1, $qsize - $qend, $score, $align_str;
+    }
+    else {
+	$str = sprintf "%s %s %s\t%s\t%s\t%s\t%s\n",
+	    $qname, $rend - 1, $rstart - 1,
+	    $qsize - $qend, $qstart - 1, $score, $align_str;
+    }
+
+    push(@{$reads{$ref}}, $str);
+    if ($debug && $count++ % 1000 == 0) {
+	printf STDERR "%dK\n", ($count-1) / 1000;
+    }
+}
+warn "done loading delta file into memory\n";
+
+warn "writing layout file\n";
+my $contig_num = 0;
+for my $ref (sort keys %ref_size) {
+    $contig_num++;
+    my $num_read = @{$reads{$ref}};
+    print "C $contig_num\t$num_read\t$ref\t1-$ref_size{$ref}\n";
+    @{$reads{$ref}} = sort {
+	min((split /\s+/, $a)[1, 2]) <=> min((split /\s+/, $b)[1, 2])
+    } @{$reads{$ref}};
+    for my $line (@{$reads{$ref}}) {
+	print $line;
+    }
+    print "\n";
+}
+warn "success!\n";
+exit 0;
+
+sub fix_num {
+    my $num = sprintf "%.3f", $_[0];
+    $num =~ s/\.0+$//;
+    return $num;
+}
+
+sub fix_alignment {
+    # my ($rstart, $rend, $align_str) = @_;
+    while (substr($_[2], 0, 1) eq ' ') {
+	$_[2] = substr($_[2], 1);
+	$_[0]++;
+    }
+    while (substr($_[2], -1) eq ' ') {
+	chop $_[2];
+	$_[1]--;
+    }
+}

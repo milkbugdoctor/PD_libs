@@ -1,0 +1,34 @@
+#!/bin/bash
+
+. subs.sh
+
+ref=template/Salmonella_multi_fasta_unix.fasta
+template=template/Salmonella_multi_fasta_unix.fasta.index
+tmp=/tmp/sam.$$
+
+if [ $# -lt 1 ]; then
+    echo -e "\nUsage: $0 file.sam [...]
+
+    Converts the SAM file to a BAM file, then sorts and indexes the BAM file.
+    Input SAM must contain a header.
+"
+    exit 1
+fi
+
+for sam in "$@"
+do
+    base=`strip_last_extension $sam`
+    bam="$base.bam"
+    sorted="$base.sorted"
+
+    if need $sam $bam; then
+	run "samtools view -S $sam -hb > $bam"
+    fi
+    if need $bam $sorted.bam; then
+	run "java -a net.sf.picard.sam.SortSam I=$bam O=$sorted.bam SO=coordinate VALIDATION_STRINGENCY=SILENT MAX_RECORDS_IN_RAM=1000000"
+    fi
+    if need $sorted.bam $sorted.bam.bai; then
+	run "samtools index $sorted.bam"
+    fi
+done
+

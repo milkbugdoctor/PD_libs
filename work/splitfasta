@@ -1,0 +1,103 @@
+#!/usr/bin/env
+
+use Cwd qw(cwd getcwd abs_path);
+
+use POSIX;
+use Getopt::Std;
+getopts('hk:s:p:v');
+
+@ARGV == 2 || die "\nUsage: $0 [options] output-dir file
+
+    Options:
+	-k kilobytes
+	-s seqs
+	-p pieces
+	-h          use fasta header for filename (implies -s 1)
+	-v          create virtual files
+
+";
+
+
+$num_seqs = $opt_s;
+$num_pieces = $opt_p;
+$num_kilobytes = $opt_k;
+$num_seqs = 1 if $opt_h;
+
+$dir = shift;
+$file = shift;
+
+my $abs_file = abs_path($file);
+
+mkdir $dir if ! -d $dir;
+
+if ($num_pieces) {
+    open(FILE, $file) || die "can't read $file";
+    my $seqs = 0;
+    while (<FILE>) {
+	$seqs++ if /^>/;
+    }
+    close FILE;
+    $num_seqs = ceil($seqs / $num_pieces);
+}
+
+my $bytes = 0;
+my (@headers, @sequences, %filenames);
+my $count = "aaaa";
+
+$header = $sequence = '';
+open(FILE, $file) || die "can't read $file";
+my $pos = my $last_pos = 0;
+while (<FILE>) {
+    my $next_pos = $pos + length($_);
+    s/\s+$//;
+    if (/^>(.*)/) {
+	&write_file($header, $sequence, 0);
+	$header = $1;
+	$sequence = '';
+    }
+    else {
+	$sequence .= "$_\n";
+    }
+    $pos = $next_pos;
+}
+&write_file($header, $sequence, 1);
+exit 0;
+
+sub write_file {
+    my ($header, $sequence, $last) = @_;
+    if ($header ne '' and $sequence ne '') {
+	push(@headers, $header);
+	push(@sequences, $sequence);
+	$bytes += length($header) + length($sequence) + 1;
+    }
+    my $flushit = $last;
+    $flushit |= ($num_seqs and scalar(@sequences) >= $num_seqs);
+    $flushit |= ($num_kilobytes and $bytes >= $num_kilobytes * 1024);
+    if ($flushit) {
+	my $filename = sprintf "$dir/$count.fa";
+	$count++;
+	if ($opt_h) {
+	    $header =~ /^(\S+)/;
+	    $filename = "$dir/$1.fa";
+	}
+	die "file '$filename' already used!" if ($filenames{$filename});
+	$filenames{$filename} = 1;
+	die "$filename already exists!" if (-e $filename);
+	open(GOO, ">$filename") || die "can't create '$filename'";
+	if ($opt_v) {
+            print GOO "-> <$abs_file> $last_pos $pos\n";
+	}
+	else {
+	    for (my $i = 0; $i < scalar(@sequences); $i++) {
+		my $header = $headers[$i];
+		my $sequence = $sequences[$i];
+		print GOO ">$header\n$sequence";
+	    }
+	}
+	close(GOO);
+	@sequences = ();
+	@headers = ();
+	$bytes = 0;
+	$last_pos = $pos;
+    }
+}

@@ -1,0 +1,151 @@
+#!/usr/bin/perl
+
+my (@roll, @in_cols, @out_cols, %col_map);
+while ($ARGV[0] =~ /^-/) {
+    if ($ARGV[0] eq '-r') {
+	$reverse = shift
+    }
+    elsif ($ARGV[0] eq '-h') {
+	$no_header = shift
+    }
+    elsif ($ARGV[0] =~ /^-out/) {
+	$outer = shift;
+    }
+    elsif ($ARGV[0] =~ /^-blank/) {
+	$blank = shift;
+    }
+    elsif ($ARGV[0] eq '-add') {
+	shift;
+	my @cols = split /\s+/, shift;
+	push(@in_cols, @cols);
+	push(@out_cols, @cols);
+    }
+    elsif ($ARGV[0] eq '-add2') {
+	shift;
+	my $in_col = shift;
+	my $out_col = shift;
+	push(@in_cols, $in_col);
+	push(@out_cols, $out_col);
+	$col_map{$in_col} = $out_col;
+    }
+    elsif ($ARGV[0] eq '-roll') {
+	shift;
+	my $col = shift;
+	my $sep = shift;
+	my $ncol = shift;
+	push(@roll, [ $col, $sep, $ncol ]);
+    }
+    else {
+	die "unknown option '$ARGV[0]'";
+    } 
+}
+die "-roll and -add/-add2 are incompatible" if @roll and @in_cols;
+die "-outer and -r are incompatible" if $outer and $reverse;
+(@ARGV >= 3) || die "\nUsage: $0 [options] orig-file join-file join-columns ... > outfile
+
+    Rows of orig-file are kept if joined columns match.
+
+    Options:
+	-r			reverse: keep unmatched rows from orig-file
+	-h			no header; must use numbered columns
+	-roll col s ncol	roll up all matching <col> cols, separated by <s>, into new column <ncol>
+	-add 'cols'		add columns | 'all'
+	-add2 col ncol		add column 'col' and call it 'ncol'
+	-outer			do outer left join, add columns from join-file
+	-blank			use blanks instead of repeating lines from orig-file
+
+";
+
+require 'columns.pl';
+require 'misc.pl';
+use JoinFiles;
+
+# my ($infile, $joinfile, @join_keys) = @ARGV;
+
+my $join_type;
+if ($reverse) {
+    $join_type = 'left';
+    $outer = 1;
+}
+elsif ($outer) {
+    $join_type = 'left';
+}
+else {
+    $join_type = 'inner';
+}
+
+my $join = JoinFiles::new($join_type, ! $no_header, @ARGV);
+
+my @left_header = $join->get_header('left');
+my @right_header = $join->get_header('right');
+for my $add (@roll) {
+    my ($col, $sep, $ncol) = @$add;
+    add_col(\@left_header, $ncol);
+}
+for my $add (@out_cols) {
+    if ($add eq 'all') {
+	add_col(\@left_header, @right_header);
+	@in_cols = @right_header;
+    }
+    else {
+	add_col(\@left_header, $add);
+    }
+}
+$" = "\t";
+print "@left_header\n" if ! $no_header;
+while (($left, $right) = $join->get_match) {
+    last if $left eq '';
+    next if $reverse and $right ne '';
+    next if ! $outer and ! $reverse and $right eq '';
+    for my $l (@$left) {
+	my @l = split /\t/, $l;
+	my $left_count = @l;
+	if (! $outer and @$right == 0) {
+	    next;
+	}
+	if (@roll) {
+	    for my $add (@roll) {
+		my ($col, $sep, $ncol) = @$add;
+		my @group;
+		for my $r (@$right) {
+		    my @r = split /\t/, $r;
+		    my $c = get_col(\@right_header, \@r, $col);
+		    push(@group, $c);
+		}
+		my $group = join($sep, @group);
+		set_col(\@left_header, \@l, $ncol, $group);
+	    }
+	    $" = "\t";
+	    print "@l\n";
+	}
+	else {
+	    if (@$right) {
+		my $first = 1;
+		for my $r (@$right) {
+		    my @r = split /\t/, $r;
+		    for my $col (@in_cols) {
+			my $val = get_col(\@right_header, \@r, $col);
+			my $ncol = $col_map{$col} || $col;
+			set_col(\@left_header, \@l, $ncol, $val);
+		    }
+		    $" = "\t";
+		    if ($blank && !$first) {
+			# blank left columns
+			splice(@l, 0, $left_count, ('') x $left_count);
+		    }
+		    print "@l\n";
+		    $first = 0;
+		}
+	    }
+	    else { # must be outer join
+		for my $col (@in_cols) {
+		    my $ncol = $col_map{$col} || $col;
+		    set_col(\@left_header, \@l, $ncol, '');
+		}
+		$" = "\t";
+		print "@l\n";
+	    }
+        }
+    }
+}
+$join->cleanup;

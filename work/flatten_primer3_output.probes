@@ -1,0 +1,61 @@
+#!/usr/bin/perl
+
+require 'misc.pl';
+require 'columns.pl';
+
+# $debug = 1;
+
+my @header = ("seq_id", "probe_id", "probe_seq", "probe_tm",
+    "probe_start", "probe_len", "probe_penalty",
+    "target_start", "target_len");
+
+print "# starting positions are 1-based, top strand\n";
+print_header(STDOUT, @header);
+my ($seq_id, $sequence, %hash);
+while (my $line = <>) {
+    if ($line =~ /^=/) {
+	for my $probe_id (sort { $a <=> $b } keys %hash) {
+	    my $h = $hash{$probe_id};
+	    next if $h->{probe_seq} eq '';
+	    print join("\t", $seq_id, $probe_id, $h->{probe_seq},
+		$h->{probe_tm}, $h->{probe_start}, $h->{probe_len},
+		$h->{probe_penalty}, $target_start, $target_len), "\n";
+	}
+	%hash = ();
+	next;
+    }
+    $line =~ /^(.*)=(.*)/;
+    my ($key, $val) = ($1, $2);
+
+    if ($key =~ /^PRIMER_SEQUENCE_ID/) {
+	$seq_id = $val;
+    }
+    elsif ($key =~ /^SEQUENCE/) {
+	$sequence = $val;
+    }
+    elsif ($key =~ /^TARGET/) {
+	$target = $val;
+	my @tmp = split /,/, $val;
+	$target_start = $tmp[0] + 1;
+	$target_len = $tmp[1];
+    }
+    elsif ($key =~ /^PRIMER_INTERNAL_OLIGO_(?:(\d+)_)?SEQUENCE/) {
+	my $probe_id = $1 + 0;
+	$hash{$probe_id}{"probe_seq"} = $val;
+    }
+    elsif ($key =~ /^PRIMER_INTERNAL_OLIGO_(?:(\d+)_)?TM/) {
+	my $probe_id = $1 + 0;
+	$hash{$probe_id}{"probe_tm"} = $val;
+    }
+    elsif ($key =~ /^PRIMER_INTERNAL_OLIGO_(?:(\d+)_)?PENALTY/) {
+	my $probe_id = $1 + 0;
+	$hash{$probe_id}{"probe_penalty"} = $val;
+    }
+    elsif ($key =~ /^PRIMER_INTERNAL_OLIGO(?:_(\d+))?$/) {
+	my $probe_id = $1 + 0;
+	my @tmp = split /,/, $val;
+	$hash{$probe_id}{"probe_start"} = $tmp[0] + 1;
+	$hash{$probe_id}{"probe_len"} = $tmp[1];
+    }
+}
+

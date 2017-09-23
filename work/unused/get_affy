@@ -1,0 +1,194 @@
+#!/usr/local/bin/perl
+
+my $db = 'gp_nov8';
+my $use_genes = 1;
+my $chr_dir = "/home/flong/work/amp_finder/chromosomes/gp.17.35";
+
+(my ($file) = @ARGV) || die "\nUsage: $0 probe-file\n\n";
+
+open(PROBES, $file) || die "can't open $file";
+
+require 'new_mysql.pl';
+require 'fasta.pl';
+require 'misc.pl';
+require 'primers.pl';
+
+mysql'connect(
+       hostname => 'db',
+       user     => 'flong',
+       password => 'jon edward',
+       database => $db
+);
+
+open(FASTA, ">output.fa") || die "huh?";
+open(TABLE, ">output.txt") || die "huh?";
+print_tabbed(TABLE, "geneseq affy gene transcript chrom strand tStart tEnd cStart cEnd exonStarts exonEnds\n");
+
+my $seq_id = 0;
+while (<PROBES>) {
+	s/[\n\r]+$//;
+	my $probe = $_;
+	my @rows = mysql::query("
+	    SELECT tName, strand, tStart+1, tEnd
+	    FROM affyU133 where qName = 'U133A:${probe};'");
+	for my $row (@rows) {
+	    my ($chr, $strand, $start, $end) = split /\t/, $row;
+	    print STDERR "$probe $chr $strand $start $end\n";
+
+	    my @trans;
+	    if ($use_genes) {
+		@trans = (get_gene_transcripts($chr, $strand, $start, $end),
+		    get_gene_refseqs($chr, $strand, $start, $end));
+	    }
+	    else {
+		@trans = (get_transcripts($chr, $strand, $start, $end),
+		    get_refseqs($chr, $strand, $start, $end));
+	    }
+	    # fix start positions
+	    next if ! @trans;
+	    for my $row (@trans) {
+		my @row = split /\t/, $row;
+		$row[4]++;
+		$row = join("\t", @row);
+	    }
+	    my ($min_start, $max_end);
+	    for my $row (@trans) {
+		my ($gene, $trans, $chr, $strand, $s, $e) = split /\t/, $row;
+		if ($min_start eq '' or $s < $min_start) { $min_start = $s; }
+		if ($max_end eq '' or $e > $max_end) { $max_end = $e; }
+	    }
+	    print STDERR "$probe min_start $min_start max_end $max_end\n";
+	    my $len = $max_end - $min_start + 1;
+	    chomp(my $seq = `get_file_seq $chr_dir/$chr.txt $min_start $len`);
+	    $seq = "\U$seq";
+	    if ($strand eq '-') {
+		$seq = rc($seq);
+	    }
+	    warn "couldn't get sequence!\n" if $len != length($seq);
+	    $seq_id++;
+	    print FASTA ">geneseq$seq_id $probe $chr $strand $min_start $max_end\n";
+	    print_wrapped(FASTA, $seq);
+	    for my $row (@trans) {
+		my @row = split /\t/, $row;
+		my @exon_starts = split /,/, $row[9];
+		grep($_++, @exon_starts); # fix start positions
+		my @exon_ends = split /,/, $row[10];
+		if ($strand eq "+") {
+		    $row[4] -= ($min_start - 1);
+		    $row[5] -= ($min_start - 1);
+		    $row[6] -= ($min_start - 1);
+		    $row[7] -= ($min_start - 1);
+		    for my $a (@exon_starts) { $a -= ($min_start - 1); }
+		    for my $a (@exon_ends) { $a -= ($min_start - 1); }
+		    $row[9] = join(",", @exon_starts);
+		    $row[10] = join(",", @exon_ends);
+		}
+		else {
+		    @exon_starts = reverse @exon_starts;
+		    @exon_ends = reverse @exon_ends;
+		    ($row[4], $row[5]) = ($max_end - $row[5] + 1, $max_end - $row[4] + 1);
+		    ($row[6], $row[7]) = ($max_end - $row[7] + 1, $max_end - $row[6] + 1);
+		    for my $a (@exon_starts) { $a = $max_end - $a + 1; }
+		    for my $a (@exon_ends) { $a = $max_end - $a + 1; }
+		    $row[9] = join(",", @exon_ends);
+		    $row[10] = join(",", @exon_starts);
+		}
+		print TABLE "geneseq$seq_id\t", join("\t", $probe, @row[0..7, 9..10]), "\n";
+	    }
+	}
+}
+close FASTA;
+close TABLE;
+
+sub get_transcripts {
+    my ($chr, $strand, $start, $end) = @_;
+    my @trows = mysql::query("
+	SELECT 'None', *
+	FROM ensGene
+	where chrom = '$chr' and strand = '$strand'
+		and ((txEnd >= $start and txEnd <= $end) or
+		     (txStart+1 >= $start and txStart+1 <= $end) or
+		     ($end >= txStart+1  and $end <= txEnd) or
+		     ($start >= txStart+1 and $start <= txEnd)
+		    )
+    ");
+    return uniq(@trows);
+}
+
+sub get_gene_transcripts {
+    my ($chr, $strand, $start, $end) = @_;
+    my @trans = get_transcripts(@_);
+    my @all_gene_trans;
+    for my $trans (@trans) {
+	my @genes = mysql::query("
+	    SELECT gene
+	    FROM ensemblXref3
+	    where transcript = '$trans'");
+	@genes = uniq(@genes);
+	for my $gene (@genes) {
+	    my @gene_trans = mysql::query("
+		SELECT transcript
+		FROM ensemblXref3
+		where gene = '$gene'");
+	    push(@all_gene_trans, @gene_trans);
+	}
+    }
+    return uniq(@all_gene_trans);
+}
+
+sub get_gene_transcripts {
+    my ($chr, $strand, $start, $end) = @_;
+    my @rows = mysql::query("
+	SELECT b.gene, c.*
+	FROM ensGene a, ensemblXref3 b, ensGene c
+	where a.chrom = '$chr' and a.strand = '$strand'
+		and ((a.txEnd >= $start and a.txEnd <= $end) or
+		     (a.txStart+1 >= $start and a.txStart+1 <= $end) or
+		     ($end >= a.txStart+1  and $end <= a.txEnd) or
+		     ($start >= a.txStart+1 and $start <= a.txEnd)
+		    )
+		and b.transcript = a.name
+		and b.transcript = c.name and c.chrom = '$chr' and c.strand = '$strand'
+    ");
+    return uniq(@rows);
+}
+
+sub get_refseqs {
+    my ($chr, $strand, $start, $end) = @_;
+    my @trows = mysql::query("
+	SELECT 'None', *
+	FROM refFlat
+	where chrom = '$chr' and strand = '$strand'
+		and ((txEnd >= $start and txEnd <= $end) or
+		     (txStart+1 >= $start and txStart+1 <= $end) or
+		     ($end >= txStart+1  and $end <= txEnd) or
+		     ($start >= txStart+1 and $start <= txEnd)
+		    )
+    ");
+    return uniq(@trows);
+}
+
+sub get_gene_refseqs {
+    my ($chr, $strand, $start, $end) = @_;
+    my @rows = mysql::query("
+	SELECT c.*
+	FROM refFlat a, refFlat b, refFlat c
+	where a.chrom = '$chr' and a.strand = '$strand'
+		and ((a.txEnd >= $start and a.txEnd <= $end) or
+		     (a.txStart+1 >= $start and a.txStart+1 <= $end) or
+		     ($end >= a.txStart+1  and $end <= a.txEnd) or
+		     ($start >= a.txStart+1 and $start <= a.txEnd)
+		    )
+		and b.name = a.name
+		and b.geneName = c.geneName and c.chrom = '$chr' and c.strand = '$strand'
+    ");
+    return uniq(@rows);
+}
+
+sub uniq {
+    my %hash;
+    for my $key (@_) {
+	$hash{$key} = 1;
+    }
+    return keys %hash;
+}

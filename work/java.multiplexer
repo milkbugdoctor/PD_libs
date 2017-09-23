@@ -1,0 +1,2 @@
+# java -XX:+UseSerialGC fred.prog.Multiplexer "$@"
+java fred.prog.Multiplexer "$@"

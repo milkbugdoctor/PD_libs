@@ -1,0 +1,54 @@
+########### steps for Steffen find transposon locations ###########
+
+1. create a folder and enter it
+
+2. prepare files in the folder:
+   (1) TAB-delimited sequence file (e.g. "all_MGD_H2P2_Oligos_110126_SP01.txt")
+   (2) WebArrayDB request names in "reqs.txt"
+   (3) Download WebArrayDB result files "REQNAME_transposon_table_14028S_all_probes.txt" and "REQNAME_transposon_table_14028S_plasmid_all_probes.txt", in which "REQNAME" should be replaced by real request name.
+
+3. in Putty, enter the folder, and run command: 
+   Tn_on_14028S.sh  all_MGD_H2P2_Oligos_110126_SP01.txt  "Seq minus tail"  reqs.txt
+   (Note: "Seq minus tail" is name of the column in the file "all_MGD_H2P2_Oligos_110126_SP01.txt" that contain the sequences)
+
+4. check results in folder "rlt"
+
+(There are examples under "/home/sporwollik/data/Tn")
+
+
+
+########### steps for Prerak Desai to make newick files ###########
+
+1. create a folder and enter it
+2. copy the alignment file (e.g., "23_genome_orthologs_1.txt.alignments.fasta"), and all related NCBI annotation files (*.tsv) over here
+3. create a TAB file (e,g., "genome_anno.txt") with three columns:
+   (1) "No" - the No. of bacterium strains
+   (2) "Object" - The names of strains
+   (3) "FileName" - The TAB file for gene annonation (e.g., "Salmonella enterica subsp. diarizonae 01-005.tsv")
+4. run commands as following. Results of "mk_newicks.sh" can be found in the "splitted" folder and "splitted/newicks" folder.
+
+# command to add LOCUS_TAG to a table file (e.g., 23_genome_orthologs_1.txt)
+addLocusTag4Rows.py  --map-file=genome_anno.txt   23_genome_orthologs_1.txt   23_genome_orthologs_1_LocusTag.txt
+
+# command to add LOCUS_TAG to the FASTA file (e.g., 23_genome_orthologs_1.txt.alignments.fasta)
+addLocusTag4Fa.py  --map-file=genome_anno.txt   23_genome_orthologs_1.txt.alignments.fasta   23_genome_orthologs_1.txt.alignments_LocusTag.fasta  
+
+# command to split genes and make newicks
+mk_newicks.sh  genome_anno.txt  23_genome_orthologs_1.txt.alignments_LocusTag.fasta
+
+
+
+########### steps for Prerak Desai to make newick files ###########
+
+Command to make a FASTA file from the SNP file.
+      mk_fasta.sh  genome_anno.txt  data_file.txt
+
+Notice:
+
+1. It is necessary to put your SNP sequences in the first column of the data file ("data_file.txt" above).
+2. The "genome_anno.txt" must have to column "Object" for strain names, which should be in the same order as those appeared in the SNP file.
+
+
+
+
+

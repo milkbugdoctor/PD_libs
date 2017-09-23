@@ -1,0 +1,27 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ $# -lt 2 ]; then
+    echo -e "\nUsage: $0 ref.fa query.fa [options]\n"
+    bwa bwasw 2>&1 | tail -n +4
+    exit 1
+fi
+
+ref="$1" ; shift
+query="$1" ; shift
+
+if [ "$1" ] && ! [[ "$1" =~ ^- ]]; then
+    echo -e "\nBad options: [$@]\n"
+    exit 1
+fi
+
+if [ "$query" = stdin ]; then
+    query="/dev/stdin"
+fi
+
+if [ ! -s "$ref.bwa.ann" ]; then
+    run "bwa index -p \"$ref.bwa\" \"$ref\""
+fi
+
+Run bwa bwasw -H "$@" "$ref.bwa" "$query"

@@ -1,0 +1,122 @@
+#!/bin/bash
+
+unsplit="unsplit_files +h"
+while getopts cvV foo ; do
+    if [ "$foo" = 'c' ]; then
+	unsplit=cat
+    fi
+    if [ "$foo" = 'v' ]; then
+	do_virtual=yes
+    fi
+    if [ "$foo" = 'V' ]; then
+	do_virtual=yes
+	local_copy=yes
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -lt 3 ]; then
+    echo -e "\nUsage: $0 [options] template seq-per-job infile > outfile
+
+    Splits input file into smaller files, and runs command on each file.
+
+    Options:
+
+	template    needs to have %s placeholder for input file
+	-c	    use cat to combine output, not unsplit_files
+	-v	    split into small \"virtual\" files
+	-V	    use \"virtual\" files, but make local copy for each job
+"
+    exit 1
+fi
+
+tmpdir=/usr/local/tmp/do_fast.$$
+mkdir -p $tmpdir || exit 1
+
+cleanup()
+{
+    echo "$0: removing directory $tmpdir" > /dev/stderr
+    rm -rf "$tmpdir"
+    exit 1
+}
+
+trap 'cleanup got signal' HUP INT KILL QUIT TERM
+
+template="$1"; shift
+num_seq="$1"; shift
+infile="$1"; shift
+
+key="do_fast.$$"
+
+if [ "$do_virtual" ]; then
+    filesize=`filesize -n "$infile"` || exit 1
+    if [ "$filesize" -lt 0 ]; then
+	echo "infile size is >= 2GB, can't use virtual files (yet)" >&2
+	exit 1
+    fi
+    if ! on_nfs $infile; then
+	echo -e "$infile must be on NFS" 1>&2
+	exit 1
+    fi
+    virtual=-v
+fi
+
+splitfasta -p 300 $virtual -s $num_seq "$tmpdir" "$infile" || cleanup "splitfasta failed"
+
+echo sleeping for NFS > /dev/stderr
+sleep 10
+files=`cd "$tmpdir"; ls`
+outs=
+errs=
+jobtmp=`mktemp -u /tmp/tmp.XXXXXXXXXX`
+for i in $files
+do
+    if [ "$virtual" ]; then
+        tmp=`mktemp -u /tmp/tmp.XXXXXXXXXX`
+	vcat=cat_virtual_files
+	if [ "$local_copy" ]; then
+	    extra="rm -f $tmp || exit 1; $vcat '$tmpdir/$i' > $tmp || exit 1"
+	else
+	    extra="rm -f $tmp; mkfifo $tmp; ($vcat '$tmpdir/$i' > $tmp &); sleep 5"
+	fi
+        extra2="rm -f $tmp"
+    else
+        tmp="$tmpdir/$i"
+        extra=
+        extra2=
+    fi
+    line=`printf "$template" $tmp`
+    if ! echo "$line" | fgrep "$tmp" > /dev/null; then
+        line="< $tmp $line"
+    fi
+    cat <<FOO >> $jobtmp
+	$extra
+	$line > $tmpdir/$i.o 2> $tmpdir/$i.e
+	status=\$?
+	$extra2
+	exit \$status
+SEPARATOR
+FOO
+    outs="$outs $i.o"
+    errs="$errs $i.e"
+done
+echo job.add_multiple -s SEPARATOR -l 1 "$key" $jobtmp 1>&2
+job.add_multiple -s SEPARATOR -l 1 "$key" $jobtmp
+rm -f $jobtmp
+echo waiting for "$key" 1>&2
+job.wait "$key %"
+echo sleeping for NFS > /dev/stderr
+sleep 10
+if ! job.wait "$key %"; then
+    echo "job.wait failed: maybe one of your jobs failed" > /dev/stderr
+    cleanup
+    exit 1
+fi
+echo recombining files... 1>&2
+if ! (cd $tmpdir ; $unsplit $outs); then
+    echo "$unsplit failed, leaving $tmpdir for inspection" > /dev/stderr
+    exit 1
+fi
+(cd $tmpdir; cat $errs) > /dev/stderr
+(sleep 20 ; rm -rf "$tmpdir") &
+exit 0

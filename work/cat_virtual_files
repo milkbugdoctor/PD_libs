@@ -1,0 +1,21 @@
+#!/usr/bin/perl
+#
+# Virtual file format: "-> <filename> start end+1"
+#
+
+require 'misc.pl';
+
+my $last_filename;
+while (<>) {
+    if (/^-> <(.*)> (\d+) (\d+)/) {
+	my ($file, $start, $next) = ($1, $2, $3);
+	my $len = $next - $start;
+	warn "got $file, $start, $len\n" if $debug;
+	print_file_seq(STDOUT, $file, $start, $len);
+    }
+    else {
+	print $_;
+    }
+}
+
+exit 0;

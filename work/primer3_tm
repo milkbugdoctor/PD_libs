@@ -1,0 +1,52 @@
+#!/usr/bin/perl
+
+my $template = <<FOO;
+PRIMER_SEQUENCE_ID=id
+SEQUENCE=%s
+PRIMER_INTERNAL_OLIGO_INPUT=%s
+PRIMER_NUM_RETURN=300
+PRIMER_TASK=pick_hyb_probe_only
+PRIMER_EXPLAIN_FLAG=1
+PRIMER_INTERNAL_OLIGO_MIN_SIZE=1
+PRIMER_INTERNAL_OLIGO_MAX_SIZE=120
+PRIMER_PRODUCT_SIZE_RANGE=1-120
+PRIMER_IO_WT_SIZE_LT=0
+PRIMER_IO_WT_SIZE_GT=0
+PRIMER_INTERNAL_OLIGO_MIN_TM=0
+PRIMER_INTERNAL_OLIGO_MAX_TM=200
+PRIMER_IO_WT_TM_GT=0
+PRIMER_IO_WT_TM_LT=0
+PRIMER_INTERNAL_OLIGO_MIN_GC=0
+PRIMER_INTERNAL_OLIGO_MAX_GC=100
+PRIMER_IO_WT_GC_PERCENT_GT=0
+PRIMER_IO_WT_GC_PERCENT_LT=0
+PRIMER_INTERNAL_OLIGO_MAX_POLY_X=120
+PRIMER_PRODUCT_SIZE_RANGE=120-9000
+PRIMER_INTERNAL_OLIGO_SELF_ANY=120
+MAX_NN_TM_LENGTH=%s
+=
+FOO
+
+while (<>) {
+    chomp;
+    my $seq = $_;
+    my $exact_tm = get_tm($seq, 120);
+    my $approx_tm = get_tm($seq, 0);
+    print "$seq\t$approx_tm\t$exact_tm\n";
+}
+
+sub get_tm {
+    my ($seq, $len) = @_;
+    my $str = sprintf $template, $seq, $seq, $len;
+    my $tmp = "/tmp/foo.$$";
+    open(FILE, "| primer3 > $tmp") || die "primer3 failed: $!";
+    print FILE $str;
+    close FILE;
+    chomp(my $out = `cat $tmp; rm -f $tmp`);
+    if ($out =~ /PRIMER_INTERNAL_OLIGO_EXPLAIN=.*ok 0/) {
+	$out =~ /PRIMER_INTERNAL_OLIGO_EXPLAIN=(.*)/;
+	return $1;
+    }
+    $out =~ /PRIMER_INTERNAL_OLIGO_TM=(.*)/;
+    return $1;
+}

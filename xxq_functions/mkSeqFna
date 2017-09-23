@@ -1,0 +1,66 @@
+#!/usr/bin/env python
+
+'''
+convert sequence in TAB-delimited files into ONE file in FASTA format
+
+refer to mkSeqFasta.py if multiple output files should be created.
+'''
+
+import os, sys
+from getopt import getopt
+
+col_id, col_seq = 'RowNo', 'Seq'
+fnsrcs = sys.argv[1:]
+
+def Main(fsrc, fobj, col_seq, col_id, start_id=1, sep='\t'):
+	if isinstance(fsrc, basestring): 
+		fsrc = open(fsrc)
+	if isinstance(fobj, basestring):
+		fobj = open(fobj, 'w')
+	if not col_seq: 
+		col_id = None
+	if col_seq or col_id:
+		head = fsrc.readline().replace('\n','').replace('\r','').split(sep)
+	if col_seq:
+		i_seq = head.index(col_seq)
+	if col_id:
+		i_id = head.index(col_id)
+	i = 0
+	for line in fsrc:
+		line = line.replace('\n','').replace('\r','')
+		items = line.split(sep)
+		if col_seq:
+			seq = items[i_seq]
+		else:
+			seq = line
+		if col_id:
+			nm = items[i_id]
+		else:
+			nm = str(start_id + i)
+		fobj.write('>%s\n%s\n' % (nm, seq))
+		i += 1
+	return i
+
+def exitUsage(s=None):
+	print __doc__
+	print 'Usage:\n\t%s  [-h | --help] [-i ID_COL] [-s SEQ_COL] [STDOUT | -o result_file] [STDIN | src_files]' % os.path.basename(sys.argv[0])
+	if s:
+		print s
+	sys.exit(0)
+
+if __name__ == '__main__':
+	optlist, args = getopt(sys.argv[1:], 'i:s:o:h', ['help'])
+	optdic = dict(optlist)
+	if '-h' in optdic or '--help' in optdic:
+		exitUsage()
+	col_id = optdic.get('-i', None)
+	col_seq = optdic.get('-s', None)
+	if col_id is not None and col_seq is None:
+		exitUsage('Error: The sequence column must be specified if the ID column has been specified!')
+	fpobj = optdic.get('-o', None)
+	fpobj = '-o' in optdic and open(optdic['-o'], 'w') or sys.stdout
+	if not args:
+		args = [sys.stdin]
+	n_seq = 1
+	for fsrc in args:
+		n_seq += Main(fsrc, fpobj, col_seq, col_id, start_id=n_seq)

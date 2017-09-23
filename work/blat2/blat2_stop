@@ -1,0 +1,11 @@
+#!/bin/bash
+
+. blat2_info.sh
+
+rm -rf $blat2_work/data
+rm -rf $blat2_work/status
+cmdfile=/usr/local/tmp/blat2_stop.$$
+echo "pkill -f '.*/blat_server'" > $cmdfile
+forall -t 5 -n sh $cmdfile
+rm -f $cmdfile
+

@@ -1,0 +1,106 @@
+#!/usr/bin/perl
+
+use POSIX;
+require 'misc.pl';
+
+@ARGV == 1 || die "\nUsage: $0 infile.sff\n\n";
+
+my $infile = shift;
+
+open(SFF, $infile) || die "can't open file [$infile]";
+read(SFF, $header, 31);
+my ($magic, $version, $tmp, $index_offset, $index_length, $num_reads,
+    $header_length, $key_length, $flows_per_read, $format_code) =
+    unpack("a4NNNNNnnnC", $header);
+
+die "bad magic number [%s]" if $magic ne '.sff';
+printf "# magic number %s, version %s\n", $magic, $version;
+printf "# index offset $index_offset\n";
+printf "# index length $index_length\n";
+printf "# num_reads $num_reads\n";
+printf "# header_length $header_length\n";
+printf "# key_length $key_length\n";
+printf "# flows_per_read $flows_per_read\n";
+printf "# format_code $format_code\n";
+
+die "unknown format_code $format_code" if $format_code != 1;
+
+read(SFF, $header, $header_length - 31);
+
+my ($flow_chars, $key_sequence) = unpack("a${flows_per_read}a$key_length", $header);
+
+printf "# flow_chars $flow_chars\n";
+printf "# key_sequence $key_sequence\n";
+
+for my $i (1 .. $num_reads) {
+    read(SFF, $header, 16);
+    my ($read_header_length, $name_length, $num_bases, $clip_qual_left, $clip_qual_right,
+	$clip_adapter_left, $clip_adapter_right) =
+	unpack("nnNnnnn", $header);
+    read(SFF, $header, $read_header_length - 16);
+    my ($name) = unpack("a$name_length", $header);
+    print "\ntrace_num $i\n";
+    print "trace_name $name\n";
+
+    print "read_header_length $read_header_length\n";
+    print "num_bases $num_bases\n";
+    print "clip_qual_left $clip_qual_left\n";
+    print "clip_qual_right $clip_qual_right\n";
+    print "clip_adapter_left $clip_adapter_left\n";
+    print "clip_adapter_right $clip_adapter_right\n";
+
+    print "flows_per_read $flows_per_read\n";
+    read(SFF, $header, 2 * $flows_per_read);
+    my @signals = unpack("n*", $header);
+    die "huh?" if @signals != length($flow_chars);
+    for my $s (@signals) { $s /= 100; };
+    print "signals @signals\n";
+    read(SFF, $header, $num_bases);
+    my @index_per_base = unpack("C$num_bases", $header);
+    print "index_per_base @index_per_base\n";
+    read(SFF, $header, $num_bases);
+    my @bases = unpack("a" x $num_bases, $header);
+    printf "bases %s\n", join('', @bases);
+    my $left_clip = max($clip_qual_left, $clip_adapter_left) - 1;
+    my $right_clip = min(
+	($clip_qual_right == 0 ? $num_bases : $clip_qual_right),
+	($clip_adapter_right == 0 ? $num_bases : $clip_adapter_right)) - 1;
+    printf "clipped_bases %s\n", join('', @bases[$left_clip .. $right_clip]);
+
+    read(SFF, $header, $num_bases);
+    my @quals = unpack("C$num_bases", $header);
+    print "quals @quals\n";
+    print "clipped_quals @quals[$left_clip .. $right_clip]\n";
+
+    my $size = 2 * $flows_per_read + 3 * $num_bases;
+    my $need = floor(($size + 7)/8) * 8;
+    read(SFF, $header, $need - $size);
+    my @array;
+    for my $i (0 .. $#signals) {
+	$array[$i] = {
+	    'signal' => $signals[$i],
+	    'base' => substr($flow_chars, $i, 1)
+	};
+    }
+    my $sig_pos = -1;
+    for my $i (0 .. $#bases) {
+	$sig_pos += $index_per_base[$i];
+	my $ok = "N" .  $array[$sig_pos]{base};
+	die "huh?" if $bases[$i] !~ /^[$ok]$/;
+	$array[$sig_pos]{quals} .= "$quals[$i] ";
+	$array[$sig_pos]{seq} .= $bases[$i];
+    }
+    print "read_data:\n";
+    for my $i (0 .. $#signals) {
+	printf "%d\t%s\t%s\t%s\t%s\n",
+	    $i + 1,
+	    $array[$i]{base},
+	    $array[$i]{signal},
+	    $array[$i]{seq},
+	    $array[$i]{quals};
+    }
+    print "\n";
+}
+
+__END__
+                

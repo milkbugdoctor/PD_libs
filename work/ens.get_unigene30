@@ -1,0 +1,33 @@
+
+mysql homo_sapiens_core_16_33 <<FOO
+SELECT hit_name, daf.contig_start, daf.contig_end, daf.contig_strand,
+    (daf.contig_end - daf.contig_start + 1) as length,
+    sgp.contig_ori, chr.name chr_name,
+    if (sgp.contig_ori < 0, sgp.chr_end + sgp.contig_start - daf.contig_end,
+	chr_start + daf.contig_start - sgp.contig_start) chr_start,
+    if (sgp.contig_ori < 0, sgp.chr_end + sgp.contig_start - daf.contig_start,
+	chr_start + daf.contig_end - sgp.contig_start) chr_end
+FROM feature daf
+inner join contig on daf.contig_id=contig.contig_id
+inner join assembly_contig sgp on daf.contig_id=sgp.contig_id
+inner join chromosome chr using (chromosome_id)
+# where hit_name like "Hs.%"
+where hit_name = "Hs.9015"
+limit 15
+
+
+FOO
+
+exit
+
+    # substring(sequence, exon.contig_start, exon.contig_end - exon.contig_start + 1) seq
+
+order by gene, trans, rank
+
+FOO
+
+#
+#
+#
+# where gsi.stable_id = "ENSG00000000003"
+# limit 10

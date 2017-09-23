@@ -1,0 +1,61 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('s');
+
+@ARGV || die "\nUsage: $0 [options] FILE.sam
+
+    Convert SAM file to FASTA.
+
+    Options:
+
+        -s      separate pairs into two files named FILE.1.fasta and
+		FILE.2.fasta
+
+";
+
+my $sam = shift;
+
+open(SAM, $sam) || die "couldn't open [$sam]";
+
+my $out = $sam;
+$out =~ s/\.sam$//;
+
+my ($fd, $fd1, $fd2);
+if ($opt_s) {
+    open($fd1, ">$out.1.fasta") || die "can't create [$out.1.fasta]";
+    open($fd2, ">$out.2.fasta") || die "can't create [$out.2.fasta]";
+}
+else {
+    $fd = \*STDOUT;
+}
+
+my $min = 9999, $max = 0;
+my $count;
+while (<SAM>) {
+    chomp;
+    my @cols = split /\t/;
+    next if @cols < 11;
+    my $pair = '';
+    if (($cols[1] & 0x41) == 0x41) {
+	$pair = "/1";
+	$fd = $fd1 if $opt_s;
+    }
+    elsif (($cols[1] & 0x81) == 0x81) {
+	$pair = "/2";
+	$fd = $fd2 if $opt_s;
+    }
+    else {
+	die "unknown FLAG bitmap [$cols[1]]";
+    }
+    print $fd ">$cols[0]$pair\n";
+    print $fd "$cols[9]\n";
+    for my $q (split(//, $cols[10])) {
+	$max = ord($q) if ord($q) > $max;
+	$min = ord($q) if ord($q) < $min;
+    }
+    if (++$count % 10000 == 0) {
+	warn "$count: min: $min, max: $max\n";
+    }
+}
+

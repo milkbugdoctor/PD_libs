@@ -1,0 +1,19 @@
+#!/usr/local/install/ActivePerl-5.8/bin/perl
+
+require 'fasta_db.pl';
+require 'misc.pl';
+require 'fasta.pl';
+
+@ARGV == 2 || die "\nUsage: $0 table input-file.fa\n\n";
+my ($table, $file) = @ARGV;
+
+fasta_db::connect();
+fasta_db::create_table($table);
+
+
+open(FASTA, $file) or die "$file: $!";
+while ((my ($header, $seq) = read_fasta(FASTA)) == 2) {
+    $header =~ />(\S+)\s*(.*)/;
+print STDERR ".";
+    fasta_db::add($table, $1, $2, $seq);
+}

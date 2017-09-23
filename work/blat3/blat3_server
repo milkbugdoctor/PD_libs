@@ -1,0 +1,95 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+require 'socket_server.pl';
+require 'relay.pl';
+require 'misc.pl';
+
+use POSIX ":sys_wait_h";
+use IPC::Open3;
+use IPC::Open2;
+
+@ARGV == 1 || die "\nUsage: $0 port\n\n";
+
+my $port = shift;
+$SIG{CHLD} = 'reap';
+$SIG{TERM} = 'IGNORE';
+$SIG{HUP} = 'IGNORE';
+$SIG{INT} = 'IGNORE';
+$SIG{PIPE} = 'pipe_handler';
+
+# open(SAVE_STDIN, "<&STDIN") || die "can't dup STDIN";
+# open(SAVE_STDOUT, ">&STDOUT") || die "can't dup STDOUT";
+# open(SAVE_STDERR, ">&STDERR") || die "can't dup STDERR";
+
+my ($last_commandline, $to_blat, $from_blat, $pid, $sock, $sock_fd);
+
+while (1) {
+    $sock = socket_server($port, 0);
+    $sock_fd = fileno($sock);
+    
+    chomp(my $commandline = read_line($sock));
+    if ($commandline eq '') {		# just a ping
+	close $sock;
+	next;
+    }
+    # open(STDERR, ">>&$sock_fd") || die "can't dup $sock";
+    if ($commandline =~ /^test/) {
+	if ($last_commandline eq '') {
+	    close $sock;
+	    next;
+	}
+	else {
+	}
+    }
+    else {
+	if ($last_commandline eq '' or $commandline ne $last_commandline or $pid eq '') {
+	    warn "restarting $commandline\n" if $debug;
+	    stop_blat();
+	    start_blat($commandline);
+	    $last_commandline = $commandline;
+	}
+    }
+    relay2($sock, $to_blat, $from_blat, $sock,
+	{ no_close => 1, exit_on_line => "FLUSH1", debug => $debug, timeout => 0 });
+    warn "relay2 returned\n" if $debug;
+    close $sock;
+    close $sock;
+    close $sock;
+}
+
+sub start_blat {
+    my ($cmd) = @_;
+    warn "running [$cmd][$from_blat][$to_blat]\n" if $debug;
+    # ($pid = open3($to_blat, $from_blat, $from_blat, $cmd)) || die "open3($cmd) failed";
+    ($pid = open2($from_blat, $to_blat, $cmd)) || die "open2($cmd) failed";
+    sleep 1;
+}
+
+sub stop_blat {
+    close $from_blat; undef $from_blat;
+    close $to_blat; undef $to_blat;
+    kill -9, $pid if $pid > 1;
+    $pid = '';
+}
+
+sub reap {
+    warn "got SIGCHLD\n" if $debug;
+    while ((my $tmp = waitpid(-1, WNOHANG)) > 0) {
+	warn "got pid [$tmp] and pid is $pid\n" if $debug;
+	if ($tmp == $pid) {
+	    print $sock "ERROR: [$last_commandline] died\n";
+	    print STDERR "ERROR: [$last_commandline] died\n" if $debug;
+	    $pid = '';
+	    close $from_blat; undef $from_blat;
+	    close $to_blat; undef $to_blat;
+	    close $sock;
+	}
+    }
+}
+
+sub pipe_handler {
+    warn "got SIGPIPE\n";
+    close $sock;
+}

@@ -1,0 +1,2 @@
+java -a fred.prog.Jumper "$@"
+# java -a -x -Xincgc fred.prog.Jumper "$@"

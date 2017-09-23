@@ -1,0 +1,29 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ $# -eq 0 ]; then
+    echo -e "\nUsage: $0 directory ...\n"
+    exit 1
+fi
+
+opts="--exclude \*layout\*"
+opts="$opts --exclude \*.used-reads.txt"
+opts="$opts --exclude \*.read-hits.txt"
+opts="$opts --exclude \*.seq"
+opts="$opts --exclude \*.seqs"
+opts="$opts --exclude \*.afg"
+opts="$opts --exclude \*.bank"
+opts="$opts --exclude \*.ctg"
+opts="$opts --exclude \*.cluster"
+opts="$opts --exclude \*.delta"
+opts="$opts --exclude \*.delta.final"
+opts="$opts --delete-excluded"
+
+for dir in "$@"
+do
+    abs=`abs_path $dir`
+    base=`basename $abs`
+    run "rsync -avLP --delete $opts '$dir/' 'skcc@bioinformatics:Fred/Assemblies/$base/'"
+done
+

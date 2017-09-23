@@ -1,0 +1,30 @@
+#!/usr/bin/perl
+
+use Fasta;
+use strict;
+
+require 'fasta.pl';
+
+@ARGV == 1 || die "\nUsage: $0 INPUT.FASTA > OUTPUT.FASTA
+
+";
+
+my $fasta_file = shift;
+my $window = 21;
+
+my $fasta = new Fasta($fasta_file);
+my $ref_seq;
+while ((my ($key, $desc, $header, $seq) = $fasta->next_entry()) == 4) {
+    if (!defined $ref_seq) {
+        $ref_seq = $seq;
+        print "$header\n";
+        print_wrapped(*STDOUT, $seq);
+        next;
+    }
+    warn "\ndoing $key\n";
+    while ($seq =~ s/([-\?A-Z].{0,9})([-A-Z])(.{0,9}[-\?A-Z])/\1\?\3/g) {
+print STDERR ".";
+    }
+    print "$header\n";
+    print_wrapped(*STDOUT, $seq);
+}

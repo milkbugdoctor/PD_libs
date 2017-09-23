@@ -1,0 +1,64 @@
+#!/usr/bin/perl
+
+my $prog = "primer3";
+
+(@ARGV >= 5) || die "\nUsage: $0 output-dir template id-col seq-col seq-files
+
+    Send sequences to primer3.
+
+";
+
+my $dir = shift;
+my $primer3_template = shift;
+my $id_col = shift;
+my $seq_col = shift;
+
+require 'misc.pl';
+require 'columns.pl';
+
+system "rm -rf $dir; mkdir -p $dir";
+
+my $jobs = "/tmp/p3.seqs.jobs.$$";
+open(JOBS, ">$jobs") || die "$jobs: $!";
+print "Building job list...\n";
+for my $file (@ARGV) {
+    open(IN, $file) || die "can't read file '$file'";
+    my @header = get_header(IN);
+    while (my @row = get_row(IN)) {
+	my $id = get_col(\@header, \@row, $id_col);
+	next if $id =~ /^#/;
+	my $seq = get_col(\@header, \@row, $seq_col);
+	$seq = "\U$seq\E";
+	my $seqfile = "$dir/primer3_$id.seq";
+	my $in = "$dir/primer3_$id.in";
+	my $out = "$dir/primer3_$id.out";
+	my $done = "$dir/primer3_$id.done";
+	make_primer3_file($seqfile, $id, $seq);
+	print JOBS "cat $primer3_template $seqfile > $in; $prog < $in > $out; touch $done\n";
+	$job_count++;
+    }
+}
+close JOBS;
+print "Adding jobs in $jobs to queue...\n";
+my $num_jobs = $job_count;
+$num_jobs = 200 if $num_jobs > 200;
+sleep 5; # for NFS directory recreation
+command("job.add_multiple -j $num_jobs '$prog' $jobs");
+unlink $jobs;
+sleep 5;
+print "Waiting...\n";
+command("job.wait $prog");
+sleep 5; # wait for NFS to update files
+exit 0;
+
+sub make_primer3_file {
+    my ($filename, $id, $seq) = @_;
+    die "$filename already exists!" if (-s $filename);
+    my $len = length($seq);
+    open(FOO, ">$filename") || die "can't create file $filename";
+    print FOO "PRIMER_SEQUENCE_ID=$id\n";
+    print FOO "SEQUENCE=$seq\n";
+    print FOO "=\n";
+    close FOO;
+}
+

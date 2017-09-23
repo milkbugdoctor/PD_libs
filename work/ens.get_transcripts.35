@@ -1,0 +1,15 @@
+#!/bin/bash
+
+db=homo_sapiens_core_27_35
+
+mysql <<FOO
+
+use $db;
+
+select gsi.stable_id gene, tsi.stable_id trans
+from gene_stable_id gsi inner join transcript t using (gene_id)
+inner join transcript_stable_id tsi using (transcript_id)
+order by gene, trans
+
+FOO
+

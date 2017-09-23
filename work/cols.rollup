@@ -1,0 +1,115 @@
+#!/usr/bin/perl
+
+our ($opt_c, $opt_e, $opt_n);
+use Getopt::Std;
+getopts('c:en');
+
+@ARGV || die "\nUsage: $0 [options] columns ... < infile > outfile
+
+    Roll up multiple rows into same columns or new columns.  By default
+    cells will be rollup up into the same columns, separated by commas.
+
+    Input file should be pre-sorted on columns that are not rolled up.
+
+    Parameters:
+	columns	    the columns to be rolled up
+
+    Options:
+	-e	    expand sideways into new columns
+	-c col	    add column to store number of rolled up rows
+	-n	    don't ignore null cells
+
+";
+
+require 'misc.pl';
+require 'probes.pl';
+use Cols;
+use strict vars;
+
+my $cols = Cols::new(STDIN);
+
+my @header = $cols->get_header();
+my %rollup_hash;
+for my $col (@ARGV) { $rollup_hash{$col} = [ ]; }
+my @sort_cols;
+for my $col (@header) {
+    push(@sort_cols, $col) if ! defined $rollup_hash{$col};
+}
+
+my ($tmp_fd, $tmp_filename);
+if ($opt_e) {
+    ($tmp_fd, $tmp_filename) = open_tmpfile();
+    select $tmp_fd;
+    warn "output to $tmp_filename\n";
+}
+else {
+    $cols->add_col($opt_c) if $opt_c;
+    $cols->print_header(STDOUT);
+}
+
+my ($last_row, $last_row_str, $num_rows, $max_rows);
+while (1) {
+    my $row = $cols->get_row();
+    my @sort_keys = $cols->get_col($row, @sort_cols);
+    my @rollup_keys = $cols->get_col($row, @ARGV);
+    my $row_str = join("\t", @sort_keys);
+
+    if ($last_row_str ne '' && $last_row_str ne $row_str) {
+	my @row;
+	if ($opt_e) {
+	    my @row = $cols->get_col($last_row, @sort_cols);
+	    push(@row, $num_rows) if $opt_c;
+	    for my $i (0 .. $num_rows-1) {
+		for my $c (@ARGV) {
+		    push(@row, $rollup_hash{$c}->[$i]);
+		}
+	    }
+	    print join("\t", @row) . "\n";
+	    for my $col (@ARGV) {
+		$rollup_hash{$col} = [ ];
+	    }
+	}
+	else {
+	    for my $col (@ARGV) {
+		$last_row->{$col} = join(",", @{$rollup_hash{$col}});
+		$rollup_hash{$col} = [ ];
+	    }
+	    $last_row->{$opt_c} = $num_rows if $opt_c;
+	    $cols->print_row(STDOUT, $last_row);
+	}
+	$num_rows = 0;
+    }
+    last if $row eq '';
+
+    my $all_null = 1;
+    for my $col (@ARGV) {
+	$all_null = 0 if $row->{$col} ne '';
+    }
+    if (!$all_null || $opt_n) {
+	for my $col (@ARGV) {
+	    push(@{$rollup_hash{$col}}, $row->{$col});
+	}
+	$num_rows++;
+    }
+    $max_rows = $num_rows if $num_rows > $max_rows;
+
+    $last_row = $row;
+    $last_row_str = $row_str;
+}
+
+if ($opt_e) {
+    select STDOUT;
+    close $tmp_fd;
+    my @header = @sort_cols;
+    push(@header, $opt_c) if $opt_c;
+    for my $i (1 .. $max_rows) {
+	for my $c (@ARGV) {
+	    push(@header, "${c}_$i");
+	}
+    }
+    print join("\t", @header) . "\n";
+    open(FILE, $tmp_filename) || die "can't open [$tmp_filename]: $!";
+    while (<FILE>) {
+	print;
+    }
+}

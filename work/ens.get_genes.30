@@ -1,0 +1,14 @@
+#!/bin/bash
+
+mysql <<FOO
+
+use homo_sapiens_core_8_30;
+
+select g.gene_id, type, analysisId, description, stable_id, transcript_id, translation_id 
+from gene g natural join gene_description gd
+inner join gene_stable_id gsi using (gene_id)
+inner join transcript using (gene_id)
+
+limit 30
+
+FOO

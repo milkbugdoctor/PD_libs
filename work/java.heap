@@ -1,0 +1,8 @@
+#!/bin/bash
+
+if [ ! "$1" ]; then
+    echo -e "\nUsage: $0 pid\n"
+    exit 1
+fi
+jmap -heap $1
+jmap -histo $1

@@ -1,0 +1,38 @@
+#!/usr/bin/perl
+
+use Cols;
+use Getopt::Std;
+# getopts('h');
+
+@ARGV || die "\nUsage: $0 expr ... < infile > outfile
+
+    Valid expressions:
+
+	s/orig/new/
+	tr/orig/new/
+
+";
+
+$in = 'STDIN';
+$out = 'STDOUT';
+
+my $cols = Cols::new($in);
+my @header = $cols->get_header();
+for my $col (@header) {
+    my @argv = @ARGV;
+    for my $expr (@argv) {
+	my $val = $col;
+	if ($expr =~ m|^s/| or $expr =~ m|^tr/|) {
+	    eval "\$val =~ $expr";
+	}
+	else {
+	    $val = eval $expr;
+	}
+	$col = $val;
+    }
+}
+$cols->set_header(@header);
+$cols->print_header($out);
+while (my $row = $cols->get_row()) {
+    $cols->print_row(STDOUT, $row);
+}

@@ -1,0 +1,79 @@
+#!/usr/bin/perl
+
+require 'columns.pl';
+
+use Getopt::Std;
+getopts('hi');
+
+my $print_header = 1;
+my $get_header = 1;
+$print_header = 0 if $opt_h;
+
+$0 =~ s|.*/||;
+if ($0 eq 'cols') {
+    @ARGV || die "\nUsage: $0 col-num-1 col-num-2 ... < input.txt
+
+    Get columns by number
+
+";
+    $print_header = 0;
+    $get_header = 0;
+}
+else {
+    @ARGV || die "\nUsage: $0 [options] col-name-1 col-name-2 ... < input.txt
+
+    Output only the selected columns.
+
+	col = name | old_name=new_name | start_col-end_col
+
+    Options:
+
+	-h	don't print header
+	-i	don't complain about missing columns
+
+";
+}
+
+my (@header, @cols);
+if ($get_header) {
+    @header = get_header(STDIN);
+    my @new_cols = get_new_cols(@ARGV);
+    must_cols(\@header, @ARGV) unless $opt_i;
+    print join("\t", @new_cols), "\n" if $print_header;
+}
+while (my @row = get_row(STDIN)) {
+    my @cols;
+    if ($0 ne 'cols') {
+	@cols = get_cols(\@header, \@row, @ARGV);
+    }
+    else {
+	for my $col (@ARGV) {
+	    die "$col must be >= 1" if $col < 1;
+	    push(@cols, $row[$col - 1]);
+	}
+    }
+    print join("\t", @cols), "\n";
+}
+
+sub get_new_cols {
+    my @new_cols;
+    for my $col (@_) {
+	if ($col =~ /(.+)=(.+)/) {
+	    push(@new_cols, $2);
+	    $col = $1;
+	}
+	elsif ($col =~ /(.+)-(.+)/) {
+	    my ($s, $e) = get_col_nums(\@header, $1, $2);
+	    for my $c ($s .. $e) {
+		($col) = get_col_names(\@header, $c);
+		push(@new_cols, $col);
+	    }
+	}
+	else {
+	    ($ncol) = get_col_names(\@header, $col);
+	    $ncol = $col if ($ncol eq '' && $opt_i);
+	    push(@new_cols, $ncol);
+	}
+    }
+    return @new_cols;
+}

@@ -1,0 +1,114 @@
+#!/bin/bash
+
+. subs.sh
+
+set_options "n" "$@"
+set -- "${new_args[@]}"
+
+if [ $# -lt 4 ]; then
+    echo -e "\nUsage: $0 [options] template split-lines infile outfile [-k key-col]
+
+    Splits tab-delimited files and runs command on each file.
+    Uses small \"virtual\" (pointer) files by default, but they only
+    work if the infile is shared on all servers (via NFS).
+
+    If using -k, file must already be sorted by key.
+
+    template needs to have %s placeholder for input file
+
+    Options:
+
+	-n	don't use virtual files or pipes (because data is not on NFS
+		or because infile needs to be read multiple times)
+
+"
+    exit 1
+fi
+
+tmpdir=/usr/local/tmp/do_fast.$$
+mkdir -p $tmpdir || exit 1
+
+cleanup()
+{
+    echo "$0: removing directory $tmpdir" 1>&2
+    rm -rf "$tmpdir"
+    exit 1
+}
+
+trap 'cleanup got signal' HUP INT KILL QUIT TERM
+
+template="$1"; shift
+lines="$1"; shift
+infile="$1"; shift
+outfile="$1"; shift
+
+filesize=`filesize -n "$infile"` || exit 1
+
+if [ "$filesize" -lt 0 ]; then
+    echo "infile size is >= 2GB, can't use virtual files (yet)" >&2
+    vcat=cat
+else
+    virtual=-v
+    vcat=cat_virtual_files
+    if [ "$opt_n" ]; then
+	virtual=
+	vcat=cat
+    fi
+fi
+
+key="do_fast.$$"
+
+echo splitting files ... 1>&2
+
+echo "split_files $virtual $* +h $lines \"$tmpdir\" \"$infile\"" 1>&2
+split_files $virtual $* +h $lines "$tmpdir" "$infile" || cleanup "split_files failed"
+echo sleeping for 10 for NFS 1>&2
+sleep 10
+files=`cd "$tmpdir"; ls`
+outs=
+errs=
+jobtmp=`mktemp -u /tmp/tmp.XXXXXXXXXX`
+for i in $files
+do
+    if [ "$virtual" ]; then
+	tmp=`mktemp -u /tmp/tmp.XXXXXXXXXX`
+	extra="rm -f $tmp; mkfifo $tmp; ($vcat '$tmpdir/$i' > $tmp &); sleep 5"
+	extra2="rm -f $tmp"
+    else
+	tmp="$tmpdir/$i"
+	extra=
+	extra2=
+    fi
+    line=`printf "$template" $tmp`
+    if ! echo "$line" | fgrep "$tmp" > /dev/null; then
+	line="< $tmp $line"
+    fi
+    cat <<FOO >> $jobtmp
+	$extra
+	$line > $tmpdir/$i.o 2> $tmpdir/$i.e
+	status=\$?
+	$extra2
+	exit \$status
+SEPARATOR
+FOO
+    outs="$outs $i.o"
+    errs="$errs $i.e"
+done
+echo job.add_multiple -s SEPARATOR -l 1 "$key" $jobtmp 1>&2
+job.add_multiple -s SEPARATOR -l 1 "$key" $jobtmp
+rm -f $jobtmp
+echo waiting for "$key" 1>&2
+job.wait "$key %"
+if ! job.wait "$key %"; then
+    echo "job.wait failed: maybe one of your jobs failed" 1>&2
+    cleanup
+    exit 1
+fi
+echo recombining files... 1>&2
+if ! (cd $tmpdir ; unsplit_files +h $outs) > "$outfile"; then
+    echo "unsplit_files failed, leaving $tmpdir for inspection" 1>&2
+    exit 1
+fi
+(cd $tmpdir; cat $errs) 1>&2
+(sleep 20 ; rm -rf "$tmpdir") &
+exit 0

@@ -1,0 +1,57 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('fnt:');
+
+
+@ARGV || die "\nUsage: $0 [options] file1 ... > big.fa
+
+    Inserted tags into fasta headers like this: >tag.original
+
+    Options:
+	-f                  tag with file basename
+	-n		    numeric: start tags at 1
+	-t \"tag list\"
+
+    If neither -t nor -n is used then files are not tagged.
+
+
+";
+
+my %used;
+my $counter = 1;
+for my $file (@ARGV) {
+    my $key;
+    if ($opt_n) {
+	$key = $counter++;
+    }
+    elsif ($opt_t) {
+	my @tags = split /\s+/, $opt_t;
+	$key = shift @tags;
+	$opt_t = join(" ", @tags) . " ";
+    }
+    elsif ($opt_f) {
+	$key = $file;
+	$key =~ s|.*/||;
+	$key =~ s/\.[a-zA-Z]*$//;
+    }
+    if ($key ne '') {
+	die "key '$key' already used" if $used{$key};
+	$used{$key} = 1;
+    }
+    open(FILE, $file) or die "$file: $!";
+    while (<FILE>) {
+	if (/^>(.*)/) {
+	    my $orig = $1;
+	    if ($key ne '') {
+		print ">$key.$orig\n";
+	    }
+	    else {
+		print ">$orig\n";
+	    }
+	}
+	else {
+	    print;
+	}
+    }
+}

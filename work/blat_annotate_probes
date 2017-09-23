@@ -1,0 +1,199 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+my $prefix = "blat";
+my $do_exact = 1;
+
+$0 =~ s|.*/||;
+while ($ARGV[0] =~ /^-/) {
+    if ($ARGV[0] =~ /^-a/i) {
+	shift;
+	$alt_start = shift;
+	$alt_end = shift;
+    }
+    elsif ($ARGV[0] =~ /^-col/i) {
+	shift;
+	$prefix = shift;
+    }
+    elsif ($ARGV[0] =~ /^-noex/i) {
+	shift;
+	$do_exact = 0;
+    }
+    else {
+	die "unknown option '$ARGV[0]'";
+    }
+}
+
+@ARGV >= 2 || die "\nUsage: $0 [options] probefile blat-outfile
+
+    Options:
+	-alt start_col end_col	alternate probe position columns
+	-col prefix			column prefix for added columns
+	-noexact 			don't include exact hits in badness
+
+    Adds columns:
+	blat_inexact_ratio   - expected ratio of inexact to main hits
+	blat_exact_hits      - # of exact hits, excluding main/self hit
+	blat_self_hits       - # of main/self hits found by Blat
+	blat_badness         - sum of Pr(hit) * badness(hit)
+
+				Pr(hit) = 1 / 1.5 ^ mismatches
+				badness = 1 if inexact
+					  0 if same marker and gene
+					  1 if wrong marker or gene
+
+    Needs columns: probe_start, probe_seq, probe_id, probe_chr, probe_strand, etc.
+
+";
+
+##############################################################################
+
+my ($seqfile, $blat_outfile) = @ARGV;
+
+use JoinFiles;
+require 'misc.pl';
+require 'columns.pl';
+
+my $join = JoinFiles::new('left', 1, $seqfile, $blat_outfile, "probe_id/qname");
+my @header = $join->get_header('left');
+my @blat_header = $join->get_header('right');
+get_columns(\@header);
+add_col(\@header, "${prefix}_inexact_ratio");	# expected ratio of inexact/main hits
+add_col(\@header, "${prefix}_exact_hits");	# number of exact hits, excluding self
+add_col(\@header, "${prefix}_self_hits");	# number of main/self hits (should be 1)
+add_col(\@header, "${prefix}_badness");		# chance of hitting wrong marker
+$" = "\t";
+print "@header\n";
+
+my (%lost);
+while (my ($left, $right) = $join->get_match) {
+    last if $left eq '';
+    for my $l (@$left) {
+	annotate_probe($right, $l);
+	print "$l\n";
+    }
+}
+$join->cleanup;
+printf STDERR "stats: %s\n", join(' ', %lost) if $debug; #ZZZ
+exit 0;
+
+##############################################################################
+
+my ($start_col, $seq_col, $probe_id_col, $strand_col, $chr_col, $end_col);
+
+sub get_columns {
+    my ($header) = @_;
+    $start_col    = must_col($header, "probe_start");
+    $seq_col      = must_col($header, "probe_seq");
+    $probe_id_col = must_col($header, "probe_id");
+    $chr_col      = must_col($header, "probe_chr", "chr");
+    $strand_col   = must_col($header, "probe_strand", "strand");
+    if ($alt_start ne '') {
+	$start_col = $alt_start;
+	warn "using start column $alt_start\n";
+    }
+    if ($alt_end ne '') {
+	$end_col = $alt_end;
+	warn "using end column $alt_end\n";
+    }
+}
+
+##############################################################################
+
+sub annotate_probe {
+    my ($hits, $line) = @_;
+
+    my @row = split /\t/, $line;
+    my $chr        = get_col(\@header, \@row, $chr_col);
+    my $strand     = get_col(\@header, \@row, $strand_col);
+    my $seq        = get_col(\@header, \@row, $seq_col);
+    my $start      = get_col(\@header, \@row, $start_col);
+    my $probe_name = get_col(\@header, \@row, $probe_id_col);
+    my $len = length($seq);
+    my $end = $start + $len - 1;
+    $end = get_col(\@header, \@row, $end_col) if $end_col ne '';
+    my @self_marker_hits = fix_markers(get_col(\@header, \@row, 'marker_hits'));
+
+    my $is_split = ($len < ($end - $start + 1));
+
+    #
+    #   look for primary hit
+    #
+    my $inexact_ratio = 0;
+    my $found_main = 0;
+    my $found_bad = 0;
+    my $found_exact = 0;
+    my $blat_badness = 0;
+    for my $hit (@$hits) {
+	my @row = split /\t/, $hit;
+	my ($match, $mismatch, $tstrand, $qname, $qlen,
+		$tchr, $tstart, $tend, $gap_count, $gap_bases, $marker_hits)
+	    = get_cols(\@blat_header, \@row,
+		'match', 'mismatch', 'strand', 'qname', 'qsize', 'tname',
+		'tstart', 'tend', 'tgapcount', 'tgapbases', 'marker_hits');
+
+	my @marker_hits = fix_markers($marker_hits);
+	$qstart++; $tstart++;
+
+	die "qlen != len: $line" if $qlen != $len;
+
+        warn "hit $match/$qlen $tstrand $qname $tchr $tstart $tend\n" if $debug >= 2;
+	my $hit_probability += 1 / 1.5 ** ($len - $match);
+
+	#
+	#   check for main/self hit at specific location
+	#
+	if ("\U$chr" eq "\U$tchr" and $strand eq $tstrand
+            and (($start <= $tstart and ($tstart - $start) < $len)
+            or ($tend <= $end and ($end - $tend) < $len)))
+	{
+	    $found_main++;
+	    if ($match != $len) {
+		$lost{'inexact_main_hit'}++;
+		warn "INEXACT MAIN $found_main\t$qname\t$match/$qlen at $chr:$tstart-$tend\n"
+		    if $debug >= 2;
+	    }
+	    warn "MAIN $found_main\t$qname\t$match/$qlen at $chr:$tstart-$tend\n"
+		if $debug >= 2;
+	}
+	else {
+	    if ($match < $len) {
+		$lost{'extraneous_hit'}++;
+		warn "INEXACT HIT\t$qname\t$match/$qlen at $chr:$tstart-$tend\n" if $debug >= 2;
+		$inexact_ratio += $hit_probability;
+		$blat_badness += $hit_probability * 1;
+	    }
+	    elsif ($match >= $len) {
+		warn "EXACT\t$match >= $len, $qname\t$match/$qlen at $chr:$tstart-$tend\n" if $debug >= 2;
+		$found_exact++;
+		my $hb = 1;
+		if (@self_marker_hits != 0) {
+		    $hb = "@self_marker_hits" ne "@marker_hits";
+		}
+		$blat_badness += $hit_probability * $hb if $do_exact;
+	    }
+	}
+    }
+    if ($found_main > 1) {
+	warn "too many main hits for $probe_name\n" if $debug >= 2;
+	$lost{'too_many_main'}++;
+    }
+    if (!$found_main) {
+	warn "$probe_name not found at $chr:$strand:$start:$end\n" if $debug >= 2;
+	$lost{'no_main'}++;
+    }
+    set_col(\@header, \@row, "${prefix}_inexact_ratio", sprintf "%g", $inexact_ratio);
+    set_col(\@header, \@row, "${prefix}_exact_hits", $found_exact);
+    set_col(\@header, \@row, "${prefix}_self_hits", $found_main);
+    set_col(\@header, \@row, "${prefix}_badness", sprintf "%g", $blat_badness);
+    warn "no hits for $probe_name [$seq]\n" if $debug >= 2 and $found_exact == 0;
+    $_[1] = join("\t", @row);
+    return 1;
+}
+
+sub fix_markers {
+    return sort hash_unique(split /[,;]/, $_[0]);
+}
+
+

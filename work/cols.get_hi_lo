@@ -1,0 +1,45 @@
+#!/usr/bin/perl
+
+$0 =~ s|.*/||;
+@ARGV == 3 || die "\nUsage: $0 col {hi|low} num < infile
+
+    Return the <num> rows that contain the lowest or highest values in
+    column <col>.
+
+";
+
+my $col = shift;
+my $kind = shift;
+my $num = shift;
+
+use Columns;
+
+my $columns = Columns::new(STDIN);
+my @list;
+while (my $row = $columns->get_row()) {
+    my $val = $columns->get_col($row, $col);
+    next if $val eq '';
+    if (@list < $num) {
+	push(@list, $row);
+	next;
+    }
+    if ($kind =~ /^hi/ and $val > $list[0]) {
+	@list = reverse sort sortit (@list, $row);
+	@list = @list[0 .. $num - 1];
+    }
+    if ($kind =~ /^lo/ and $val < $list[0]) {
+	@list = sort sortit (@list, $row);
+	@list = @list[0 .. $num - 1];
+    }
+}
+
+$columns->print_header(STDOUT);
+for my $line (@list) {
+    $columns->print_row(STDOUT, $line);
+}
+
+sub sortit {
+    my $a_val = $columns->get_col($a, $col);
+    my $b_val = $columns->get_col($b, $col);
+    return $a_val <=> $b_val;
+}

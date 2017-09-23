@@ -1,0 +1,9 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 pattern\n\n";
+
+my $pattern = shift;
+
+while (<>) {
+    print $_ if /$pattern/;
+}

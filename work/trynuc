@@ -1,0 +1,42 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ ! "$1" ]; then
+    echo -e "\nUsage: $0 options\n"
+    exit 1
+fi
+
+prefix=`basename \`pwd\``
+
+nuc_opts="$*"
+
+eval set -- `cat $prefix.options`
+while [ "$1" -a "$2" ]
+do
+    eval "export $1='$2'"
+    shift
+    shift
+done
+
+NUCM="$nuc_opts"
+
+seq="`get_link input.seq`.seq"
+
+run "nucmer --maxmatch $NUCM reference.fa $seq"
+run "casm-layout $CASM -U lll -C ccc out.delta"
+echo contigs before
+grep "^C" *.layout | wc
+echo contigs now
+grep "^C" lll | wc
+exit
+make-consensus -P lll *.bank > ccc 2> /dev/null
+amos.consensus_to_fasta ccc > fff
+
+blat.filtered reference.fa fff bbb -minScore=100 -minMatch=10 -tileSize=15
+blat.filtered reference.fa fff blast -minScore=100 -minMatch=10 -tileSize=15 -out=blast
+psl.get_best_hit -a qname bbb > best
+echo before
+ncols match mismatch tstart tend qgapcount qgapbases tgapcount tgapbases < $prefix.blat-best | expand -t 11
+echo now
+ncols match mismatch tstart tend qgapcount qgapbases tgapcount tgapbases < best | expand -t 11

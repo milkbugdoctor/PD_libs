@@ -1,0 +1,47 @@
+. subs.sh
+
+prefix=mis
+break=20
+opts="--maxmatch --nosimplify"
+df_opts=-q
+
+while getopts b:c:dgl:p:r foo ; do
+    if [ "$foo" = 'p' ]; then
+        prefix="$OPTARG"
+    elif [ "$foo" = 'd' ]; then
+        debug=1
+    elif [ "$foo" = 'r' ]; then
+        df_opts="$df_opts $OPTARG"
+    elif [ "$foo" = 'g' ]; then
+        df_opts="$OPTARG"
+    else
+	opts="$opts -$foo $OPTARG"
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -ne 2 ]; then
+    echo -e "\nUsage: $0 [options] ref.fa contigs.fa
+    Options:
+	-d		print commands as they are run
+	-p prefix
+	-b break	[ default is 20 ]
+	-l wordlen	[ default is 20 ]
+	-c mincluster	[ default is 20 ]
+	-g              run delta-filter -g instead of -q 
+	-r              run delta-filter \"-q -r\" instead of -q 
+"
+    exit 1
+fi
+
+if [ "$debug" ]; then
+    echo nucmer -p $prefix -c 20 $opts "$1" "$2" 1>&2
+fi
+if ! nucmer -p $prefix -c 20 $opts "$1" "$2" 2> /tmp/nucmer.err.$$; then
+    echo nucmer failed: 1>&2
+    cat /tmp/nucmer.err.$$ 1>&2
+    rm -f /tmp/nucmer.err.$$
+    exit 1
+fi
+delta-filter $df_opts $prefix.delta > $prefix.delta.q || exit 1
+delta.list $prefix.delta.q | ncols -h mis | add

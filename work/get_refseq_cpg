@@ -1,0 +1,228 @@
+#!/usr/bin/perl
+
+#
+#	goldenpath start positions are 0-based, but ends are 1-based
+#
+
+$db = "gp_nov8";
+$refseq = "refFlat";
+
+(($input_file, $output_file, $refseq_file, @prefixes) = @ARGV) >= 3 ||
+	die "\nUsage: $0 sequence-file main-output-file refseq-output-file [prefixes]\n";
+
+require 'new_mysql.pl';
+require 'misc.pl';
+require 'columns.pl';
+require 'cpg.pl';
+
+open(IN, $input_file) || die "couldn't read $input_file";
+my @header = get_header(*IN);
+my $start_col  = find_prefixed_col(\@header, 'start', 1, @prefixes, 'left');
+my $seq_col  = find_prefixed_col2(\@header, 1, [ @prefixes ], [ 'amplicon', 'sequence', 'seq' ]);
+my $chr_col = find_prefixed_col(\@header, 'chr', 1, @prefixes);
+my $len_col = find_prefixed_col(\@header, 'len', 1, @prefixes);
+my $marker_col = find_prefixed_col(\@header, 'id', 1, @prefixes, 'marker');
+
+mysql'connect(
+       hostname => 'db',
+       user     => 'flong',
+       password => 'jon edward',
+       database => $db
+);
+
+&get_refseqs;
+
+$" = "\t";
+
+my @in_cols = ($chr_col, $start_col, $len_col, $seq_col);
+my @refseq_cols = ($marker_col, "refseq", "gene", "chr", "strand", "start", "end", "dist", "overlaps");
+my @out_cols = (@header,
+    "left_refseq", "left_refseq_gene", "left_refseq_start", "left_refseq_end", "left_refseq_dist",
+    "left_refseq_overlaps",
+    "right_refseq", "right_refseq_gene", "right_refseq_start", "right_refseq_end", "right_refseq_dist",
+    "right_refseq_overlaps",
+    "left_cpg_start", "left_cpg_end", "left_cpg_dist",
+    "right_cpg_start", "right_cpg_end", "right_cpg_dist");
+unshift(@out_cols, "marker_id") if ! $marker_col;
+
+open(OUT, ">$output_file") || die "couldn't create $output_file";
+print OUT join("\t", @out_cols), "\n";
+
+open(REFSEQ, ">$refseq_file") || die "couldn't create $refseq_file";
+print REFSEQ join("\t", @refseq_cols), "\n";
+
+my $marker_count = 0;
+while (my @line = get_row(*IN)) {
+	my ($chr, $start, $len, $seq) = get_cols(\@header, \@line, @in_cols);
+	my $marker_id = get_col(\@header, \@line, $marker_col);
+	$marker_id = $marker_count if $marker_id eq '';
+
+	my $end = $start + $len - 1;
+	my @refseqs = get_nearest_refseqs($chr, $start, $end);
+
+	my @refseq_left = get_best_refseq($chr, $start, $end, "-", @refseqs);
+	my @refseq_right = get_best_refseq($chr, $start, $end, "+", @refseqs);
+
+	print OUT "$marker_id\t" if ! $marker_col;
+	print OUT "@line\t";
+	print OUT join("\t", @refseq_left, @refseq_right, '');
+	@cpg_5 = get_nearest_CpG($chr, $end, $start, -1);
+	@cpg_3 = get_nearest_CpG($chr, $start, $end, 1);
+	print OUT join("\t", @cpg_5, @cpg_3), "\n";
+	
+	for my $refseq (@refseqs) {
+	    my ($index, $dist, $overlap) = split / /, $refseq;
+	    my @refseq = (split /\t/, $refseq_array[$index])[4, 5, 3, 2, 0, 1];
+	    print REFSEQ join("\t", $marker_id, @refseq, $dist, $overlap), "\n";
+	}
+	$marker_count++;
+}
+close(IN);
+close(OUT);
+close(REFSEQ);
+
+sub get_nearest_refseqs {
+    my ($chr, $m_left, $m_right) = @_;
+
+    my @results;
+    for my $m_strand ("+", "-") {
+	my $dir = ($m_strand eq "+") ? 1 : -1;
+	my ($m_start, $m_end) = ($m_strand eq '+') ? ($m_left, $m_right) : ($m_right, $m_left);
+
+	my @chr_index = ($chr_first_index{$chr}{$m_strand}, $chr_last_index{$chr}{$m_strand});
+	next if !defined($chr_index[0]);
+
+	my $first_index = get_first_index($m_start, @chr_index);
+	while ($chr_index[0] < $first_index and $first_index < $chr_index[1]) {
+	    last if $dir * ($m_start - $refseq_array[$first_index]) > 0;
+	    $first_index -= $dir;
+	}
+
+	for (my $i = $first_index; $chr_index[0] <= $i and $i <= $chr_index[1]; $i += $dir) {
+	    my ($s, $e, $strand) = split(/\t/, $refseq_array[$i]);
+
+	    my $dist1 = $dir * ($s - $m_start);	# on correct side?
+	    my $dist2 = $dir * ($s - $m_end);	# reported distance
+	    if ($dist1 >= 0) {
+		$dist2 = max(0, $dist2);
+		my $overlap = get_overlap($chr, $m_left, $m_right, $i);
+		push(@results, "$i $dist2 $overlap");
+	    }
+	}
+    }
+    return @results;
+}
+
+
+#
+#	Returns
+#		@refseq_array
+#		%chr_first_index{chr}
+#		%chr_last_index{chr}
+#
+sub get_refseqs {
+	@refseq_array = mysql::query("select
+             txStart+1, txEnd, strand, chrom, name, geneName, exonStarts, exonEnds
+             from $refseq
+	     order by chrom, strand");
+	my (%chr, @chr);
+	for (my $i = 0; $i <= $#refseq_array; $i++) {
+	    my ($s, $e, $strand, $chr, $name, $gene, @rest) = split(/\t/, $refseq_array[$i]);
+	    $chr_first_index{$chr}{$strand} = $i if ! defined($chr_first_index{$chr}{$strand});
+	    $chr_last_index{$chr}{$strand} = $i;
+	    $refseq_array[$i] = join("\t", $e, $s, $strand, $chr, $name, $gene, @rest) if $strand eq '-';
+	}
+	for my $chr (keys %chr_first_index) {
+	    for my $strand ("+", "-") {
+		my ($first, $last) = ($chr_first_index{$chr}{$strand}, $chr_last_index{$chr}{$strand});
+		next if !defined($first);
+		@refseq_array[$first..$last] = sort { $a <=> $b } @refseq_array[$first..$last];
+	    }
+	}
+}
+
+
+sub get_overlap {
+    my ($chr, $m_left, $m_right, $refseq_index) = @_;
+    return "none" if $refseq_index eq '';
+warn "chr $chr left $m_left right $m_right\n" if $debug >= 2;
+    my ($intron_hit, $exon_hit);
+    my ($s, $e, $e_starts, $e_ends) = (split(/\t/, $refseq_array[$refseq_index]))[0, 1, 6, 7];
+    ($s, $e) = ($e, $s) if $s > $e;
+    my @e_starts = split /,/, $e_starts;
+    grep($_++, @e_starts); # fix exon start positions
+    die "no exons for $refseq_array[$refseq_index]" if @e_starts == 0;
+    my @e_ends = split /,/, $e_ends;
+warn "trans $s $e\n" if $debug >= 2;
+warn "e_starts @e_starts\n" if $debug >= 2;
+warn "e_ends @e_ends\n" if $debug >= 2;
+    my @introns;
+    if ($s != $e_starts[0]) { # make empty starting exon
+	unshift(@e_starts, $s);
+	unshift(@e_ends, $s - 1);
+    }
+    if ($e != $e_ends[-1]) { # make empty ending exon
+	push(@e_starts, $e);
+	push(@e_ends, $e - 1);
+    }
+    my $next_intron_start = $e_ends[0] + 1;
+    for (my $j = 0; $j <= $#e_starts; $j++) {
+	my ($e_start, $e_end) = ($e_starts[$j], $e_ends[$j]);
+warn "exon $e_start $e_end\n" if $debug >= 2;
+	if ($e_start <= $e_end) {
+	    $exon_hit = 1 if $m_left <= $e_start and $e_start <= $m_right;
+	    $exon_hit = 1 if $m_left <= $e_end and $e_end <= $m_right;
+	    $exon_hit = 1 if $e_start <= $m_left and $m_left <= $e_end;
+	    $exon_hit = 1 if $e_start <= $m_right and $m_right <= $e_end;
+	}
+	if ($next_intron_start < $e_start) {
+	    push(@introns, sprintf("%d %d", $next_intron_start, $e_start - 1));
+	    $next_intron_start = $e_end + 1;
+	}
+    }
+    for (my $j = 0; $j <= $#introns; $j++) {
+	my ($i_start, $i_end) = split(/ /, $introns[$j]);
+warn "intron $i_start $i_end\n" if $debug >= 2;
+	$intron_hit = 1 if $m_left <= $i_start and $i_start <= $m_right;
+	$intron_hit = 1 if $m_left <= $i_end and $i_end <= $m_right;
+	$intron_hit = 1 if $i_start <= $m_left and $m_left <= $e_end;
+	$intron_hit = 1 if $i_start <= $m_right and $m_right <= $e_end;
+    }
+    return "both" if $intron_hit && $exon_hit;
+    return "intron" if $intron_hit;
+    return "exon" if $exon_hit;
+    return "none";
+}
+
+sub get_first_index {
+    my ($m_start, $first, $last) = @_;
+    return $first if $first >= $last;
+    my $mid = int(($first + $last) / 2);
+    my $pos = $refseq_array[$mid] + 0;
+    my $dir = $m_start - $pos;
+    if ($dir < 0) {
+	return get_first_index($m_start, $first, $mid - 1);
+    }
+    elsif ($dir > 0) {
+	return get_first_index($m_start, $mid + 1, $last);
+    }
+    else {
+	return $mid;
+    }
+}
+
+sub get_best_refseq {
+    my ($chr, $m_start, $m_end, $m_strand, @refseqs) = @_;
+    my (@best, $best_dist);
+    for my $refseq (@refseqs) {
+	my ($index, $dist, $overlap) = split / /, $refseq;
+	my ($s, $e, $strand, $chr, $ref, $gene) = split /\t/, $refseq_array[$index];
+	next if $strand ne $m_strand;
+	my $dist1 = ($strand eq '+') ? ($s - $m_start) : ($m_start - $s); # on correct side?
+	if (@best == 0 or $dist1 < $best_dist) {
+	    $best_dist = $dist1;
+	    @best = ($ref, $gene, $s, $e, $dist, $overlap);
+	}
+    }
+    return @best ? @best : (undef, undef, undef, undef, undef, undef);
+}

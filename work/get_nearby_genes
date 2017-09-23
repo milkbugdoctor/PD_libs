@@ -1,0 +1,14 @@
+#!/usr/bin/perl
+
+@ARGV == 4 ||
+	die "\nUsage: $0 sequence-file main-output-file extra-output-file prefix
+
+    Get closest RefSeq and KnownGene in first file.
+    Get all nearby RefSeqs and KnownGenes in second file.
+
+";
+
+($input_file, $output_file, $refseq_file, $prefix) = @ARGV;
+
+exec "gp.get_nearest_genes -g gp_nov8 -r -k -f $output_file -F $refseq_file $input_file $prefix";
+

@@ -1,0 +1,19 @@
+add_to_path()
+{
+    if ! echo ":$PATH:" | /bin/fgrep -q ":$1:" ; then
+        if [ -d "$1" ]; then
+            if [ "$2" = "after" ] ; then
+                PATH="$PATH:$1"
+            else
+                PATH="$1:$PATH"
+            fi
+        else
+            echo "add_to_path: $1 does not exist" 1>&2
+        fi
+    fi
+}
+
+blat3_work=~flong/bin/work/blat3 ; export blat3_work
+add_to_path $blat3_work after
+PERLLIB=${blat3_work}:$PERLLIB
+export PERLLIB PATH

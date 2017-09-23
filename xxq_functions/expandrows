@@ -1,0 +1,90 @@
+#!/usr/bin/env python
+
+'''
+expand the value in  values in the index columns. 
+
+Usage:
+	python expandRows.py [-c|--by-col=col1] [-c|--by-col=col2 ...] [--join=' /// '] [-o output_file | STDOUT]  [-i] input_file | STDIN
+	python expandRows.py -h | --help
+'''
+
+import os, sys
+from basetools import exitUsage, TableFile
+from versiontools import *
+from dictreps import dictreps
+
+def expandRows(fsrc, fobj, by_col=[], join_str=' /// ', sep='\t'):
+	#if not by_col: return
+	fsrc = TableFile(fsrc)
+	try:
+		head = fsrc.next() 
+	except:
+		print >> sys.stderr, 'Invalid source file!'
+		raise
+	ln = len(head)
+	if not by_col:
+		by_col = head[:]
+	elif not isinstance(by_col, (list, tuple)):
+		by_col = [by_col]
+	rng = range(len(by_col))
+	try:
+		by_idx = map(head.index, by_col)
+	except:
+		print >> sys.stderr, 'Some "by_col" names not found in the table, please provide correct names!'
+		raise
+	fobj = isinstance(fobj, basestring) and open(fobj, 'w') or fobj
+	fobj.write(sep.join(head) + '\n')
+	for row in fsrc:
+		# all by_col must have same number of ' /// ', otherwise error occurs.
+		all_idx = range(len(row))
+		alls = set(all_idx)
+		bys = alls.intersection(by_idx)
+		rest = alls - bys
+		if not bys: 
+			fobj.write(sep.join(row) + '\n')
+			continue
+		n = 1
+		for i in bys:
+			row[i] = cell = row[i].split(join_str)
+			n = max(n, len(cell))
+		if n > 1:
+			for i in bys:
+				ln = len(row[i])
+				if ln < n: # make up to the same length.
+					tms = int(n/ln)
+					left = n % ln
+					row[i] = row[i]*tms + row[i][:left]
+		for i in rest:
+			row[i] = [row[i]] * n
+		for i in range(n):
+			onerow = map(lambda a:row[a][i], all_idx)
+			fobj.write(sep.join(onerow) + '\n')
+
+if __name__ == '__main__':
+	from getopt import getopt
+	optlst, args = getopt(sys.argv[1:], 'hi:o:c:', ['help', 'by-col=', 'join='])
+	optdic = dictreps(optlst)
+	err = []
+	if '-h' in optdic or '--help' in optdic:
+		exitUsage(__doc__)
+	by_col = []
+	bc = optdic.get('--by-col', [])
+	bc = isinstance(bc, str) and [bc] or bc
+	by_col.extend(bc)
+	bc = optdic.get('-c', [])
+	bc = isinstance(bc, str) and [bc] or bc
+	by_col.extend(bc)
+	join_str = optdic.get('--join', ' /// ')
+	try:
+		fsrc = optdic.get('-i', None) or args.pop(0)
+	except:
+		fsrc = sys.stdin
+	fobj = optdic.get('-o', sys.stdout)
+	if args:
+		err.append('Unexpected parameters: "%s"' % ('; '.join(args)))
+	if err:
+		err.insert(0, __doc__)
+		exitUsage(err, sys.stderr)
+	expandRows(fsrc, fobj, by_col=by_col, join_str=join_str)
+
+

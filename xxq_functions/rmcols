@@ -1,0 +1,69 @@
+#!/usr/bin/env python
+
+
+import os, sys
+from getopt import getopt # while use getopt, the options must lies before arguments
+
+def rmCols(fsrc, fobj, cols, by_index=False, rm_all=False, sep='\t'):
+	#cur_pos = fsrc.tell()
+	#file_head = fsrc.readline()[:-1].split(sep)
+	file_head = fsrc.readline().replace('\n','').replace('\r','').split(sep)
+	if by_index: idx = map(lambda a:int(a)-1, cols)
+	else: 
+		if rm_all:
+			idx = []
+			idic = {}
+			map(lambda a,b=idic:b.setdefault(a[0], []).append(a[1]), zip(file_head, range(len(file_head))))
+			map(lambda a,b=idx,c=idic:b.extend(c.get(a, [])), cols)
+		else:
+			idx = [file_head.index(a) for a in cols if a in file_head]
+	idx.sort(reverse=True)
+	if idx: 
+		#fsrc.seek(cur_pos, 0)
+		map(file_head.pop, idx)
+	fobj.write(sep.join(file_head) + '\n')
+
+	while True:
+		line = fsrc.readline()
+		if not line: break
+		#line = line[:-1].split(sep)
+		line = line.replace('\n','').replace('\r','')
+		if True: #line.strip():
+			line = line.split(sep)
+			if idx: map(line.pop, idx)
+			fobj.write(sep.join(line)+'\n')
+
+def exitUsage():
+	print 'Usage: \n\t%s [STDIN | -i|--input-file input_filename] [STDOUT | -o|--output-file output_filename] [--skip=lines_to_skip] [--by-index] [--rm-all] col1 col2 ...\n\t%s -h | --help' % (os.path.split(sys.argv[0])[1], os.path.split(sys.argv[0])[1])
+	sys.exit(0)
+
+def rmColsMain(sep='\t'):
+	optlist, args =  getopt(sys.argv[1:], 'i:o:h', ['input-file=', 'output-file=', 'skip=', 'by-index', 'rm-all', 'help'])
+	optdict = dict(optlist)
+	#input_file = optdict.get('-i', optdict.get('--input-file', args and args.pop(0) or '')) # should do so since  args.pop(0) might be done even if it is not necessary
+	if '-h' in optdict or '--help' in optdict:
+		exitUsage()
+	input_file = optdict.get('-i', optdict.get('--input-file', None))
+	by_index =  '--by-index' in optdict
+	rm_all = '--rm-all' in optdict
+	#if not input_file and args: input_file=args.pop(0)
+	if not args: exitUsage()
+	finput = input_file and open(input_file, 'r') or sys.stdin
+
+	skip = int(optdict.get('--skip', 0))
+	for i in range(skip): finput.readline()
+	
+	output_file = optdict.get('-o', optdict.get('--output-file', None))
+	if output_file: foutput = open(output_file, 'w')
+	else: foutput = sys.stdout
+
+	rmCols(finput, foutput, args, by_index=by_index, rm_all=rm_all, sep=sep)
+
+	#finput.close()
+	#foutput.close()
+		
+
+if __name__ == '__main__': 
+	rmColsMain()
+
+

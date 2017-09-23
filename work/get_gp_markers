@@ -1,0 +1,62 @@
+#!/usr/bin/perl
+#
+#   Get introns, exons, and transcripts from Known Genes.
+#   Get miRNA also.
+#
+#   Goldenpath start positions are 0-based, but ends are 1-based.
+#
+
+$debug = 0;
+
+@ARGV >= 1 || die "\nUsage: $0 markers.out
+
+    Put Known Genes and miRNA in output file.
+
+";
+my ($marker_file) = @ARGV;
+
+open(MARKERS, ">$marker_file") || die "can't create '$marker_file'";
+
+require 'golden_path.pl';
+require 'misc.pl';
+
+my @kg = get_known_genes();
+my @mi = get_miRNA();
+
+print MARKERS join("\t", qw{marker_id marker_name marker_parent_type marker_parent_id marker_parent_name marker_type marker_chr
+	marker_strand marker_start marker_end marker_len}), "\n";
+
+my $marker_id = 0;
+for my $kg (@kg) {
+    ($id, $name, $chr, $strand, $s, $e, $len, $exons, $introns)
+        = split /\t/, $kg;
+    my $marker_name;
+    $marker_name = "kg:trans:$name:$len";
+#    print MARKERS join("\t", $marker_id++, $marker_name, 'kg', $id, $name, 'trans', $chr, $strand,
+#	$s, $e, $len), "\n";
+    for my $exon (split /,/, $exons) {
+	my ($s, $len) = split /:/, $exon;
+	$e = $s + $len - 1;
+	$marker_name = "kg:exon:$name:$len";
+	print MARKERS join("\t", $marker_id++, $marker_name, 'kg', $id, $name, 'exon', $chr, $strand,
+	    $s, $e, $len), "\n";
+    }
+    for my $intron (split /,/, $introns) {
+	my ($s, $len) = split /:/, $intron;
+	$e = $s + $len - 1;
+	$marker_name = "kg:intron:$name:$len";
+	print MARKERS join("\t", $marker_id++, $marker_name, 'kg', $id, $name, 'intron', $chr, $strand,
+	    $s, $e, $len), "\n";
+    }
+}
+
+#   Return array of "id name type chr strand start end len"
+
+for my $mi (@mi) {
+    ($id, $name, $type, $chr, $strand, $s, $e, $len) = split /\t/, $mi;
+    my $marker_name = "mi:$name:$marker_id";
+    print MARKERS join("\t", $marker_id++, $marker_name, 'miRNA', $id, $name, 'miRNA', $chr, $strand,
+	$s, $e, $len), "\n";
+}
+
+exit 0;

@@ -1,0 +1,110 @@
+#!/usr/bin/perl
+
+require 'misc.pl';
+
+my %big_hash;
+my $num_traces = 0;
+
+my @hash;
+my $next_line;
+while (1) {
+    if ($next_line ne '') {
+	$_ = $next_line;
+	undef $next_line;
+    }
+    else {
+	$_ = <STDIN>;
+    }
+    last if $_  eq '';
+    chomp;
+    if (/\[Trace\]/) {
+	finish();
+    }
+    elsif (/\[Bases\]/) {
+	while (<STDIN>) {
+	    last if /(^\s*$)|\[/;
+	    chomp;
+	    s/#.*//;
+	    my ($base, $pos, @qual) = split /\s+/, $_;
+	    $pos += 0;
+	    my $qual;
+	    for my $q (@qual) { $qual += $q; }
+	    $hash[$pos]{base} = $base;
+	    $hash[$pos]{quals} .= "$qual ";
+	    $hash[$pos]{called}++;
+	}
+	$next_line = $_;
+    }
+    elsif (/\[Flows\]/) {
+	my $pos = 1;
+	while (<STDIN>) {
+	    last if /(^\s*$)|\[/;
+	    chomp;
+	    s/#.*//;
+	    my ($base, $signal) = split /\s+/, $_;
+	    if ($hash[$pos]) {
+		$hash[$pos]{signal} = $signal;
+		$hash[$pos]{quals} .= "$qual ";
+	    }
+	    else {
+		$hash[$pos]{signal} = $signal;
+		$hash[$pos]{base} = $base;
+		$hash[$pos]{called} = 0;
+		$hash[$pos]{quals} = "";
+	    }
+	    $pos++;
+	}
+	$next_line = $_;
+    }
+}
+finish();
+
+sub finish {
+    $num_traces++;
+    # print STDERR ".";
+    print STDERR "\n$num_traces\n" if $num_traces % 1000 == 0;
+    for my $pos (0 .. $#hash) {
+	next if $hash[$pos] eq '';
+	my $base = $hash[$pos]{base};
+	my $signal = $hash[$pos]{signal};
+	my $called =  $hash[$pos]{called};
+	my $quals = $hash[$pos]{quals};
+	my $tmp = $big_hash{$called}{$base}{$quals};
+	if (defined $tmp->{lowest}) {
+	    $tmp->{lowest} = min($tmp->{lowest}, $signal);
+	}
+	else {
+	    $tmp->{lowest} = $signal;
+	}
+	if (defined $tmp->{highest}) {
+	    $tmp->{highest} = max($tmp->{highest}, $signal);
+	}
+	else {
+	    $tmp->{highest} = $signal;
+	}
+	$tmp->{histogram}{$signal}++;
+	$big_hash{$called}{$base}{$quals} = $tmp;
+    }
+    undef @hash;
+    undef $next_line;
+}
+
+print_tabbed(STDOUT, "len base quals low high avg histo\n");
+for my $called (sort { $a <=> $b } keys %big_hash) {
+    for my $base (sort keys %{$big_hash{$called}}) {
+	for my $quals (sort keys %{$big_hash{$called}{$base}}) {
+	    my $hash = $big_hash{$called}{$base}{$quals};
+	    my $low = $hash->{lowest};
+	    my $hi = $hash->{highest};
+	    my $avg = ($low + $hi)/2;
+	    my @histogram;
+	    while (my ($signal, $num) = each %{$hash->{histogram}}) {
+		push(@histogram, "$signal:$num");
+	    }
+	    my $histogram = join(" ", @histogram);
+	    print join("\t", $called, $base, $quals, $low, $hi, $avg, $histogram) . "\n";
+	}
+    }
+}
+
+print STDERR "$num_traces reads processed\n";

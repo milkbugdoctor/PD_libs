@@ -1,0 +1,14 @@
+#!/bin/bash
+
+if [ ! "$1" ]; then
+    echo -e "\nUsage: $0 readname ...\n"
+    exit 1
+fi
+
+for r in $*
+do
+    for b in ~/Phage/reads/gerald_70EUYAAXX_?.qsorted.bam
+    do
+	java.find_read -s -p $r $b
+    done
+done

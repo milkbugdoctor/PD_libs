@@ -1,0 +1,55 @@
+#!/usr/bin/perl
+
+(@ARGV >= 3) || die "\nUsage: $0 class-col badness-col max-probes [file]
+
+Keeps at most max-probes for each class.  Pick best probes
+by using 'badness' column.
+
+Input file must be sorted by class-col.
+
+	class-col	which column specifies probe class
+	max-probes	max probes per class
+
+";
+
+require 'columns.pl';
+require 'probes.pl';
+
+my $class_col = shift;
+my $bad_col = shift;
+my $max_probes = shift;
+
+my @header = get_header("ARGV");
+must_col(\@header, $class_col);
+must_col(\@header, $bad_col);
+
+$" = "\t";
+print "@header\n";
+
+while (my @row = get_row("ARGV")) {
+    my $class = get_col(\@header, \@row, $class_col);
+
+    if ($class ne $last_class and $last_class ne '') {
+	&do_probes($last_class, \@lines);
+    }
+    $last_class = $class;
+    push(@lines, \@row);
+}
+&do_probes($last_class, \@lines);
+
+sub line_val {
+    my ($line) = @_;
+    return get_col(\@header, $line, $bad_col);
+}
+
+sub do_probes {
+    my ($class, $lines_ref) = @_;
+    my @good_lines = sort {
+	line_val($a) <=> line_val($b);
+    } @$lines_ref;
+    splice(@good_lines, $max_probes);
+    for my $row (@good_lines) {
+	print "@$row\n";
+    }
+    @{$lines_ref} = ();
+}

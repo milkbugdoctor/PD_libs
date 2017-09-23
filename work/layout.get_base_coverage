@@ -1,0 +1,57 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 infile.layout\n\n";
+
+require 'misc.pl';
+require 'ranges.pl';
+
+my $layout = shift;
+
+open(INFILE, $layout) or die "$layout: $!";
+while (<INFILE>) {
+    chomp;
+    next if ! /^C (\d+)\t(\d+)\t(\S+)\t(\S+)/;
+    my ($contig, $reads, $ref, $pos) = ($1, $2, $3, $4);
+    $pos =~ /(-?\d+)-(-?\d+)/;
+    my ($contig_start, $contig_end) = ($1, $2);
+    $uncovered{$contig} = [ 1, $contig_end - $contig_start + 1 ];
+    $covered{$contig} = [ ];
+    for my $i (1 .. $reads) {
+	my $line = <INFILE>;
+        my ($id, $start, $end, $trim1, $trim2, $perc) = split /\s+/, $line;
+	my $len = abs($end - $start) + 1;
+	my $strand = ($start <= $end) ? "+" : "-";
+	($start, $end) = ($end, $start) if $start > $end;
+	$start += 1;
+	$end += 1;
+	range_add($start, $end, $covered{$contig});
+	range_sub($start, $end, $uncovered{$contig});
+    }
+}
+
+print_tabbed(STDOUT, "contig cov uncov uncovr\n");
+for my $scaff (sort { $a <=> $b } keys %covered) {
+    printf "$scaff\t%d\t%d", bases($covered{$scaff}), bases($uncovered{$scaff});
+    printf "\t%s\n", ranges($uncovered{$scaff});
+}
+
+sub bases {
+    my ($ranges) = @_;
+    my $bases = 0;
+    for (my $i = 0; $i < @$ranges; $i += 2) {
+	my ($s, $e) = @$ranges[$i, $i + 1];
+	$bases += $e - $s + 1;
+    }
+    return $bases;
+}
+
+sub ranges {
+    my ($ranges) = @_;
+    my @result;
+    for (my $i = 0; $i < @$ranges; $i += 2) {
+	my ($s, $e) = @$ranges[$i, $i + 1];
+	my $len = $e - $s + 1;
+	push(@result, "$s-$e:$len");
+    }
+    return join(' ', sort { $a <=> $b } @result);
+}

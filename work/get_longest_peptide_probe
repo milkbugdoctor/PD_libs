@@ -1,0 +1,39 @@
+#!/usr/bin/perl
+
+(@ARGV == 2) || die "\nUsage: $0 probe-file uniq-peptide-file > new-probefile
+
+";
+
+require 'columns.pl';
+# require 'misc.pl';
+# require 'probes.pl';
+use JoinFiles;
+
+my @join_keys = ('peptide_seq');
+my ($infile, $joinfile) = @ARGV;
+
+my $join = JoinFiles::new('inner', 1, $infile, $joinfile, @join_keys);
+
+$" = "\t";
+my @left_header = $join->get_header('left');
+my $left_comments = get_header_comments(@left_header);
+my @right_header = $join->get_header('right');
+print "$left_comments@left_header\n";
+
+while (($left, $right) = $join->get_match) {
+    last if $left eq '' or $right eq '';
+    die "too many lines from right side" if @$right > 1;
+    my @right = split /\t/, $right->[0];
+    my ($best_cycles, $best_row);
+    for my $l (@$left) {
+	my @row = split /\t/, $l;
+	my $cycles = get_col(\@left_header, \@row, 'probe_tagged_cycles');
+	if ($cycles > $best_cycles) {
+	    $best_cycles = $cycles;
+	    $best_row = $l;
+	}
+    }
+    print "$best_row\n";
+}
+$join->cleanup;
+

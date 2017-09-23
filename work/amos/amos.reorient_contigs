@@ -1,0 +1,228 @@
+#!/usr/bin/perl
+
+use Cols;
+require 'misc.pl';
+require 'fasta.pl';
+require 'primers.pl';
+
+use Getopt::Std;
+getopts('gnor');
+
+$0 =~ s|.*/||;
+@ARGV == 2 || die "\nUsage: $0 [options] reference.fa contigs.fa > fixed-contigs.fa
+
+    Use best scoring sequence match to orient contigs according to reference.
+
+    Options:
+	-g	use delta-filter -g
+
+    Merge options:
+	-n	Merge contigs by inserting 50 N's between contigs.
+
+	-r	Merge contigs by inserting reference sequence between contigs.
+		Dangerous!  Contig portions will be lost if there are overlaps!
+
+	-nr	Merge contigs by inserting enough N's to match the gap
+	        size in the reference, up to 50 N's.  If the gap size is unknown
+		50 N's are used.  (The gap size is unknown if there is an overlap,
+		or if the contig ends do not map to the reference.  Even when
+		everything is perfect, the gap is at best just a guess.)
+
+    Orphan contig options:
+	-o	Add orphan contigs at the end.
+
+";
+
+my $ref = shift;
+my $contigs = shift;
+
+my $ref_hash = fasta_file_to_hash($ref);
+my $contig_hash = fasta_file_to_hash($contigs);
+
+
+my $tmp = "/tmp/$0.$$";
+# use a large break size to try to get long matches
+warn "nucmer -b 1000 --maxmatch $ref $contigs -p $tmp 2> $tmp.nucmer.err\n";
+shell("nucmer -b 1000 --maxmatch $ref $contigs -p $tmp 2> $tmp.nucmer.err") || die "nucmer: $!";
+my $delta = "$tmp.delta";
+if ($opt_g) {
+    shell("delta-filter -g $delta > $delta.g") || die "delta-filter: $!";
+    $delta = "$delta.g";
+}
+open(PIPE, "delta.list $delta |") or die "delta.list $delta: $!";
+my $cols = Cols::new(PIPE);
+my (%ref_size, %reads, %largest);
+while (my $r = $cols->get_row()) {
+    my $ref = $r->{rname};
+    my $qname = $r->{qname};
+    my $score = $r->{score};
+    $ref_size{$ref} = $r->{rsize};
+    if ($score > $largest{$qname}{score}) {
+	# best-scoring contig for $qname
+	$largest{$qname} = $r;
+    }
+}
+for my $r (values %largest) {
+    my $ref = $r->{rname};
+    push(@{$lines{$ref}}, $r);
+}
+
+my @ref_names = sort { $ref_hash->{$a}{order} <=> $ref_hash->{$b}{order} } keys %$ref_hash;
+
+my $counter = 1;
+for my $ref (@ref_names) {
+    my $header = $ref_hash->{$ref}{header};
+    my @contigs = (sort { $a->{rstart} <=> $b->{rstart} } @{$lines{$ref}});
+    if (@contigs == 0 && (!$opt_r || $opt_n)) {
+	warn "skipping $ref because no best contigs found\n";
+	next;
+    }
+    my $ref_seq = $ref_hash->{$ref}{seq};
+    my %did;
+    for my $c (@contigs) {
+	my $qname = $c->{qname};
+	my $qstrand = $c->{qstrand};
+	my $rstart = $c->{rstart};
+	my $rend = $c->{rend};
+	my $score = $c->{score};
+	warn "$qname mapped to $ref $qstrand $rstart-$rend score $score\n";
+	if ($did{$qname}) {
+	    die "Huh?  We already did [$qname]!  How did that happen?";
+	}
+	# next if $did{$qname};
+	$did{$qname} = 1;
+    }
+    if (!$opt_n && !$opt_r || @contigs == 1) {
+	# output individual contigs, no merging
+	for my $c (@contigs) {
+	    print_header($c);
+	    print_contig($c);
+	}
+	next;
+    }
+    my @qnames;
+    for my $c (@contigs) {
+	my $qname = $c->{qname};
+	push(@qnames, $qname);
+    }
+    if ($opt_n && !$opt_r) {
+	print ">merged.$counter [@qnames mapped to $ref]\n"; $counter++;
+	for my $contig_num (1 .. @contigs) {
+	    my $contig = $contigs[$contig_num - 1];
+	    my $qname = $contig->{qname};
+	    print "N" x 50, "\n" if $contig_num > 1;
+	    print_contig($contig);
+	}
+    }
+    if ($opt_r) {
+	if (@contigs) {
+	    print ">merged.$counter [@qnames mapped to $ref]\n"; $counter++;
+	}
+	else {
+	    print ">$ref [no contigs mapped to $ref]\n"; $counter++;
+	}
+	my $last_pos = 0;
+	my $end_unused = 0;
+	my $last_qname = '<start>';
+	for my $contig_num (1 .. @contigs) {
+	    my $contig = $contigs[$contig_num - 1];
+	    my $qname = $contig->{qname};
+	    # length of gap or overlap
+	    my $len = $contig->{rstart} - $last_pos - 1;
+	    my $my_end_unused = end_unused($contig, 0);
+warn "qname $qname gap len $len, prev end unused $end_unused, mine $my_end_unused\n";
+	    my $done;
+	    # is right end of last contig and left end of current contig mapped?
+	    if (end_unused($contig, 0) <= 5 && $end_unused <= 5) {
+		if ($len >= 0 && $len <= 50) {
+		    print "\n";
+		    if ($opt_n) {
+warn "joining $last_qname and $qname with $len N's\n";
+			print_wrapped(STDOUT, 'N' x $len);
+		    }
+		    else {
+warn "joining $last_qname and $qname with $len bases from reference\n";
+			print_wrapped(STDOUT, substr($ref_seq, $last_pos, $len));
+		    }
+		    print "\n";
+		    print_contig($contig);
+		    $done = 1;
+		}
+		elsif ($len < 0) {
+		    print "\n";
+		    if ($opt_n) {
+warn "$last_qname and $qname overlap, inserting 50 N's\n";
+			print_wrapped(STDOUT, 'N' x 50);
+		    }
+		    else {
+warn "$last_qname and $qname overlap, only using last $len bases\n";
+			my $seq = substr(get_contig($contig), -$len);
+			print_wrapped(STDOUT, $seq);
+		    }
+		    $done = 1;
+		}
+	    }
+	    # unused portions were too big
+	    if (!$done) {
+warn "joining $last_qname and $qname with 50 N's\n";
+		print "N" x 50, "\n" if $contig_num > 1;
+		print_contig($contig);
+	    }
+	    $last_pos = $contig->{rend};
+	    $end_unused = end_unused($contig, 1);
+	    $last_qname = $qname;
+	}
+    }
+}
+
+if ($opt_o) {
+    for my $qname (keys %$contig_hash) {
+	next if $largest{$qname};
+	my $desc = $contig_hash->{$qname}{desc};
+	my @header = ($qname, "[orphaned]");
+	push(@header, $desc) if $desc ne '';
+	print ">" . join(" ", @header) . "\n";
+	my $seq = $contig_hash->{$qname}{seq};
+	print_wrapped(STDOUT, $seq);
+    }
+}
+
+shell("rm -rf $tmp*");
+
+sub get_contig {
+    my ($contig) = @_;
+    my $whole_seq = $contig_hash->{$contig->{qname}}{seq};
+    my $seq = $whole_seq;
+    return $seq if $contig->{qstrand} eq '+';
+    return rc($seq);
+}
+
+sub print_contig {
+    my ($contig) = @_;
+    print_wrapped(STDOUT, get_contig($contig));
+}
+
+#
+#   Is the left/right end of the contig mapped to the reference?
+#
+sub end_unused {
+    my ($contig, $right) = @_;
+    my @diffs = ($contig->{qstart} - 1, $contig->{qsize} - $contig->{qend});
+    @diffs = reverse @diffs if $contig->{qstrand} eq '-';
+    return $right ? $diffs[1] : $diffs[0];
+}
+
+sub print_header {
+    my ($c, $extra) = @_;
+    my $qname = $c->{qname};
+    my $qstrand = $c->{qstrand};
+    my $rstart = $c->{rstart};
+    my $rend = $c->{rend};
+    my $score = $c->{score};
+    my $desc = $contig_hash->{$qname}{desc};
+    $extra .= "[rev]" if $qstrand ne '+';
+    my @header = ($qname);
+    push(@header, $extra) if $extra ne '';
+    push(@header, $desc) if $desc ne '';
+    print ">" . join(" ", @header) . "\n";
+}

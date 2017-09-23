@@ -1,0 +1,32 @@
+#!/usr/bin/perl
+
+my $sep_pat = "(/|,|\\s+)";
+
+my $debug = 0;
+
+$0 =~ s|.*/||;
+(@ARGV >= 2) || die qq{\nUsage: $0 filename "prefixes" column_suffixes > actual_column_names
+
+Gets actual column names from file for suffixes.  E.g.,
+
+    $0 test.txt "probe" chr start end
+
+    Prefixes can be separated by this pattern: $sep_pat
+
+    "none" is a special prefix name indicating no prefix.
+
+};
+
+use Cols;
+
+my $file = shift;
+my $prefixes = shift;
+
+my $columns = Cols::new($file);
+
+my @prefixes = split m|$sep_pat|, $prefixes;
+my @keys = @ARGV;
+my @tmp = $columns->find_prefixed_cols(1, \@prefixes, @keys);
+for my $i (0 .. $#keys) {
+    print "$tmp[$i]\n";
+}

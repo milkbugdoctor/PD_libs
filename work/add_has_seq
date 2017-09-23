@@ -1,0 +1,53 @@
+#!/usr/bin/perl
+
+#
+#   Keep probes containing certain sequences.
+#
+#   Expects: probe_seq probe_id seq_id left_start strand
+#
+
+use Columns;
+require 'translate.pl';
+
+$0 =~ s|.*/||;
+(@ARGV >= 3) || die "\nUsage: $0 seq-col yes-col sequences ...
+
+	seq-col		column containing the oligo sequence
+	yes-col		new column, set to 1 or 0
+	sequences	(degenerate) sequences to look for
+
+";
+
+my ($seq_col, $new_col, @sequences) = @ARGV;
+for my $seq (@sequences) {
+    $seq = degenerate_to_regex($seq);
+}
+my $regex = join("|", @sequences);
+warn "$0: using regex $regex\n";
+
+my $cols = Columns::new(STDIN);
+$cols->add_col($new_col);
+my $probe_seq_col = $cols->must_col($seq_col);
+
+$cols->print_header(STDOUT);
+
+my ($yes, $no, $total);
+while (my $row = $cols->get_row()) {
+    my $seq = $cols->get_col($row, $seq_col);
+    $total++;
+    if ($seq =~ /$regex/i) {
+	$yes++;
+	$cols->set_col($row, $new_col, 1);
+    }
+    else {
+	$no++;
+	$cols->set_col($row, $new_col, 0);
+    }
+    $cols->print_row(STDOUT, $row);
+}
+
+printf STDERR "$0: total %d   yes %d (%f%%)   no %d (%f%%)\n",
+    $total, $yes, $yes/$total*100, $no, $no/$total*100;
+
+exit 0;
+

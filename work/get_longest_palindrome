@@ -1,0 +1,35 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 primers
+
+	Palindrome is when 3' end curves around and forms tight hairpin.
+
+";
+
+for my $seq (@ARGV) {
+    if ($seq =~ /[^ACGTacgt]/) {
+	warn "bad primer $seq\n";
+	next;
+    }
+    printf "%s\t%d\n", $seq, longest_palindrome($seq, $len);
+}
+
+sub has_palindrome {
+    my ($seq, $len) = @_;
+    return 0 if $len == 0;
+    my $end = substr($seq, -$len);
+    $end = "\U$end";
+    my $other = substr($seq, -$len * 2, $len);
+    $other = reverse "\U$other";
+    $other =~ tr/ACGT/TGCA/;
+    my $yes = $other eq $end;
+    return $other eq $end;
+}
+
+sub longest_palindrome {
+    my ($seq) = @_;
+    for my $len (1 .. length($seq)) {
+	return $len if has_palindrome($seq, $len);
+    }
+    return 0;
+}

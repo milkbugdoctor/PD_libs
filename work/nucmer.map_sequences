@@ -1,0 +1,84 @@
+#!/bin/bash
+
+. subs.sh
+
+def_cols="rname qstrand rstart rend score"
+cols=$def_cols
+outer=-outer
+
+while getopts c:ju foo ; do
+    if [ "$foo" = 'c' ]; then
+        cols="$OPTARG"
+    elif [ "$foo" = 'u' ]; then
+        uniq=1
+    elif [ "$foo" = 'j' ]; then
+        outer=
+    fi
+done
+shift $((OPTIND-1))
+
+options="-l 20 -c 20 -b 50"
+
+if [ $# -lt 6 ]; then
+    echo -e "\nUsage: $0 [options 1] id-col seq-col infile min_score base db.fa [options 2] > outfile.txt
+
+    Map sequences using nucmer.  The input file is annotated with extra
+    columns by performaing a join.
+
+    Default nucmer options: $options
+
+    Parameters:
+	min_score       minimum alignment score
+	base            prefix for intermediate files
+
+    Options 1:
+	-j		join: throw away non-matching rows
+	-u              unique (use .delta.q instead of .delta)
+	-c cols 	what new columns you want added (default: $def_cols)
+
+    Options 2:
+        -p prefix
+        -b break        [ default is 20 ]
+        -l wordlen      [ default is 20 ]
+        -c mincluster   [ default is 20 ]
+
+" 1>&2
+    exit 1
+fi
+id_col="$1" ; shift
+seq_col="$1" ; shift
+infile="$1" ; shift
+percent="$1" ; shift
+base="$1" ; shift
+db="$1" ; shift
+
+options="$options $* -p $base"
+
+####################
+
+output=$base
+fasta=$output.fa
+best=$output.nucmer.best.$percent
+matched=$output.matched
+
+if [ "$uniq" ]; then
+    # uniq=" | sort_file qname | get_best_hit qname score"
+    nucmer_out=$output.delta.q
+else
+    nucmer_out=$output.delta
+fi
+
+if need_nonempty $infile $fasta; then
+    run "make_fasta '$id_col' '$seq_col' $infile > $fasta"
+fi
+
+if need_nonempty $fasta $nucmer_out; then
+    run "nucmer.get_best_hits $options $db $fasta"
+fi
+
+if need_nonempty $nucmer_out $best; then
+    run "delta.list $add_align -x $nucmer_out | cols.select '{score} >= $percent' > $best"
+fi
+
+run "join_files $outer -add '$cols' $infile $best '$id_col/qname'"
+

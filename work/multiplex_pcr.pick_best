@@ -1,0 +1,206 @@
+#!/usr/bin/perl
+
+use strict vars;
+
+my $debug = 1;
+my $max_product_occur = 3;
+
+(@ARGV == 4) || die "\nUsage: $0 solutions.txt conflicts.txt iterations num-sol > outfile
+
+    num-sol	number of unique solutions using different primers
+
+";
+
+my $solutions_file = shift;
+my $conflicts_file = shift;
+my $iterations = shift;
+my $num_sol = shift;
+
+##################################
+
+my ($conflicts, $products, $sequences, $primer_product_hash);
+
+##################################
+
+use Columns;
+require 'misc.pl';
+
+my $columns = Columns::new($solutions_file);
+$columns->must_col("prod_id");
+$columns->must_col("seq_id");
+my $left_col = $columns->must_any('primer1_seq', 'PRIMER_LEFT_SEQUENCE');
+my $right_col = $columns->must_any('primer2_seq', 'PRIMER_RIGHT_SEQUENCE');
+my @header = $columns->get_header();
+
+while (my $row = $columns->get_row()) {
+    my $prod_id = $columns->get_col($row, 'prod_id');
+    my $seq_id = $columns->get_col($row, 'seq_id');
+    my $primer_left = $columns->get_col($row, $left_col);
+    my $primer_right = $columns->get_col($row, $right_col);
+    push(@{$products->{$seq_id}}, $prod_id);
+    push(@{$sequences->{$prod_id}}, $seq_id);
+    push(@{$primer_product_hash->{$prod_id}}, $primer_left, $primer_right);
+    push(@{$primer_product_hash->{$primer_left}}, $prod_id);
+    push(@{$primer_product_hash->{$primer_right}}, $prod_id);
+}
+
+open(FILE, $conflicts_file) or die "can't open file '$conflicts_file'";
+while (<FILE>) {
+    my ($a, $b) = split /\s+/;
+    $conflicts->[$a][$b] = 1;
+    $conflicts->[$a][$a] = 1;
+    $conflicts->[$b][$b] = 1;
+    $conflicts->[$b][$a] = 1;
+}
+
+$" = "\t";
+print "sol_id\tpcr_id\t@header\n";
+
+for my $sol_num (1 .. $num_sol) {
+    warn "\nsolution $sol_num:\n";
+
+    my ($num_seq, $num_prod);
+    for my $seq_id (keys %$products) {
+	$num_seq++;
+	$num_prod += @{$products->{$seq_id}};
+    }
+
+    warn "\n\tusing $num_seq sequences and $num_prod products\n";
+
+    my @best_solution = get_best_solution($iterations, $conflicts, $products);
+    printf STDERR "\n\tgot best pcr set of size %d:\n", scalar @best_solution;
+
+    my %products_used;
+    my $pcr_id = 0;
+    for my $bin (@best_solution) {
+	my @products = keys %$bin;
+	warn "\t$pcr_id: @products\n";
+	for my $s (@products) {
+	    $products_used{$s} = 1;
+	}
+	$pcr_id++;
+    }
+
+    my %used_primers;
+    my $rows = {};
+    my $columns = Columns::new($solutions_file);
+    while (my $row = $columns->get_row()) {
+	my $prod_id = $columns->get_col($row, 'prod_id');
+	next if ! defined $products_used{$prod_id};
+	$rows->{$prod_id} = $row;
+    }
+
+    my $pcr_id = 0;
+    for my $bin (@best_solution) {
+	my @products = keys %$bin;
+	for my $s (@products) {
+	    my $row = $rows->{$s};
+	    print "$sol_num\t$pcr_id\t";
+	    $columns->print_row(STDOUT, $row);
+	    for my $primer (@{$primer_product_hash->{$s}}) {
+		$used_primers{$primer} = 1;
+	    }
+	}
+	$pcr_id++;
+    }
+
+    warn "\nprimers used in solution:\n";
+    for my $primer (hash_unique(keys %used_primers)) {
+	warn "\t$primer\n";
+	for my $prod_id (@{$primer_product_hash->{$primer}}) {
+	    delete $sequences->{$prod_id};
+	}
+    }
+    $products = { };
+    while (my ($prod_id, $seq_array) = each %$sequences) {
+	for my $seq_id (@$seq_array) {
+	    push(@{$products->{$seq_id}}, $prod_id);
+	}
+    }
+}
+
+sub get_best_solution {
+    my ($iterations, $conflicts, $products) = @_;
+
+    my @best_solution;
+    my %used_products;
+    for my $it (1 .. $iterations) {
+	my %used_seqs;
+	my %used_solns;
+	my %available_solns = %$products;
+	my @bins;
+	my @needed_seqs = keys %$products;
+
+	while (@needed_seqs > keys %used_seqs) {
+	    my @available_solns = sort {
+		@{$available_solns{$a}} <=> @{$available_solns{$b}};
+	    } keys %available_solns;
+	    for my $seq_id (@available_solns) {
+		my @solns = randomize_list(@{$available_solns{$seq_id}});
+		for my $soln (@solns) {
+		    die "soln $soln already used, was in seq $seq_id" if $used_solns{$soln};
+		    if (my $pcr = can_insert($soln, @bins)) {
+			$pcr->{$soln}++;
+			delete $available_solns{$seq_id};
+			$used_seqs{$seq_id} = 1;
+			$used_solns{$soln} = 1;
+			last;
+		    }
+		}
+	    }
+	    last if @needed_seqs == keys %used_seqs;
+
+	    my $bin = { };
+	    push(@bins, $bin);
+	}
+	if (!@best_solution or @bins < @best_solution) {
+	    @best_solution = @bins;
+	    %used_products = %used_solns;
+	}
+    }
+
+    #
+    #   try to reuse primer pairs
+    #
+    while (1) {
+	my $did_something = 0;
+	for my $s2 (randomize_list(keys %used_products)) {
+	    next if $used_products{$s2} >= $max_product_occur;
+	    for my $bin (randomize_list(@best_solution)) {
+		my $conflict = 0;
+		for my $s1 (keys %$bin) {
+		    if ($s1 eq $s2 or $bin->{$s2}) {
+			$conflict = 1;
+			last;
+		    }
+		    if ($conflicts->[$s1][$s2]) {
+			$conflict = 1;
+			last;
+		    }
+		}
+		if (!$conflict) {
+		    $used_products{$s2}++;
+		    $bin->{$s2}++;
+		    $did_something = 1;
+		}
+	    }
+	}
+	last if ! $did_something;
+    }
+    return @best_solution;
+}
+
+sub can_insert {
+    my ($prod, @pcrs) = @_;
+    for my $pcr (randomize_list(@pcrs)) {
+	my $conflict = 0;
+	for my $p (keys %$pcr) {
+	    if ($conflicts->[$p][$prod]) {
+		$conflict = 1;
+		last;
+	    }
+	}
+	return $pcr if ! $conflict;
+    }
+    return undef;
+}

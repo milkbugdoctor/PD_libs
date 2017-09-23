@@ -1,0 +1,1288 @@
+#!/usr/bin/perl
+
+use Carp;
+use Time::HiRes qw ( time alarm sleep );
+use Fasta;
+
+use enum qw(START END ID SCORE TRIM1 TRIM2 STRAND ALIGN);
+
+# use strict vars;
+
+my $debug = 2;
+
+my $overlap_percent = 90;
+my $big_block = 10000; # size for graphs
+my $small_block = 1000; # size for adding edges to graph
+
+my $big_num = 10e12;
+my $patch = 100;
+my $allow = 1;
+my $min_overlap = 10;
+my $big_overlap = 200;		# overlap needed by 454 contig pieces
+my $contig_overlap = 200;	# for merging overlapping reads/contigs that end abruptly
+my $min_contig = 200;
+my $min_fragment = 20;		# minimum size of read fragment
+my $max_gap = 5;
+my $max_igap = 5;
+my $no_delete = 0;
+my $min_score = 0;
+
+use Getopt::Std;
+getopts('bc:C:d:f:g:i:m:no:O:p:rs:z');
+
+@ARGV == 3 || die "\nUsage: $0 [options] file.layout reference.fa reads.fa > new.layout
+
+    -m map	    use read map to identify split contigs used as reads
+    -b		    break contig if necessary (used with -d)
+    -d diff	    maximum allowed difference from best
+    -n		    no delete: cancel -d
+    -p patch	    patch size (default $patch)
+    -r		    remove extra stuff so make-consensus won't choke
+
+    -o min	    minimum overlap between reads (default $min_overlap)
+    -C min	    minimum overlap for contigs to be merged (default $contig_overlap)
+    -O min	    minimum overlap between 454 contig pieces (default $big_overlap)
+
+    -c len	    minimum contig length (default $min_contig)
+    -g gap	    maximum internal or external gap allowed (default $max_gap)
+    -i gap	    maximum internal gap allowed (default $max_igap)
+    -s score	    minimum alignment score
+
+    -z		    output .ctg file
+
+";
+
+$allow = $opt_d if $opt_d ne '';
+$patch = $opt_p if $opt_p ne '';
+$min_overlap = $opt_o if $opt_o ne '';
+$big_overlap = $opt_O if $opt_O ne '';
+$contig_overlap = $opt_C if $opt_C ne '';
+$max_igap = $max_gap = $opt_g if $opt_g ne '';
+$max_igap = $opt_i if $opt_i ne '';
+$min_score = $opt_s if $opt_s ne '';
+$min_contig = $opt_c if $opt_c ne '';
+if ($opt_n ne '') {
+    $no_delete = 1;
+    undef $opt_d;
+}
+
+require 'markers.pl';
+require 'ranges.pl';
+require 'misc.pl';
+require 'primers.pl';
+require 'amos.pl';
+require 'fasta.pl';
+
+my $layout = shift;
+my $reference_file = shift;
+my $reads_fa = shift;
+
+warn "opening reference from $reference_file\n";
+my $ref_fasta = Fasta::new($reference_file);
+
+warn "reading in read sequences from $reads_fa\n";
+my $fasta = Fasta::new($reads_fa);
+$fasta->get_seq_positions(1); warn "done reading\n";
+
+my $num_contigs;
+
+our $contig_hash;
+if ($opt_m) {
+    my $mapfile = $opt_m;
+    $contig_hash = get_contig_hash($mapfile);
+}
+
+open(INFILE, $layout) or die "$layout: $!";
+while (<INFILE>) {
+    chomp;
+    if (! /^C (\d+)\t(\d+)\t(\S+)\t(\S+)/) {
+	next;
+    }
+    our @reads = ();
+    my ($contig, $reads, $ref, $pos) = ($1, $2, $3, $4);
+    $pos =~ /(-?\d+)-(-?\d+)/;
+    my ($contig_start, $contig_end) = ($1, $2);
+    warn "\nreading $ref contig $contig $contig_start-$contig_end\n";
+    for my $i (1 .. $reads) {
+	chomp(my $line = <INFILE>);
+	if ($line =~ /^\s*$/) {
+	    printf STDERR "got %d reads but expected %d!\n", scalar @reads, $reads;
+	    last;
+	}
+        my ($id, $start, $end, $trim1, $trim2, $score, $seq) = split /\s/, $line, 7;
+	confess "bad read $line" if $id eq '' or $start eq '';
+	my $strand = '+';
+	if ($start > $end) {
+	    $strand = '-';
+	    ($start, $end) = ($end, $start);
+	}
+	my @marker = ($start, $end, $id, $score, $trim1, $trim2, $strand, $seq);
+	push(@reads, \@marker);
+    }
+
+    my $layout_contig = LayoutContig::build($ref, $ref_fasta, $contig, $contig_start, $contig_end, \@reads, $fasta);
+    if ($opt_z) {
+	my $contig = Contig::build($layout_contig);
+	$contig->print();
+	next;
+    }
+
+#    remove_loners($ref, $contig_start, $contig_end, \@reads);
+#    warn "\nremoving low scores 1: $ref contig $contig $contig_start-$contig_end\n";
+#    remove_low_scores_1($ref, $contig_start, $contig_end, \@reads);
+    my @contigs = get_contigs($ref, $contig_start, $contig_end, \@reads);
+exit;
+
+    my @new_contigs;
+    while (my $contig = pop @contigs) {
+	my ($ref, $contig_start, $contig_end, $reads) = @$contig;
+	warn "\nremoving low scores 2: $ref $contig_start-$contig_end\n";
+# remove_low_scores_2($ref, $contig_start, $contig_end, $reads);
+# my @contigs = get_contigs($ref, $contig_start, $contig_end, $reads);
+	my @contigs = fix_it($ref, $contig_start, $contig_end, $reads, 1);
+	die "contig was split!" if @contigs > 1;
+	$contig = $contigs[0];
+	my ($new_ref, $cs, $ce) = @$contig;
+	die "contig changed size! [$contig_start $contig_end] to [$cs $ce]" if $cs != $contig_start or $ce != $contig_end;
+	push(@new_contigs, $contig);
+    }
+    @contigs = splice(@new_contigs, 0);
+    while (my $contig = pop @contigs) {
+	if ($opt_d ne '') {
+	    my ($ref, $contig_start, $contig_end, $reads) = @$contig;
+	    warn "\nremoving worst reads for contig $ref $contig_start-$contig_end\n";
+	    my @contigs = fix_it(@$contig, 2);
+	    undef $reads;
+	    for my $contig (@contigs) {
+		print_contig(@$contig);
+	    }
+	    undef @contigs;
+	}
+	else {
+	    print_contig(@$contig);
+	}
+	undef $contig;
+    }
+}
+
+sub remove_low_scores_1 {
+    my ($ref, $contig_start, $contig_end, $reads) = @_;
+    warn "    remove_low_scores_1($ref, $contig_start, $contig_end)\n" if $debug;
+    printf STDERR "    starting with %d reads\n", scalar @$reads if $debug;
+    my $removed = 0;
+    for (my $i = 0; $i <= $#{$reads}; $i++) {
+	my $read = $reads->[$i];
+	my ($start, $end, $id, $score, $trim1, $trim2, $strand) = @$read;
+	my ($score, $gap) = get_score1($read);
+	if ($score < $min_score or $gap > $max_igap or ($end - $start + 1) < $min_fragment) {
+	    warn "    removing id $id [$start-$end] [trim $trim1 $trim2] score $score gap $gap\n" if $debug >= 1;
+	    splice(@$reads, $i, 1);
+	    $i--;
+	    $removed++;
+	}
+    }
+    warn "    removed $removed reads\n" if $debug;
+}
+
+#
+#   Remove reads that don't have any support.
+#
+sub remove_loners {
+    my ($ref, $contig_start, $contig_end, $reads) = @_;
+    printf STDERR "\nremove_loners $ref $contig_start-$contig_end, %d reads\n", scalar @$reads if $debug;
+    my $m = markers::new(700);
+    my $index = 0;
+    my ($real_start, $real_end);
+    for my $read (@$reads) {
+        my ($start, $end) = @$read;
+	$real_end = $end if $real_end eq '' or $real_end < $end;
+	$real_start = $start if $real_start eq '' or $real_start > $start;
+    }
+    for my $read (@$reads) {
+	my @a = get_complete_align($read);
+	warn "$a[0]/@a/$a[-1]\n";
+    }
+exit;
+}
+
+sub remove_low_scores_2 {
+    my ($ref, $contig_start, $contig_end, $reads) = @_;
+    warn "    remove_low_scores_2($ref, $contig_start, $contig_end)\n" if $debug;
+    printf STDERR "    starting with %d reads\n", scalar @$reads if $debug;
+    my $contig_len = $contig_end - $contig_start + 1;
+    my $did_something = 0;
+    for (my $i = 0; $i <= $#{$reads}; $i++) {
+	my $read = $reads->[$i];
+	my ($start, $end, $id, $score, $trim1, $trim2, $strand, $seq) = @$read;
+	my ($score, $egap, $igap) = get_score2(0, $contig_len, $read);
+	my $len = $end - $start + 1;
+	if ($score < $min_score or $egap > $max_gap or $igap > $max_igap or $len < $min_fragment) {
+	    warn "        removing id $id [$start-$end] [trim $trim1 $trim2] score $score egap $egap igap $igap\n" if $debug >= 1;
+	    splice(@$reads, $i, 1);
+	    $did_something = 1;
+	    $i--;
+	}
+	else {
+	    warn "        keeping id $id [$start-$end] [trim $trim1 $trim2] score $score egap $egap igap $igap\n" if $debug >= 3;
+	}
+    }
+    printf STDERR "    ending with %d reads\n", scalar @$reads if $debug;
+    return $did_something;
+}
+
+##############################################################################
+#
+#   Find contigs by traversing reads.  Trimmed reads can only appear at the
+#   end of contigs.
+#
+##############################################################################
+sub get_contigs {
+    my ($ref, $contig_start, $contig_end, $reads) = @_;
+
+    warn "\nget_contigs $ref $contig_start-$contig_end\n";
+    printf STDERR "    starting with %d reads\n", scalar @$reads if $debug;
+
+    my $m = markers::new(700);
+    my $index = 0;
+    my ($real_start, $real_end);
+    for my $read (@$reads) {
+        my ($start, $end) = @$read;
+	$real_end = $end if $real_end eq '' or $real_end < $end;
+	$real_start = $start if $real_start eq '' or $real_start > $start;
+	my $new_index = $m->add_marker('contig', "+", $start, $end); # only store position
+	die "index mismatch" if $index != $new_index;
+	$index++;
+    }
+    my @contigs;
+    my $contig_len = $real_end - $real_start + 1;
+    my @range;
+    for (my $i = $real_start; $i < $real_end; $i += $big_block - 1000) {
+	my $block_start = $i;
+	my $block_end = $i + $big_block - 1;
+warn "doing $block_start - $block_end\n";
+	my $graph = {};
+	for (my $j = $block_start; $j < $block_end; $j += $small_block) {
+	    my ($start, $end) = ($j, $j + $small_block - 1);
+	    my @indexes = $m->get_covering_marker_indexes(1, 'contig', "+", $start, $end);
+	    next if @indexes == 0;
+	    add_to_graph2($graph, $reads, @indexes);
+	}
+	my %done;
+	traverse2($graph, \%done, 0, keys %{$graph->{nodes}});
+	my @tmp_range = values %done;
+	my @haps;
+printf STDERR "after traverse got %d nodes with haplotypes\n", scalar @tmp_range;
+my $num = 0;
+	for my $t (@tmp_range) {
+	    for my $s (@$t) {
+		push(@haps, $s);
+	    }
+	}
+warn "\nreduce_haplotypes:\n\n";
+$debug++;
+	@haps = reduce_haplotypes($graph, 0, @haps);
+	print_range4(\@haps) if $debug;
+$debug--;
+
+	undef %done;
+	printf STDERR "    got %d haplotypes:\n", scalar(@haps) if $debug;
+	undef $graph;
+	push(@range, @haps);
+    }
+
+warn "\nall ranges\n" if $debug;
+    print_range4(\@range) if $debug;
+exit; # ZZZ
+    @range = reduce_haplotypes($graph, 0, @range);
+warn "    merged ranges\n" if $debug;
+    print_range4(\@range) if $debug;
+
+    for (my $i = 0; $i < $#range; $i += 2) {
+        my ($s, $e) = @range[$i, $i + 1];
+        my $len = ($e - $s + 1);
+next; # ZZZ
+        if ($len < $min_contig) {
+	    printf STDERR "    removing small contig [$s - $e] size $len\n" if $debug;
+            splice(@range, $i, 2);
+            $i -= 2;
+        }
+    }
+# warn "    final range\n" if $debug;
+#     print_range4(\@range) if $debug;
+exit; # ZZZ
+    if (@range == 2 and $range[0] == 0 and $range[1] == $contig_end - $contig_start) {
+	# don't need to do anything
+	warn "    range unchanged, returning\n\n";
+	return ([$ref, $contig_start, $contig_end, $reads]);
+    }
+    return get_new_contigs($ref, $contig_start, $contig_end, \@range, $reads);
+}
+
+#
+#   For each subrange create contig and list of reads with relative offsets
+#
+sub get_new_contigs {
+    my ($ref, $contig_start, $contig_end, $range, $used_reads) = @_;
+    printf STDERR "\nget_new_contigs($ref, $contig_start, $contig_end])\n" if $debug;
+    printf STDERR "    starting with %d reads\n", scalar @$used_reads if $debug;
+    my $m = markers::new(700);
+    my %kept_reads;
+    my $index = 0;
+    for my $read (@$used_reads) {
+        my ($start, $end, $id, $score, $trim1, $trim2) = @$read;
+	my $new_index = $m->add_marker('contig', "+", $start, $end); # only store position
+	die "index mismatch" if $index != $new_index;
+	$index++;
+    }
+    my @contigs;
+    for (my $i = 0; $i < $#{$range}; $i += 2) {
+        my ($new_start, $new_end) = @{$range}[$i, $i + 1];
+	printf STDERR "making contig for range $new_start - $new_end (size %d)\n", $new_end - $new_start + 1 if $debug;
+	die "bad range ($new_start, $new_end)" if $new_start eq '' or $new_end eq '';
+	my @indexes = $m->get_covering_marker_indexes($min_fragment, 'contig', "+", $new_start, $new_end);
+	printf STDERR "    got %d overlapping reads\n", scalar @indexes;
+	my @reads;
+	for my $i (@indexes) {
+	    push(@reads, $used_reads->[$i]);
+	}
+	printf STDERR "    pushed %d reads\n", scalar @indexes;
+	@reads = sort {
+	    $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1];
+	} @reads;
+	printf STDERR "    sorted %d reads\n", scalar @indexes;
+	my $num_kept = @reads;
+	my $offset1 = $new_start;
+	my $c_start = $contig_start + $offset1;
+	my $c_end = $c_start + ($new_end - $new_start);
+	my @contig_reads = ();
+	my @contig = ($ref, $c_start, $c_end, \@contig_reads);
+	push(@contigs, \@contig);
+	printf STDERR "    building %d reads\n", scalar @indexes;
+	my $trimmed = 0;
+	while (my $read = shift @reads) {
+	    my ($start, $end, $id, $score, $trim1, $trim2, $strand, $seq) = @$read;
+	    confess "seq is null! [@$read]" if $seq eq '';
+	    if ($start < $new_start) {
+		my $diff = $new_start - $start;
+		$diff = trim('left', $diff, $seq);
+		$trim1 += $diff;
+		$start = $new_start;
+		$trimmed++;
+	    }
+	    if ($end > $new_end) {
+		my $diff = $end - $new_end;
+		$diff = trim('right', $diff, $seq);
+		$trim2 += $diff;
+		$end = $new_end;
+		$trimmed++;
+	    }
+	    $start -= $offset1;
+	    $end -= $offset1;
+	    my $read = [$start, $end, $id, $score, $trim1, $trim2, $strand, $seq];
+	    recalc_score($read);
+	    push(@contig_reads, $read);
+	}
+	warn "    $trimmed reads were trimmed\n";
+    }
+    @$used_reads = ();
+    warn "\n";
+    return @contigs;
+}
+
+#
+#   Remove worst reads
+#
+#	Round 1: remove reads based on absolute scores
+#	Round 2: remove reads based on relative scores
+#
+sub fix_it {
+    my ($ref, $contig_start, $contig_end, $reads, $round) = @_;
+    warn "\nfix_it($ref, $contig_start, $contig_end, $round)\n";
+    die "no need to call fix_it in round 2 since opt_d is null!" if $opt_d eq '' and $round == 2;
+    my $contig_len = $contig_end - $contig_start + 1;
+    my $m = markers::new(200, 'hash');
+    my (%kept_reads, %scores, %best_reads, %worst_reads);
+    my $index = 0;
+    printf STDERR "fix_it: getting scores for %d reads\n", scalar @$reads;
+    for my $read (@$reads) {
+        my ($start, $end, $id, $score, $trim1, $trim2, $strand, $seq) = @$read;
+	my ($new_score, $egap, $igap) = get_score2(0, $contig_len, $read);
+	if ($round == 1 && $new_score >= $min_score && $egap <= $max_gap && $igap <= $max_igap) {
+	    $best_reads{$index} = "$start $end";
+	}
+	my $new_index = $m->add_marker('contig', "+", $start, $end); # only store position
+	die "index mismatch" if $index != $new_index;
+	$scores{$index} = $new_score;
+	$kept_reads{$index} = $read;
+	$index++;
+    }
+
+    if ($round == 2) {
+	warn "    finding best reads\n";
+	for (my $pos = 0; $pos < $contig_len; $pos += $patch) {
+	    my @indexes = $m->get_covering_marker_indexes('any', 'contig', "+", $pos, $pos + $patch - 1);
+	    my $best_score;
+	    for my $index (@indexes) {
+		my $score = $scores{$index};
+		$best_score = $score if $score > $best_score;
+	    }
+	    my $worst_allowed = $best_score * (1 - $allow);
+	    for my $index (@indexes) {
+		my ($start, $end, $id) = @{$kept_reads{$index}};
+		my $score = $scores{$index};
+		if ($score >= $worst_allowed) { # get_score
+		    $best_reads{$index} = "$start $end";
+		}
+	    }
+	}
+	printf STDERR "    got %d best reads\n", scalar keys %best_reads;
+    }
+
+    warn "    computing good range\n";
+    for my $index (keys %kept_reads) {
+        my ($start, $end, $id, $score, $trim1, $trim2) = @{$kept_reads{$index}};
+	if (!$best_reads{$index}) {
+	    my $score = $scores{$index};
+	    $worst_reads{$index} = "$start $end $score";
+	}
+    }
+
+    warn "    sorting worst reads\n";
+    my @worst_indexes = sort {
+	my @a = split / /, $worst_reads{$a};
+	my @b = split / /, $worst_reads{$b};
+	$a[2] <=> $b[2];
+    } keys %worst_reads;
+    printf STDERR "    done sorting %d worst reads\n", scalar @worst_indexes;
+
+    while (@worst_indexes) {
+	my $index = shift @worst_indexes;
+        my ($start, $end) = @{$kept_reads{$index}};
+	my @all_indexes = $m->get_covering_marker_indexes('any', 'contig', "+", $start, $end);
+	if ($opt_b eq '' or $round == 1) {
+	    my ($covered_with, $covered_without) = covered(\%kept_reads, $index, @all_indexes);
+	    if ($covered_with ne $covered_without) {
+		next;
+	    }
+	}
+        my ($start, $end, $id, $score, $trim1, $trim2) = @{$kept_reads{$index}};
+	warn "    removing $start-$end [$id] score $score trim $trim1 $trim2\n" if $debug >= 1;
+	$m->delete_marker($index);
+	delete $worst_reads{$index}; # unnecessary
+	delete $kept_reads{$index};
+    }
+
+    my @used_reads = values %kept_reads;
+    my @contigs = get_contigs($ref, $contig_start, $contig_end, \@used_reads);
+    if ($opt_b eq '' or $round == 1) {
+	die "contig was split! [@contigs]" if @contigs != 1;
+	my ($r, $cs, $ce) = @{$contigs[0]};
+	if ($cs != $contig_start or $ce != $contig_end) {
+	    die "contig has changed! [$contig_start-$contig_end] -> [$cs, $ce]";
+	}
+    }
+    return @contigs;
+}
+
+##############################################################################
+
+sub print_contig {
+    my ($ref, $contig_start, $contig_end, $reads) = @_;
+    my $new_start = 0;
+    my $new_end = ($contig_end - $contig_start);
+    my $num_kept = @$reads;
+    next if $num_kept == 0;
+    $num_contigs++;
+    print "C $num_contigs\t$num_kept\t$ref\t$contig_start-$contig_end\n";
+    warn "C $num_contigs\t$num_kept\t$ref\t$contig_start-$contig_end\n";
+    @$reads = sort {
+	$a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] || $a->[2] <=> $b->[2];
+    } @$reads;
+    for my $read (@$reads) {
+	my ($start, $end, $id, $score, $trim1, $trim2, $strand, $seq) = @$read;
+	if ($start < $new_start) {
+	    my $diff = $new_start - $start;
+	    $diff = trim('left', $diff, $seq);
+	    $trim1 += $diff;
+	    $start = $new_start;
+	}
+	if ($end > $new_end) {
+	    my $diff = $end - $new_end;
+	    $diff = trim('right', $diff, $seq);
+	    $trim2 += $diff;
+	    $end = $new_end;
+	}
+	next if ($end - $start + 1) <= 10;
+	if ($strand ne '+') {
+	    ($start, $end) = ($end, $start);
+	}
+	if ($opt_r) {
+	    print "$id $start $end\t$trim1\t$trim2\t$score\n";
+	}
+	else {
+	    print "$id $start $end\t$trim1\t$trim2\t$score\t$seq\n";
+	}
+    }
+    print "\n";
+}
+
+sub covered {
+    my ($kept_reads, $index, @all_indexes) = @_;
+    my ($start, $end, $id, $score, $trim1, $trim2) = @{$kept_reads->{$index}};
+
+    my @saved = ($big_overlap, $contig_overlap);
+    ($big_overlap, $contig_overlap) = ($big_num, $big_num);
+
+    my @range;
+warn "\ndoing covered $start-$end [$id] $trim1 $trim2\n" if $debug >= 2;
+warn "neighbor reads:\n" if $debug >= 2;
+    for my $i (@all_indexes) {
+	next if $i == $index;
+	my ($s, $e, $id, $score, $trim1, $trim2) = @{$kept_reads->{$i}};
+warn "    $s-$e [$id] $trim1 $trim2\n" if $debug >= 2;
+        add_read_plus_overlaps2(\@range, $s, $e, $id, $trim1, $trim2);
+    }
+    range4_merge(\@range);
+warn "raw range without:\n" if $debug >= 2;
+print_range4(\@range) if $debug >= 2;
+    my $final_range = get_read_ranges4(\@range);
+    my $without = range4_to_string($final_range);
+warn "range without: $without\n" if $debug >= 2;
+
+    add_read_plus_overlaps2(\@range, $start, $end, $id, $trim1, $trim2);
+    range4_merge(\@range);
+warn "raw range with:\n" if $debug >= 2;
+print_range4(\@range) if $debug >= 2;
+    my $final_range = get_read_ranges4(\@range);
+    my $with = range4_to_string($final_range);
+warn "range with: $with\n" if $debug >= 2;
+    my $with = "$with";
+
+    my $range2 = range4_to_range2($final_range);
+    my $tmp = range_intersect([ $start, $end ], $range2);
+    range_simplify($tmp);
+    warn "intersected range with: @$tmp\n" if $debug >= 2;
+    warn "wo $without vs w $with vs read $start $end\n\n" if $debug >= 2;
+    die "@$tmp != $start $end for id $id" if $tmp->[0] != $start or $tmp->[1] != $end;
+
+    ($big_overlap, $contig_overlap) = @saved;
+    return ($with, $without);
+}
+
+#
+#   Calculate best score, don't penalize partial alignments.
+#
+sub get_score1 {
+    my ($read) = @_;
+    my ($start, $end, $id, $score, $t1, $t2, $strand, $seq) = @$read;
+    confess "no seq" if $seq eq '';
+    my $cut_left = ($t1 > $max_gap);
+    my $cut_right = ($t2 > $max_gap);
+    my $end_cut = 0;
+    $end_cut += $t1 if $cut_left;
+    $end_cut += $t2 if $cut_right;
+    my $gap = 0;
+    $seq =~ s/^[0-9]+//;
+    $seq =~ s/[0-9]+$//;
+    while ($seq =~ / +|[0-9]+/g) {
+	$gap = max($gap, length($&));
+    }
+    if ($end_cut) {
+	my @counts;
+	my $match = $seq =~ tr/[A-Z]/[A-Z]/s;
+	my $mismatch = $seq =~ tr/[a-z]/[a-z]/s;
+	my $inserts = $seq =~ tr/[0-9]/[0-9]/s;
+	my $qgap = $seq =~ tr/ / /s;
+	my $qlen = $match + $mismatch + $inserts;
+	my $qsize = $t1 + $t2 + $qlen;
+	$score = $match / ($qsize + $qgap - $end_cut) * 100;
+	return ($score, $gap);
+    }
+    return ($score, $gap);
+}
+
+#
+#   Penalize partial alignments appearing in middle of contig.
+#
+sub get_score2 {
+    my ($min_offset, $contig_len, $read) = @_;
+    my ($start, $end, $id, $score, $t1, $t2, $strand, $seq, $index) = @$read;
+    confess "no seq" if $seq eq '';
+    my $end_cut = 0;
+    my $igap = 0;
+    my $egap = 0;
+    if ($start == $min_offset) {
+	$end_cut += $t1;
+    }
+    else {
+	$egap = max($egap, $t1);
+    }
+    if ($end == $contig_len - 1) {
+	$end_cut += $t2;
+    }
+    else {
+	$egap = max($egap, $t2);
+    }
+    while ($seq =~ / +|[0-9]+/g) {
+	$igap = max($igap, length($&));
+    }
+    if ($end_cut) {
+	my $match = $seq =~ tr/[A-Z]/[A-Z]/s;
+	my $qgap = $seq =~ tr/ / /s;
+	my $mismatch = $seq =~ tr/[a-z]/[a-z]/s;
+	my $inserts = $seq =~ tr/[0-9]/[0-9]/s;
+	my $qlen = $match + $mismatch + $inserts;
+	my $qsize = $t1 + $t2 + $qlen;
+	warn "    id $id qsize ($qsize) = $t1 + $t2 + $qlen; seq $seq\n" if $debug >= 2;
+	my $new_score = $match / ($qsize + $qgap - $end_cut) * 100;
+	return ($new_score, $egap, $igap);
+    }
+    return ($score, $egap, $igap);
+}
+
+sub recalc_score {
+    my ($read) = @_;
+    my $seq_ref = \$read->[7];
+    my ($start, $end, $id, $score, $t1, $t2, $strand) = @$read;
+    confess "no seq for @$read" if $$seq_ref eq '';
+
+    my $match = $$seq_ref =~ tr/[A-Z]/[A-Z]/;
+    my $qgap = $$seq_ref =~ tr/ / /;
+    my $mismatch = $$seq_ref =~ tr/[a-z]/[a-z]/;
+    my $inserts = $$seq_ref =~ tr/[0-9]/[0-9]/;
+    my $qlen = $match + $mismatch + $inserts;
+
+    my $qsize = $t1 + $t2 + $qlen;
+    warn "    recalc_score id $id qsize ($qsize) = $t1 + $t2 + $qlen; seq $$seq_ref\n" if $debug >= 3;
+    $score = $match / ($qsize + $qgap) * 100;
+    $read->[3] = $score;
+}
+
+sub matches {
+    my ($rs, $re, @reads) = @_;
+    my (@seq, @last, @s, @e, @s_diff, @e_diff);
+    for my $i (0, 1) {
+	$seq[$i] = query_seq($reads[$i]);
+	$last[$i] = length($seq[$i]) - 1;
+	($s[$i], $e[$i]) = ref_to_query($reads[$i], $rs, $re);
+    }
+# warn "\n$reads[0]->[ID] s=$s[0] e=$e[0] l=$last[0] vs $reads[1]->[ID] s=$s[1] e=$e[1] l=$last[1]\n";
+    if ($s[0] != 0 || $s[1] != 0) {
+	my $a = substr($seq[0], 0, $s[0] + 1);
+	my @a = partition_seq($a);
+	my $b = substr($seq[1], 0, $s[1] + 1);
+	my @b = partition_seq($b);
+	my $len = min(scalar @a, scalar @b);
+# warn "got start part:\n[$a] @a vs\n[$b] @b\noffsets @s\n" if $debug;
+	@a = splice(@a, -$len);
+	@b = splice(@b, -$len);
+	$s[0] -= length(join('', @a)) - 1;
+	$s[1] -= length(join('', @b)) - 1;
+# warn "got final start part:\n[$a] @a vs\n[$b] @b\noffsets @s\n";
+    }
+    return undef if $s[1] != 0;
+    if ($e[0] != $last[0] || $e[1] != $last[1]) {
+	my $a = substr($seq[0], $e[0]);
+	my @a = partition_seq($a);
+	my $b = substr($seq[1], $e[1]);
+	my @b = partition_seq($b);
+	my $len = min(scalar @a, scalar @b);
+	@a = splice(@a, 0, $len);
+	@b = splice(@b, 0, $len);
+	$e[0] += length(join('', @a)) - 1;
+	$e[1] += length(join('', @b)) - 1;
+# warn "got end part:\n[$a] @a vs\n[$b] @b\noffsets @last\n";
+    }
+    die "huh? e @e last @last" if ($e[0] != $last[0] && $e[1] != $last[1]);
+    my @len = ($e[0] - $s[0] + 1, $e[1] - $s[1] + 1);
+    my $a = substr($seq[0], $s[0], $len[0]);
+    my $b = substr($seq[1], $s[1], $len[1]);
+    return undef if $len[0] < $min_overlap or $len[1] < $min_overlap;
+    my $shrinking = ($e[0] == $last[0]);
+# warn "$a vs\n$b\n\n";
+# warn "$a vs $rb? $ma\n";
+# warn "$b vs $ra? $mb\n";
+    my $yes = (compressed_seq($a) eq compressed_seq($b));
+# warn "\n$reads[0]->[ID] matches $reads[1]->[ID] ? [$yes]\n";
+    return undef if ! $yes;
+    return (length(compressed_seq(substr($seq[0], 0, $s[0]))), $shrinking);
+}
+
+sub partition_seq {
+    my ($s) = @_;
+    die "bad char in [$s]" if $s !~ /^[ACGTN]*$/i;
+    return grep(/./, split /(A+|C+|G+|T+)/i, $s);
+}
+
+sub compressed_seq {
+    my ($seq) = @_;
+    $seq =~ s/A+/A/g;
+    $seq =~ s/C+/C/g;
+    $seq =~ s/G+/G/g;
+    $seq =~ s/T+/T/g;
+    return $seq;
+}
+
+sub get_regex {
+    my ($s) = @_;
+    die "bad char in [$s]" if $s !~ /^[ACGTN]*$/i;
+    my @a = split /(A+|C+|G+|T+)/i, $s;
+    my $regex;
+    for my $a (@a) {
+	my $len = length($a);
+	next if $len == 0;
+	if ($len == 1) {
+	    $regex .= $a;
+	}
+	elsif ($len == 2) {	# 2 and 3 ok
+	    $regex .= sprintf "%s{%d,%d}", substr($a, 0, 1), $len, $len + 1;
+	}
+	else {
+	    $regex .= sprintf "%s{%d,%d}", substr($a, 0, 1), $len - 1, $len + 1;
+	}
+    }
+    return $regex;
+}
+
+#
+#   Return the original query sequence (in reference orientation).
+#
+sub query_seq {
+    my ($read) = @_;
+    my $seq = $fasta->get_seq($read->[ID]);
+    $seq = rc($seq) if $read->[STRAND] eq '-';
+    return $seq;
+}
+
+sub trimmed_seqs {
+    my ($read) = @_;
+    my $seq = query_seq($read);
+    my $align = $read->[ALIGN];
+    (my $left_trim = substr($seq, 0, $read->[TRIM1])) =~ tr/ACGTNacgtn/1234512345/;
+    (my $right_trim = substr($seq, -$read->[TRIM2])) =~ tr/ACGTNacgtn/1234512345/ if $read->[TRIM2] > 0;
+    return ($left_trim, $right_trim);
+}
+
+#
+#   Return the full alignment of the query string.
+#
+sub full_alignment {
+    my ($read) = @_;
+    my $seq = query_seq($read);
+    my $align = $read->[ALIGN];
+    (my $left_trim = substr($seq, 0, $read->[TRIM1])) =~ tr/ACGTNacgtn/1234512345/;
+    (my $right_trim = substr($seq, -$read->[TRIM2])) =~ tr/ACGTNacgtn/1234512345/;
+    return $left_trim . $align . $right_trim;
+}
+
+#
+#   Find the query positions that match the reference positions.
+#
+sub ref_to_query {
+    my ($read, $start, $end) = @_;
+    my $seq = full_alignment($read);
+    my $rstart = $read->[START];
+    my $rend = $read->[END];
+    die "start < rstart" if $start < $rstart;
+    die "end > rend" if $end > $rend;
+    my @a = split /([A-Za-z ])/, $seq;
+    my $ll = ($start - $rstart) * 2 + 1;
+    my $rr = ($end - $rstart) * 2 + 1;
+    my $before = join('', @a[0 .. $ll]);
+    $before =~ tr/ //d;
+    my $last = join('', @a[0 .. $rr]);
+    $last =~ tr/ //d;
+    return (length($before) - 1, length($last) - 1);
+}
+
+#
+#
+#
+sub trim {
+    my $side = shift @_;
+    my $num = shift @_;
+    my $query_trimmed = 0;
+    $_[0] = reverse $_[0] if $side eq 'right';
+    my $pos = 0;
+    for (my $i = 1; $i <= $num; $i++) {
+	while (1) {
+	    my $a = substr($_[0], $pos++, 1);
+	    if ($a =~ /^i$/) {
+		$query_trimmed++;
+	    }
+	    elsif ($a =~ /^M$/i) {
+		$query_trimmed++;
+		last;
+	    }
+	    else {
+		last;
+	    }
+	}
+    }
+    $_[0] = substr($_[0], $pos);
+    $_[0] = reverse $_[0] if $side eq 'right';
+    return $query_trimmed;
+}
+
+#
+#   New version, using overlapping sequences that perfectly match.
+#
+sub add_to_graph2 {
+    my ($graph, $reads, @indexes) = @_;
+    for my $i (0 .. $#indexes) {
+	my $ii = $indexes[$i];
+	my ($start1, $end1) = @{$reads->[$ii]};
+	my $rd = $reads->[$ii];
+	my $id = $reads->[$ii]->[ID];
+	my $cur_haplo = compressed_seq(query_seq($reads->[$ii]));
+	$graph->{nodes}{$rd} = [ $start1, $end1, 500, 500, \$cur_haplo, $rd ]; # ZZZ
+# warn "node $ii = [ $start1, $end1, 500, 500, $id ]\n"; # ZZZ
+	for my $j (0 .. $#indexes) {
+	    my $jj = $indexes[$j];
+	    next if $ii == $jj;
+	    my ($start2, $end2) = @{$reads->[$jj]};
+	    next if $end2 <= $end1 or $start2 < $start1;
+	    my $ov_start = max($start1, $start2);
+	    my $ov_end = min($end1, $end2);
+	    my $ov_len = ($ov_end - $ov_start + 1);
+	    next if $ov_len < 1;
+	    my @match = matches($ov_start, $ov_end, $reads->[$ii], $reads->[$jj]);
+	    next if @match != 2;
+	    my $rd_j = $reads->[$jj];
+# warn "link $ii -> $jj\n";
+	    $graph->{$rd}{$rd_j} = \@match;
+	}
+    }
+}
+
+sub build_graph {
+    my ($range) = @_;
+    my $graph = {};
+    my $num = @$range;
+    for (my $index = 0; $index < $num; $index++) {
+	add_to_graph($graph, $range, $index);
+    }
+    if ($debug >= 2) {
+	warn "\nbuild_graph done, graph nodes:\n";
+	for my $node (keys %{$graph->{nodes}}) {
+	    printf STDERR "    $node: @{$range->[$node]}\n";
+	}
+	warn "\ngraph edges:\n";
+	for my $first (keys %{$graph->{nodes}}) {
+	    printf STDERR "    $first [@{$range->[$first]}] ->\n";
+	    for my $second (keys %{$graph->{$first}}) {
+		printf STDERR "        -> $second [@{$range->[$second]}]\n";
+	    }
+	}
+    }
+    return $graph;
+}
+
+sub get_read_ranges4 {
+    my ($ranges) = @_;
+    my $last_str;
+    my @range = @$ranges;
+    range4_merge(\@range);
+    while (1) {
+	my $graph = build_graph(\@range);
+	my %done;
+	traverse($graph, \%done, keys %{$graph->{nodes}});
+	@range = values %done;
+	undef %done;
+	my $before = range4_to_string(\@range);
+warn "after traversal: $before\n" if $debug >= 2;
+	range4_merge(\@range);
+	my $str = range4_to_string(\@range);
+warn "after merge: $str\n" if $debug >= 2;
+	if ($last_str eq $str) {
+	    return \@range;
+	}
+	$last_str = $str;
+    }
+}
+
+
+sub traverse2 {
+    my ($graph, $done, $shrinking, @nodes) = @_;
+    for my $node (@nodes) {
+	next if $done->{$node};
+	$done->{$node} = "doing";
+	my ($cs, $ce, $cl, $cr, $cseq_ref, $cread) = @{$graph->{nodes}{$node}};
+	my $cid = $cread->[ID];
+	my @new_haps;
+	for my $r (keys %{$graph->{$node}}) {
+	    my $r_done = $done->{$r};
+	    next if $r_done eq 'doing';
+	    my ($offset, $shrink_link) = @{$graph->{$node}{$r}};
+	    next if $shrinking && ! $shrink_link;
+	    if (!$r_done) {
+		traverse2($graph, $done, $shrinking || $shrink_link, $r);
+		$r_done = $done->{$r};
+	    }
+	    die "bad offset [$offset]" if $offset eq '' or $offset < 0;
+	    for my $next (@$r_done) {
+		my ($rs, $re, $rl, $rr, $rseq_ref, $rnode, $nodes_ref) = @$next;
+		my $cur_haplo = substr($$cseq_ref, 0, $offset) . $$rseq_ref;
+# debug "pushing [ $cs, $re, $cl, $rr, ..., $cid $nodes ]\n";
+		my %nodes;
+# warn "offset is $offset, cseq $$cseq_ref\n";
+# warn "building merged haplotype [ $cs, $ce, $cl, $rr, [$cid] $cur_haplo:\n";
+		while (my ($k, $v) = each %$nodes_ref) {
+		    # $v = [ seq, offset ]
+		    my ($seq, $off) = @$v;
+		    $off += $offset;
+		    $nodes{$k} = [ $seq, $off ];
+		}
+		die "huh?" if $nodes{$cread};
+		$nodes{$cread} = [ $$cseq_ref, 0 ];
+		push(@new_haps, [ $cs, $re, $cl, $rr, \$cur_haplo, $cread, \%nodes ]);
+	    }
+	}
+	if (@new_haps) {
+	    @new_haps = reduce_haplotypes($graph, 1, @new_haps);
+	    die "huh?" if ! @new_haps;
+	    $done->{$node} = \@new_haps;
+	}
+	else {
+# warn "building node haplotype $cid $$cseq_ref\n";
+	    $done->{$node} = [ [ $cs, $ce, $cl, $cr, $cseq_ref, $cread, { $cread => [ $$cseq_ref, 0 ] } ] ];
+	}
+    }
+}
+
+sub reduce_haplotypes {
+    my ($graph, $strict, @new_haps) = @_;
+
+printf STDERR "%d haplotypes before\n", scalar @new_haps if $debug >= 3;
+# print_haplotype(\@new_haps) if $debug;
+
+    # remove substring haplotypes
+    my $did = 1;
+    while (@new_haps && $did) {
+	$did = 0;
+	for (my $i = 0; $i < @new_haps; $i++) {
+	    my $str_i = ${$new_haps[$i]->[4]};			# FIX - hard-coded
+	    my $read_i = $new_haps[$i]->[5];			# FIX - hard-coded
+	    my $hash_i = $new_haps[$i]->[6];			# FIX - hard-coded
+	    for (my $j = 0; $j < @new_haps; $j++) {
+		next if $i == $j;
+		my $str_j = ${$new_haps[$j]->[4]};		# FIX - hard-coded
+		next if length($str_i) > length($str_j);
+		my $read_j = $new_haps[$j]->[5];		# FIX - hard-coded
+		my $hash_j = $new_haps[$j]->[6];		# FIX - hard-coded
+		$str_i = "^$str_i" if $strict;
+		if ($str_j =~ /$str_i/i) {
+		    my $offset = length($`);
+		    while (my ($k, $v) = each %$hash_i) {
+			my ($seq, $off) = @$v;
+			$hash_j->{$k} = [ $seq, $offset + $off ] if ! defined $hash_j->{$k};
+		    }
+		    splice(@new_haps, $i, 1);
+		    $did = 1;
+		    $i--;
+		    last;
+		}
+	    }
+	}
+    }
+
+    # remove completely-enclosed but not haplotypes of same length
+    my $did = 1;
+    while (@new_haps && $did) {
+	$did = 0;
+	for (my $i = 0; $i < @new_haps; $i++) {
+	    my @pos_i = (@{$new_haps[$i]})[0, 1];			# FIX - hard-coded
+	    for (my $j = 0; $j < @new_haps; $j++) {
+		next if $i == $j;
+		my @pos_j = (@{$new_haps[$j]})[0, 1];			# FIX - hard-coded
+		if (($pos_i[0] >= $pos_j[0] && $pos_i[1] < $pos_j[1]) ||
+		    ($pos_i[0] > $pos_j[0] && $pos_i[1] <= $pos_j[1])) {
+		    splice(@new_haps, $i, 1);
+		    $did = 1;
+		    $i--;
+		    last;
+		}
+	    }
+	}
+    }
+
+    # remove furthest haplotypes among siblings
+    my $did = 1;
+    while (@new_haps && $did) {
+	$did = 0;
+	for (my $i = 0; $i < @new_haps; $i++) {
+	    my @pos_i = (@{$new_haps[$i]})[0, 1];		# FIX - hard-coded
+	    my $i_badness = badness($new_haps[$i]->[5]);	# FIX - hard-coded
+	    for (my $j = 0; $j < @new_haps; $j++) {
+		next if $i == $j;
+		my @pos_j = (@{$new_haps[$j]})[0, 1];		# FIX - hard-coded
+		next if $pos_i[0] != $pos_j[0] || $pos_i[1] != $pos_j[1];
+		my $j_badness = badness($new_haps[$j]->[5]);	# FIX - hard-coded
+		if ($i_badness >= $j_badness) {
+		    splice(@new_haps, $i, 1);
+		    $did = 1;
+		    $i--;
+		    last;
+		}
+	    }
+	}
+    }
+
+    if (!$strict) {
+	# remove haplotypes that are mostly enclosed
+	my $did = 1;
+	while (@new_haps && $did) {
+	    $did = 0;
+	    for (my $i = 0; $i < @new_haps; $i++) {
+		my @pos_i = (@{$new_haps[$i]})[0, 1];			# FIX - hard-coded
+		for (my $j = 0; $j < @new_haps; $j++) {
+		    next if $i == $j;
+		    my @pos_j = (@{$new_haps[$j]})[0, 1];			# FIX - hard-coded
+		    next if ($pos_i[1] - $pos_i[0]) >= ($pos_j[1] - $pos_j[0]);
+		    my $ov_start = max($pos_i[0], $pos_j[0]);
+		    my $ov_end = min($pos_i[1], $pos_j[1]);
+		    my $ov_len = ($ov_end - $ov_start + 1);
+		    if ($ov_len / ($pos_i[1] - $pos_i[0] + 1) >= $overlap_percent / 100) {
+			splice(@new_haps, $i, 1);
+			$did = 1;
+			$i--;
+			last;
+		    }
+		}
+	    }
+	}
+    }
+
+printf STDERR "%d haplotypes after\n", scalar @new_haps if $debug >= 3;
+# print_range4(\@new_haps) if $debug;
+# print_haplotype(\@new_haps) if $debug;
+
+    return @new_haps;
+}
+
+sub badness {
+    return 10; # FIX ZZZ YYY
+}
+
+
+#
+#   Amount of trim determines ...
+#
+sub add_read_plus_overlaps2 {
+    my ($ranges, $read) = @_;
+    my ($start, $end, $id, $score, $trim1, $trim2) = @$read;
+    my ($left_overlap, $right_overlap);
+    if ($trim1 > $max_gap) { # left only
+	$left_overlap = $contig_overlap;
+    }
+    else {
+	$left_overlap = $contig_hash->{$id} ? $big_overlap : $min_overlap;
+    }
+    if ($trim2 > $max_gap) { # left only
+	$right_overlap = $contig_overlap;
+    }
+    else {
+	$right_overlap = $contig_hash->{$id} ? $big_overlap : $min_overlap;
+    }
+    warn "adding marker $start, $end, $left_overlap, $right_overlap\n" if $debug >= 3;
+    my $a = [$start, $end, $left_overlap, $right_overlap, $read];
+    push(@$ranges, $a);
+}
+
+sub print_haplotype {
+    for my $r (@{$_[0]}) {
+	my ($cs, $ce, $cl, $cr, $seq_ref, $reads) = @$r;
+	warn "    [$cs, $ce, $cl, $cr]\n";
+	printf STDERR "    $$seq_ref\n";
+	while (my ($k, $v) = each %$reads) {
+	    my ($seq_ref, $offset) = @$v;
+	    my $space = ' ' x $offset;
+	    printf STDERR "    $space$seq_ref id $k->[ID] offset $offset\n";
+	}
+	warn "\n";
+    }
+}
+
+sub print_range4 {
+    for my $r (@{$_[0]}) {
+	warn "    @$r\n";
+    }
+}
+
+sub range4_to_string {
+    my @list;
+    for my $r (@{$_[0]}) {
+	push(@list, "[@$r]");
+    }
+    return join(' ', sort @list);
+}
+
+sub print_graph {
+    my ($graph) = @_;
+    warn "\nbuild_graph done, graph nodes:\n";
+    for my $node (keys %{$graph->{nodes}}) {
+	printf STDERR "    $node: @{$graph->{nodes}->{$node}}\n";
+    }
+    warn "\ngraph edges:\n";
+    for my $first (keys %{$graph->{nodes}}) {
+	printf STDERR "    $first [@{$graph->{nodes}->{$first}}] ->\n";
+	for my $second (keys %{$graph->{$first}}) {
+	    printf STDERR "        -> $second [@{$graph->{nodes}->{$second}}]\n";
+	}
+    }
+}
+
+sub add_to_graph {
+    my ($graph, $range, $index) = @_;
+    my $new = $range->[$index];
+    my ($new_start, $new_end, $nlov, $nrov) = @$new;
+    warn "add_to_graph($new_start, $new_end, $nlov, $nrov)\n" if $debug >= 3;
+    my @indexes = @{$graph->{indexes}};
+    $graph->{nodes}[$index] = [$new_start, $new_end, $nlov, $nrov];
+    $graph->{indexes}[$index] = $index;
+    my $ov = min($nlov, $nrov);
+    for my $other_index (@indexes) {
+	next if $other_index == $index;
+	my $other = $range->[$other_index];
+	my ($other_start, $other_end, $olov, $orov) = @$other;
+	my $ov_start = max($new_start, $other_start);
+	my $ov_end = min($new_end, $other_end);
+	my $ov_len = ($ov_end - $ov_start + 1);
+	warn "    [$new_start, $new_end] -> [$other_start, $other_end] if $ov_len >= $olov and $ov_len >= $nrov and $new_end < $other_end\n" if $debug >= 3;
+	if ($ov_len >= $olov and $ov_len >= $nrov and $new_end < $other_end) {
+	    warn "yes     [$new_start, $new_end] -> [$other_start, $other_end] ov $ov_len\n" if $debug >= 3;
+	    $graph->{$index}{$other_index} = 1;
+	}
+	warn "    [$other_start, $other_end] -> [$new_start, $new_end] if $ov_len >= $orov and $ov_len >= $nlov and $other_end < $new_end\n" if $debug >= 3;
+	if ($ov_len >= $orov and $ov_len >= $nlov and $other_end < $new_end) {
+	    warn "yes     [$other_start, $other_end] -> [$new_start, $new_end] ov $ov_len\n" if $debug >= 3;
+	    $graph->{$other_index}{$index} = 1;
+	}
+    }
+}
+
+#
+#   Get alignment array relative to start/end in reference.
+#
+sub get_complete_align {
+    my ($read) = @_;
+    my $seq = $read->[ALIGN];
+    my $rstart = $read->[START];
+    my $rend = $read->[END];
+    my ($ltrim, $rtrim) = trimmed_seqs($read);
+    $seq = $ltrim . $seq . $rtrim;
+    my @a = (split /([A-Za-z ])/, $seq);
+    grep(tr/12345/ACGTN/, @a);
+    return @a;
+}
+
+##############################################################################
+
+sub Contig::build {
+    my ($layout_contig) = @_;
+    my $ref         = $layout_contig->{ref_name};
+    my $ref_fasta   = $layout_contig->{ref_fasta};
+    my $contig_name = $layout_contig->{contig_name};
+    my $reads       = $layout_contig->{reads};
+    my $contig_class = { }; bless $contig_class, Contig;
+    $contig_class->{name} = $contig_name;
+    printf STDERR "build_contig $ref [$contig_name] $contig_start-$contig_end, %d reads\n", scalar @$reads if $debug;
+    my $ref_seq = $ref_fasta->get_seq($ref) if $ref_fasta;
+    my @len;
+    warn "    building matrix\n" if $debug;
+    for my $read (@$reads) {
+	my @a = get_complete_align($read);
+	my $j = $read->[START] * 2;
+	for my $i (0 .. $#a) {
+	    my $len = length($a[$i]);
+	    $len[$j] = $len if $len[$j] < $len;
+	    $j++;
+	}
+    }
+    if ($ref_fasta) {
+	for my $i (0 .. length($ref_seq) - 1) {
+	    my $base = substr($ref_seq, $i, 1);
+	    my $j = $i * 2 + 1;
+	    $len[$j] = 1 if $len[$j] < 1;
+	}
+    }
+    my $len = 0;  grep($len += $_, @len);
+    $contig_class->{qual} = "l" x $len;
+
+    my ($seq, @map);
+    if ($ref_fasta) {
+	my $pos = 0;
+	for my $i (0 .. $#len) {
+	    $map[$i] = length($seq);
+	    my $key = ($i % 2 == 0) ? '' : substr($ref_seq, $pos++, 1);
+	    $seq .= "-" x ($len[$i] - length($key)) . $key;
+	}
+    }
+    $contig_class->{seq} = $seq;
+
+    my @reads;
+    for my $read (@$reads) {
+	my @a = get_complete_align($read);		# FIX - could be slow
+	my $seq_len = length(query_seq($read));		# FIX - could be slow
+	my ($s, $e) = (0, $seq_len);
+	($s, $e) = ($e, $s) if $read->[STRAND] =~ /^-/;
+	#
+	# calculate gaps
+	#
+	my $gaps;
+	my $pos = 0;
+	my $start = length($a[0]) ? 0 : 1;
+	my $j = $read->[START] * 2 + $start;
+	for my $i ($start .. $#a - 1) {
+	    my $bases = $a[$i];
+	    $bases =~ s/ //g;
+	    if (length($bases) < $len[$j]) {
+		$gaps .= "$pos\n" x ($len[$j] - length($bases));
+	    }
+	    $pos += length($bases);
+	    $j++;
+	}
+	my $off = $map[2 * $read->[START] + $start];
+	my $read = join(' ', $read->[ID], $s, $e, $off, $gaps);
+	push(@reads, $read);
+    }
+    $contig_class->{reads} = \@reads;
+    return $contig_class;
+}
+
+sub Contig::print {
+    my $contig = shift;
+    my $contig_name = $contig->{name};
+    print "{CTG\neid:$contig_name\niid:$contig_name\nqlt:\n";
+    print_wrapped(STDOUT, $contig->{qual}, 70, 1);
+    print ".\nseq:\n";
+    print_wrapped(STDOUT, $contig->{seq}, 70, 1);
+    print ".\n";
+    for my $read (@{$contig->{reads}}) {
+	print "{TLE\n";
+	my ($id, $start, $end, $off, $gaps) = split / /, $read;
+	print "clr:$start,$end\n";
+	if ($gaps) {
+	    print "gap:\n$gaps.\n";
+	}
+	print "off:$off\n";
+	print "src:$id\n";
+	print "}\n";
+    }
+    print "}\n";
+}
+
+##############################################################################
+
+sub LayoutContig::build {
+    my ($ref_name, $ref_fasta, $contig_name, $contig_start, $contig_end, $reads, $reads_fasta) = @_;
+    my $class = { }; bless $class, LayoutContig;
+    $class->{ref_name} = $ref_name;
+    $class->{ref_fasta} = $ref_fasta;
+    $class->{contig_name} = $contig_name;
+    $class->{contig_start} = $contig_start;
+    $class->{contig_end} = $contig_end;
+    $class->{reads} = $reads;
+    $class->{reads_fasta} = $reads_fasta;
+    return $class;
+}

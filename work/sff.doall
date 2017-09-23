@@ -1,0 +1,18 @@
+#!/bin/bash
+
+. subs.sh
+
+for sff in *.sff
+do
+    base=`filename_base $sff`
+    results=$base.results.txt
+    if need $sff $results; then
+	echo adding job "dump_sff \"$sff\" | analyze_sff_dump > $base.results.txt" 1>&2
+	echo "dump_sff $sff | analyze_sff_dump > $base.results.txt" | job.add -q urgent -h "dell.*" SFF $sff
+    fi
+done
+job.wait SFF %
+
+if need *.results.txt quals.txt; then
+    run "dump_sff_results *.results.txt"
+fi

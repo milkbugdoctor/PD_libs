@@ -1,0 +1,32 @@
+#!/usr/bin/perl
+
+(@ARGV == 1) || die "\nUsage: $0 infile > outfile
+
+    Adds columns:
+	2exon_cover     can cover x bp on >= 2 exons
+	splice_site     unique id for splice site
+
+";
+
+use Columns;
+require 'probes.pl';
+
+my $columns = Columns::new("ARGV");
+$columns->must_col("probe_gp_contigs");
+$columns->add_col('splice_site', '2exon_cover');
+$columns->print_header(STDOUT);
+
+while (my $row = $columns->get_row) {
+    my $gp_contigs  = $columns->get_col($row, "probe_gp_contigs");
+    my $site = get_splicing_sites($gp_contigs);
+    $columns->set_col($row, 'splice_site', $site);
+
+    my @contigs = split(/,/, $gp_contigs);
+    grep(s/.*://, @contigs);
+    @contigs = sort { $a <=> $b } @contigs;
+    $columns->set_col($row, "2exon_cover", 0);
+    if (@contigs >= 2) {
+	$columns->set_col($row, "2exon_cover", $contigs[-2]);
+    }
+    $columns->print_row(STDOUT, $row);
+}

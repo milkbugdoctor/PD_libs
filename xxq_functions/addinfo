@@ -1,0 +1,325 @@
+#!/usr/bin/env python
+
+'''
+Add information from table-like annotation files to a table-like file by some
+key columns. For example, a original data file has data and some probe
+information such as probe_start and probe_end but probe_seq, while some other
+probe files have probe information including probe_start, probe_end and
+probe_seq, then the probe_seq can be added to the original data file.
+
+refer to mergefiles (with auguments: --keep-rows=left --right-reps=first).
+
+Usage: 
+	python addInfo.py [--by-index] [-a | --add-col=col_to_add [-a | --add-col=col2 ...]] [-b | --by-col=Common_ColumnName [-b | --by-col=2col] ...] [--by-col2=Common_Column_with_dif_name_in_file1 ...] [--col-prefix=""] [-o|--output-file=output_file | STDOUT] [-i|--original-file=original_file | STDIN] file1 [file2 ...]
+
+Options:
+	--by-index: The value after --add-col is the index of column. Default is column name instead of column index.
+
+Arguments:
+	file1 ...: can be files with same column names
+
+'''
+
+
+import os, sys, time
+from getopt import getopt # while use getopt, the options must lies before arguments
+from versiontools import *
+#from basetools import exitMsg
+
+try:
+	from dictreps import dictreps
+except:
+	def dictreps(optlist):
+		'''Convert a list of tuples into a dict, values for replicated keys are kept in a list.'''
+		rlt = {}
+		for k, v in optlist:
+			if k not in rlt:
+				rlt[k] = v
+				continue
+			vv = rlt[k]
+			if isinstance(vv, list):
+				vv.append(v)
+				continue
+			rlt[k] = [vv, v]
+		return rlt
+
+if sys.version_info[0:2] < (2, 3):
+	print "Python 2.3 or later needed!"
+	sys.exit(1)
+if sys.version_info[0:2] == (2, 3):
+	from sets import Set as set
+	def sorted(l, *t, **k):
+		l = l[:] # make a copy
+		apply(l.sort, t, k)
+		return l
+
+def addInfo(fobj, forig, fsrcs, add_col, by_col=None, by_index=False, col_prefix="", sort_rlt=False, join_str='; ', remove_blank=False, sep='\t'):
+	#from sets import Set
+	#t1 = t0 = time.time()
+	if not add_col: add_col = []
+	ny = len(fsrcs) 
+	if ny < 1: return
+	if by_index:
+		head1 = open(fsrcs[0]).readline().replace('\n','').replace('\r','').split(sep)
+	forig = isinstance(forig, str) and open(forig) or forig
+	colnmx = map(str.strip, forig.readline().replace('\n','').replace('\r','').split(sep))
+	norig = len(colnmx)
+	colnmys = map(lambda f:map(str.strip, open(f).readline().replace('\n','').replace('\r','').split(sep)), fsrcs)
+	if by_col is None: # find columns in common
+		by_index = False
+		by_col = set(filter(bool, colnmx))
+		map(lambda b:by_col.intersection_update(filter(lambda a:a, colnmys)), fsrcs)
+		if not by_col: 
+			print "No column shared in common! cannot match files!"
+			return
+		by_col = list(by_col)
+	if not isinstance(by_col, (list, tuple)): #isinstance(by_col, str): # by_col is a list of column names.
+		by_col = [by_col]
+	#by_col = map(lambda a:isinstance(a, str) and (a, a) or a, by_col) # convert column name from str to tuple
+	by_col = map(lambda a:not isinstance(a, (tuple, list)) and (a, a) or a, by_col) # convert column name from str to tuple
+	# read first file
+	if by_index:
+		def getIdx(s):
+			try:
+				s = map(lambda a:int(a.strip()), s.split('-'))
+			except: exitUsage('Failed to convert indexes (%s) to integers!' % s, out=sys.stderr)
+			if len(s) != 2 or s[0] > s[1]: exitUsage('Wrong in length of indexes (%s)!' % s, out=sys.stderr)
+			s = range(s[0], s[1]+1)
+			return s
+		# deal with by_col
+		for i in range(len(by_col)): # deal with something like "3 - 5"
+			if isinstance(by_col, str):
+				if '-' in by_col:
+					idxs = getIdx(by_col[i])
+					by_col[i] = idxs[0]
+					by_col.extend(idxs[1:])
+			else: # should be a tuple
+				if '-' in by_col[0] and '-' in by_col[1]:
+					idx1 = getIdx(by_col[i][0])
+					idx2 = getIdx(by_col[i][1])
+					if len(idx1) != len(idx2): exitUsage('Wrong in length of indexes (%d vs %d)!' % (len(idx1), len(idx2)), out=sys.stderr)
+					idxs = zip(idx1, idx2)
+					by_col[i] = idxs[0]
+					by_col.extend(idxs[1:])
+		by_col = map(lambda a:tuple(map(lambda b:int(b)-1, a)), by_col) # convert to int
+		idx = map(lambda a:a[0], by_col)
+		# deal with add_col
+		for i in range(len(add_col)):
+			if '-' in add_col[i]:
+				add_col.extend(getIdx(add_col[i]))
+				add_col[i] = None
+			add_col = filter(bool, add_col)
+		add_col = map(lambda a:int(a)-1, add_col) # convert to int
+	else:
+		try:
+			idx = map(lambda a:colnmx.index(a[0]), by_col)
+			#idys = map(lambda b:map(lambda a:colnmys[b].index(a), by_col), range(ny))
+		except:
+			print 'Some specified sharing columns do not exist in all the files, quit.'
+			return
+
+		# remove by_col from column names of other files
+		map(lambda b:map(lambda a:colnmys[b].remove(a[1]), by_col), range(ny))
+
+	byx = []
+	byxdic = {} # {k:[row1, row2, ...], ...}
+
+	def readFile(fn, idx, byx, byxdic, rmidx=False, head=None):
+		fp = isinstance(fn, str) and open(fn) or fn
+		if not head: head = fp.readline() # skip the column name row
+		ncol = len(head.split(sep))
+		if rmidx:
+			xdi = sorted(idx, reverse=True)
+		for line in fp:
+			v = map(str.strip, line.replace('\n','').replace('\r','').split(sep))
+			lv = len(v)
+			if lv < ncol:
+				v.extend([''] * (v-lv))
+			elif lv > ncol:
+				raise
+			#k = tuple(map(lambda a:v[a], idx))
+			k = ''.join(map(lambda a:v[a], idx))
+			if rmidx:
+				map(lambda a:v.pop(a), xdi)
+			byx.append(k)
+			#byxdic[k] = v
+			byxdic.setdefault(k, []).append(v)
+		fp.close()
+
+	def readInfo(fn, by_cols, info_cols, info_dics, by_index=False):
+		'''
+		by_cols: a list of names of key columns
+		info_cols: a list of names for columns to be fetched
+		info_dicts: {k:[vlist1, vlist2, ...], ... } #{info_col_name:{by_key:value, ...}, ...}
+		'''
+		fp = open(fn)
+		head = fp.readline().replace('\n', '').replace('\r', '').split(sep)
+		if not info_cols:
+			info_cols[:] = head[:]
+			for bc in by_cols:
+				if by_index: info_cols.pop(bc[1])
+				else: info_cols.remove(bc[1])
+			#global add_col #by_col
+			#add_col = info_cols[:] # by_col = info_cols[:]
+			#col_idx = [(colnm, head.index(colnm)) for colnm in info_cols if colnm in head]
+			col_idx = map(head.index, info_cols)
+		else:
+			col_idx = by_index and info_cols or map(head.index, info_cols)
+		ncol = len(head)
+		if by_index: 
+			by_idx = map(lambda a:a[1], by_cols)
+		else:
+			by_idx = map(lambda a:head.index(a[1]), by_cols)
+		for line in fp:
+			v = map(str.strip, line.replace('\n','').replace('\r','').split(sep))
+			lv = len(v)
+			if lv < ncol:
+				v.extend([''] * (v-lv))
+			#k = ''.join(map(lambda a:v[a], by_idx))
+			#k = map(lambda a:v[a], by_idx)
+			k = tuple(map(v.__getitem__, by_idx))
+			if any(k):
+				info_dicts.setdefault(k, []).append(map(v.__getitem__, col_idx))
+				continue
+
+				k = ''.join(k)
+				for nm, i in col_idx:
+					infodic = info_dicts.setdefault(nm, {})
+					#infodic.setdefault(k, []).append(v[i])
+					infodic.setdefault(k, set()).add(v[i]) # use set instead of list to remove replicates
+		fp.close()
+
+	#try:
+	#	readFile(forig, idx, byx, byxdic, head=colnmx)
+	#except:
+	#	print 'The first file is NOT a valid table-like file!'
+	#	byx = None
+	#if not byx: return
+	#blankx = [''] * len(byxdic[byx[0]][0])
+
+	info_dicts = {}
+	for i in range(ny):
+		readInfo(fsrcs[i], by_col, add_col, info_dicts, by_index=by_index)
+	if not info_dicts: 
+		return
+	# convert [vlist1, vlist2, ...] to a str like "...;...\t...;...\t...;..."
+	#fun = remove_blank and (lambda a:join_str.join(filter(bool, a))) or join_str.join
+	fun = remove_blank and (lambda a:join_str.join(filter(bool, set(a)))) or (lambda a:join_str.join(set(a))) # remove replicates
+	for k, vs in info_dicts.items(): 
+		if len(vs) > 1:
+			info_dicts[k] = map(fun, zip(*vs))
+		else: info_dicts[k] = vs[0]
+	# write result
+	if by_index:
+		add_col = map(head1.__getitem__, add_col)
+	blankx = [''] * len(add_col)
+	fp = isinstance(fobj, str) and open(fobj, 'w') or fobj
+	if col_prefix:
+		add_col = map(lambda a,b=col_prefix:b+a, add_col)
+	fp.write(sep.join(colnmx + add_col) + '\n')
+	for line in forig:
+		line = line.replace('\n','').replace('\r','').split(sep)
+		ln = len(line)
+		if ln < norig: line.extend(['']*(norig - ln))
+		k = tuple(map(line.__getitem__, idx))
+		line.extend(info_dicts.get(k, blankx))
+		fp.write(sep.join(line) + '\n')
+	return
+
+	ks = info_dicts.keys()
+	#idx =  enumerate(ks, start=norig)
+	idx =  dict(zip(ks, range(norig, norig+len(ks))))
+	tail = [''] * len(ks)
+	colnmx.extend(ks)
+	map(lambda a:map(lambda b:b.extend(tail), a), byxdic.values()) # extend with blank, this is fast
+	#for col, coldic in info_dicts.items():
+	for col in add_col:
+		if col not in info_dicts: continue
+		coldic = info_dicts[col]
+		i = idx[col]
+		#for k, v in coldic.items():
+		#	byxdic[k][i] = '; '.join(v)
+		for k, vs in byxdic.items():
+			info = coldic.get(k, None)
+			if not info: continue
+			info = join_str.join(info)
+			#v[i] = info
+			map(lambda a:a.__setitem__(i, info), vs)
+
+	# save result
+	if sort_rlt: byx.sort()
+	fp = isinstance(fobj, str) and open(fobj, 'w') or fobj
+	fp.write('\t'.join(colnmx) + '\n')
+	for r in byx:
+		vs = byxdic[r]
+		for v in vs:
+			fp.write('\t'.join(v) + '\n')
+	fp.close()
+	#t2 = time.time(); print 'Total time is %fs, %fm' % ( t2-t0, (t2-t0)/60 ); t1 = t2
+
+def exitUsage(s=None, out=sys.stdout):
+	old = '''Add information from table-like annotation files to a table-like file. For example, a data file has data and some probe information such as probe_start and probe_end but probe_seq, while a probe file has probe information including probe_start, probe_end and probe_seq, then the probe_seq can be added to the data file.
+
+Usage: 
+	%s -(a | --add-col=)col_to_add [(-a | --add-col=)col2 ...] [(-b | --by-col=)Common_ColumnName [(-b | --by-col=)2col] ...] [--sort] [-o|--output-file=output_file] [-i|--original-file=original_file] file1 file2 ...
+''' % os.path.split(sys.argv[0])[1]
+
+	print >>out, __doc__
+	if s: print >>out, s
+	sys.exit(0)
+
+def selColsMain(sep='\t'):
+	optlist, args = getopt(sys.argv[1:], 'ha:b:o:i:', ['help', 'add-col=', 'by-col=', 'by-col2=', 'col-prefix=', 'output-file=', 'origial-file=', 'sort', 'by-index'])
+	optdict = dictreps(optlist)
+	if '-h' in optdict or '--help' in optdict:
+		exitUsage()
+	#input_file = optdict.get('-i', optdict.get('--input-file', args and args.pop(0) or ''))
+	add_col = optdict.get('-a', [])
+	if not isinstance(add_col, list):
+		add_col =  [add_col]
+	col_more = optdict.get('--add-col', [])
+	if isinstance(col_more, list):
+		add_col.extend(col_more)
+	else:
+		add_col.append(col_more)
+
+	by_col = optdict.get('-b', [])
+	if not isinstance(by_col, list):
+		by_col =  [by_col]
+	col_more = optdict.get('--by-col', [])
+	if isinstance(col_more, list):
+		by_col.extend(col_more)
+	else:
+		by_col.append(col_more)
+	
+	by_col2 = optdict.get('--by-col2', [])
+	if not by_col2: by_col2 = by_col
+	elif not isinstance(by_col2, list): by_col2 = [by_col2]
+	l1, l2 = len(by_col), len(by_col2)
+	if l1 < l2: by_col.extend(by_col2[l1:])
+	elif l1 > l2: by_col2.extend(by_col[l2:])
+
+	by_index = '--by-index' in optdict
+	#if by_index: # do it in the main function
+	#	by_col = map(lambda a:int(a)-1, by_col)
+	#	by_col2 = map(lambda a:int(a)-1, by_col2)
+
+	by_col = zip(by_col, by_col2)
+
+	col_prefix = optdict.get('--col-prefix', "")
+
+	sort_rlt = '--sort' in optdict
+	
+	fobj = optdict.get('-o', optdict.get('--output-file', None)) or sys.stdout
+	try:
+		forig = optdict.get('-i', optdict.get('--original-file', None)) or sys.stdin
+	except:
+		exitUsage() #'No original file!')
+	#if not add_col or not args: exitUsage()
+	if not args: exitUsage('\nError: No information file provided!')
+
+	addInfo(fobj, forig, args, add_col, by_col=by_col, col_prefix=col_prefix, sort_rlt=sort_rlt, by_index=by_index, sep=sep)
+
+
+if __name__ == '__main__': 
+	selColsMain()

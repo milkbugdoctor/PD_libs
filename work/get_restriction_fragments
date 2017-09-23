@@ -1,0 +1,67 @@
+#!/usr/bin/perl
+
+@ARGV == 8 || die "\nUsage: $0 pat min max ends left right circ seqfile\n\n";
+
+my ($pat, $min, $max, $ends, $left, $right, $circ, $seqfile) = @ARGV;
+
+open(FILE, $seqfile) or die "can't open '$seqfile'";
+my ($seq, $tmp);
+while (read(FILE, $tmp, 100 * 1024)) {
+    $seq .= $tmp;
+}
+
+my $chr = $seqfile;
+$chr =~ s|.*/||;
+$chr =~ s/\.[^.]*$//;
+
+my @frags = get_restriction_fragments($pat, $min, $max, $ends, $left, $right, $circ, $seq);
+
+print "frag_id\tfrag_chr\tfrag_strand\tfrag_start\tfrag_end\tfrag_len\tfraq_seq\n";
+my $id = 0;
+for my $frag (@frags) {
+    print "$id\t$chr\t+\t$frag\n";
+    $id++;
+}
+
+sub get_restriction_fragments {
+    my ($pat, $min, $max, $ends, $keep_left, $keep_right, $circ, $seq) = @_;
+    my @frags = split /($pat)/, $seq;
+    my @result;
+    if ($circ) {
+	$seq .= $frags[0];
+        @frags = split /($pat)/, $seq;
+    }
+    my ($prev_pat, $next_frag, $next_pos);
+    while ($seq =~ /(.*?)($pat)/g) {
+	my $left = length($`);
+	my $mid = length($&);
+	my $right = length($');
+	my ($frag, $next_pat) = ($1, $2);
+	if ($ends or $prev_pat ne '') {
+	    do_frag($min, $max, $keep_left, $keep_right, $prev_pat, $frag,
+		$next_pat, $left, \@result);
+	}
+	$prev_pat = $next_pat;
+	$next_frag = $';
+	$next_pos = $left + $mid;
+    }
+    if ($ends) {
+	do_frag($min, $max, $keep_left, $keep_right, $prev_pat, $next_frag,
+	    '', $next_pos, \@result);
+    }
+    return @result;
+}
+
+sub do_frag {
+    my ($min, $max, $keep_left, $keep_right, $prev_pat, $frag, $pat, $pos, $res) = @_;
+
+    my $left = substr($prev_pat, -$keep_left);
+    my $right = substr($pat, 0, $keep_right);
+    my $frag = $left . $frag . $right;
+    $pos -= length($left);
+    my $len = length($frag);
+    return if $len < $min;
+    return if $len > $max;
+    my $end = $pos + $len - 1;
+    push(@$res, "$pos\t$end\t$len\t$frag");
+}

@@ -1,0 +1,38 @@
+#!/bin/bash
+
+. subs.sh
+
+PATH=${PATH}:/home/flong/current
+
+if [ $# -lt 3 ]; then
+    echo -e "\nUsage: $0 file.fa file.qual outprefix [mates]
+
+    Environmental variables:
+	NUCMER_OPTS
+	CASM_OPTS
+
+"
+    exit 1
+fi
+fasta="$1" ; shift
+qual="$1" ; shift
+prefix="$1" ; shift
+
+mkdir -p $prefix
+ln "$fasta" $prefix/input.seq 2> /dev/null
+fasta=input.seq
+ln "$qual" $prefix/input.qual 2> /dev/null
+qual=input.qual
+ln "$ref" $prefix/reference.fa 2> /dev/null
+ref=reference.fa
+if [ "$1" ]; then
+    ln "$1" $prefix/mates.txt 2> /dev/null
+    mates="-m mates.txt"
+fi
+cd $prefix
+
+if need $prefix.afg; then
+    run "tarchive2amos -o $prefix input.seq $mates"	|| exit 1
+fi
+
+minimus -D TGT=$prefix.afg $prefix

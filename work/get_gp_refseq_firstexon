@@ -1,0 +1,64 @@
+#!/usr/bin/perl
+
+#
+#	goldenpath start positions are 0-based, but ends are 1-based
+#
+
+$refseq = "gp_nov8.refFlat";
+
+(($first_exon_file, $CpG_file) = @ARGV) == 2 ||
+	die "\nUsage: $0 first-exon-file CpG-file\n\n";
+
+open(FIRST, ">$first_exon_file") || die "couldn't create $first_exon_file";
+open(CPG, ">$CpG_file") || die "couldn't create $CpG_file";
+
+require 'mysql.pl';
+require 'misc.pl';
+require 'cpg.pl';
+
+$fd = mysql_output("select geneName, name, chrom, strand, exonStarts, exonEnds from $refseq");
+$marker_num = 0;
+print_tabbed(FIRST, "marker_id gene refseq chr strand ".
+    "exon_start exon_end exon_len marker_start marker_end marker_len\n");
+print_tabbed(CPG, "marker_id gene refseq chr strand ".
+    "exon_start exon_end exon_len ".
+    "5_start 5_end 5_len 5_CpG 5_GC ".
+    "3_start 3_end 3_len 3_CpG 3_GC\n");
+while (<$fd>) {
+    chomp;
+    ($geneName, $name, $chrom, $strand, $exonStarts, $exonEnds) = split /\t/;
+    $chr = $chrom;
+    $chr =~ s/^chr//;
+    @starts = split(/,/, $exonStarts);
+    grep($_++, @starts); # add one to start positions
+    @ends = split(/,/, $exonEnds);
+    if ($strand eq '-') {
+	$exon_start = $starts[$#starts];
+	$exon_end = $ends[$#ends];
+	$exon_len = $exon_end - $exon_start + 1;
+	$marker_start = $exon_end - 500 + 1;
+	$marker_len = 1500;
+	$marker_end = $marker_start - $marker_len + 1;
+	$strand = -1;
+    }
+    else {
+	$exon_start = $starts[0];
+	$exon_end = $ends[0];
+	$exon_len = $exon_end - $exon_start + 1;
+	$marker_start = $exon_start - 1000;
+	$marker_len = 1500;
+	$marker_end = $marker_start + $marker_len - 1;
+	$strand = 1;
+    }
+    print FIRST "$marker_num\t$geneName\t$name\t";
+    print_tabbed(FIRST, "$chr $strand $exon_start $exon_end".
+	    " $exon_len $marker_start $marker_end $marker_len\n");
+    @up = get_nearest_CpG_2($chrom, $exon_start, $strand * -1);
+    @down = get_nearest_CpG_2($chrom, $exon_start, $strand * 1);
+    print CPG "$marker_num\t$geneName\t$name\t";
+    print_tabbed(CPG, "$chr $strand $exon_start $exon_end $exon_len @up @down\n");
+    $marker_num++;
+}
+close(FIRST);
+close(CPG);
+

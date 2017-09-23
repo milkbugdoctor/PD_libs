@@ -1,0 +1,117 @@
+#!/usr/bin/perl
+
+use Delta;
+use Getopt::Std;
+getopts('ab:ci:q:r:s:tv:x');
+require 'misc.pl';
+require 'align_string.pl';
+
+$opt_a = 1 if $opt_c;
+
+@ARGV || die "\nUsage: $0 [options] infile.delta
+
+    Options:
+	-a		add alignment string
+	-b sp           expand tabs with <sp> spaces between cols
+	-c		compress alignment string
+	-i ident	minimum alignment identity [0, 100], default 0
+	-v cover	minimum coverage [0, 100], default 0
+	-q query	select only this query sequence
+	-r seq_id	select only this reference sequence
+	-s score	select score >= <score>
+	-t		show descriptive text
+	-x		show extra info (ident% and cover%)
+
+";
+
+my $delta = shift;
+
+if ($opt_b) {
+    open(OUT, "| cols.expand -b $opt_b") || die "can't run cols.expand";
+    select OUT;
+}
+
+my $foo = Delta::new($delta);
+my @cols = qw{rname rstart rend rlen rsize qname qstrand qstart qend
+    qlen qsize mis mism match max_gap trim score};
+if ($opt_t) {
+    print <<FOO;
+# rname  - name of reference sequence
+# rstart - left-most position of alignment in reference sequence
+# rend   - right-most position of alignment in reference sequence
+# rlen   - (rend - rstart + 1)
+# rsize  - length of the whole reference sequence (this is a constant)
+# qname  - name of query sequence
+# qstart - left-most position of alignment in query sequence
+# qend   - right-most position of alignment in query sequence
+# qlen   - (qend - qstart + 1)
+# qsize  - length of the whole query sequence (this is a constant)
+# mis    - number of differences in alignment (gaps and mismatches)
+# mism   - number of mismatches in alignment ("m" in alignment string)
+# match  - number of smatches in alignment ("M" in alignment string)
+# max_gap - longest contiguous gap in alignment
+# trim   - maximum amount trimmed from reference or query sequence
+# score  - query alignment score (ident * cover)
+FOO
+}
+
+if ($opt_x) {
+    push(@cols, qw/ident cover rcover rscore rgap qgap tgap/);
+    if ($opt_t) {
+	print <<FOO;
+# ident  - match / (qlen + qgap)
+# cover  - query coverage (qlen / qsize)
+# rcover - reference coverage (rlen / rsize)
+# rscore - reference alignment score (ident * rcover)
+# rgap   - number of gap bases in reference sequence (" " in alignment string)
+# qgap   - number of gap bases in query sequence ("i" in alignment string)
+# tgap   - total number of gap bases (rgap + qgap)
+FOO
+    }
+}
+if ($opt_a) {
+    push(@cols, 'align');
+    if ($opt_t) {
+	print "# align  - alignment string\n";
+    }
+}
+print join("\t", @cols), "\n";
+
+while (my $entry = $foo->get_entry) {
+    next if ref($entry) ne "Entry";
+    my ($rname, $rsize, $qname, $qsize) = $entry->get_header();
+    next if $opt_q ne '' and $opt_q ne $qname;
+    next if $opt_r ne '' and $opt_r ne $rname;
+    my ($ident, $rgap, $tgap, $align_len, $score, $cover) = $entry->get_align_stats();
+    next if $ident < $opt_i;
+    next if $cover < $opt_v;
+    next if $score < $opt_s;
+    my ($rstart, $rend, $qstart, $qend, $rstrand, $qstrand, $mis) = $entry->get_align();
+    my $rlen = $rend - $rstart + 1;
+    my $qlen = $qend - $qstart + 1;
+    my $gap = $entry->get_max_gap();
+    my $trim = $entry->get_max_trim();
+    my @extra;
+    my $stats = $entry->get_align_stats_hash();
+    if ($opt_x) {
+	push(@extra, fix_num($ident), fix_num($cover), fix_num($stats->{ref_cover}),
+	fix_num($stats->{ref_score}), $stats->{ref_gap},
+	$stats->{query_gap}, $stats->{query_gap} + $stats->{ref_gap});
+    }
+    if ($opt_a || $opt_c) {
+	my $align_str = $entry->get_alignment_string();
+	$align_str = compress_align_string($align_str) if $opt_c;
+	push(@extra, $align_str);
+    }
+    print join("\t", $rname, $rstart, $rend, $rlen, $rsize,
+	$qname, $qstrand, $qstart, $qend, $qlen, $qsize, $mis,
+	$stats->{mis}, $stats->{match}, $gap, $trim, fix_num($score), @extra), "\n";
+}
+
+close OUT;
+
+sub fix_num {
+    my $num = sprintf "%.3f", $_[0];
+    $num =~ s/\.0+$//;
+    return $num;
+}

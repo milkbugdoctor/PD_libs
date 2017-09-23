@@ -1,0 +1,25 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 count_col < infile > outfile
+
+    Count how many times each unique line occurs and add count column.
+
+    Keeps counts in a hash.
+
+";
+
+use Cols;
+
+my $cols = Cols::new(STDIN);
+$cols->add_col($ARGV[0]);
+$cols->print_header(STDOUT);
+
+while (my $row = $cols->get_row()) {
+    chomp(my $line = $cols->{row_string});
+    $foo{$line} += 1;
+}
+
+while (($key, $value) = each %foo) {
+    print "$key\t$value\n";
+}
+close(FOO);

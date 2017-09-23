@@ -1,0 +1,23 @@
+#!/bin/bash
+
+if [ $# -lt 5 ]; then
+	echo -e "\nUsage: $0 chr hostname port pid chrfile\n"
+	exit 1
+fi
+
+. $blat3_work/blat3_info.sh
+
+echo "blat3_set_server $*"
+
+chr=$1
+host=$2
+port=$3
+pid=$4
+chrfile="$5"
+
+dir=$blat3_work/data
+mkdir -p $dir
+echo -e "$host\t$port\t$pid\t$chrfile" > $dir/$chr.info
+
+(echo $chr ; cat $dir/chrs 2> /dev/null) | sort -u > /tmp/$$
+mv /tmp/$$ $dir/chrs

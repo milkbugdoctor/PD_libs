@@ -1,0 +1,41 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('d:s');
+
+$desc_col = $opt_d;
+$keep_spaces = $opt_s;
+
+@ARGV == 3 or die "\nUsage: $0 [options] id-col seq-col fasta-file
+
+	-d desc-col	    put description in this column instead of id-col
+	-s		    retain spaces in sequence (useful for .qual files)
+
+";
+
+my ($id_col, $seq_col, $fasta_file) = @ARGV;
+
+require 'fasta.pl';
+
+open(FASTA, $fasta_file) or die "can't open file '$fasta_file'";
+if ($desc_col) {
+    print join("\t", $id_col, $desc_col, $seq_col), "\n";
+}
+else {
+    print join("\t", $id_col, $seq_col), "\n";
+}
+while ((my ($header, $seq) = read_fasta(FASTA, $keep_spaces)) == 2) {
+	if ($seq) {
+	    $header =~ s/\t/ /g;
+	    $header =~ s/^>//;
+	    if ($desc_col) {
+		$header =~ /(\S+)\s*(.*)/;
+		print "$1\t$2\t$seq\n";
+	    }
+	    else {
+		print "$header\t$seq\n";
+	    }
+	}
+	last if $done;
+}
+

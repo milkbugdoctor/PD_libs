@@ -1,0 +1,122 @@
+#!/usr/bin/perl
+#
+#   Make maximum-length NimbleGen probes that don't contain repeats.
+#
+
+$debug = 1;
+
+use Getopt::Std;
+getopts('grt'); 
+$allow_repeats = $opt_r;
+$debug = 1 if $opt_d;
+
+$0 =~ s|.*/||;
+(@ARGV >= 5) || die "\nUsage: $0 [-r] infile.fa both min-bases max-bases offset [tag1 tag2]
+
+	both		make probes from both strands?
+	min-bases	min. probe length
+	max-bases	max. probe length
+	offset		distance between probes
+	tag1/tag2	used for good_probe(tag1 . probe . tag2)
+ 
+	-g		check probe \"goodness\" (repeats, hairpins)
+	-r		allow lowercase (probably from RepeatMasker)
+	-t		add probe_tm column
+
+";
+
+require 'probes.pl';
+require 'NimbleGen.pl';
+require 'fasta.pl';
+require 'perl_tm.pl';
+
+$| = 1;
+
+my $max_cycles = $NimbleGen::max_rounds;
+
+my ($filename, $both_strands, $min_bases, $max_bases,
+	$offset, $tag1, $tag2) = @ARGV;
+
+print <<FOO;
+# make_tagged_probes
+#
+#     probe_start   absolute top-strand genome starting position
+#
+FOO
+
+my @probe_cols = qw{probe_id probe_chr probe_strand probe_start probe_end probe_len probe_seq};
+push(@probe_cols, 'probe_tm') if $opt_t;
+print STDOUT join("\t", @probe_cols), "\n";
+
+open(FILE, $filename) || die "can't open $filename";
+while ((my ($key, $desc, $seq) = read_fasta3(FILE)) == 3) {
+    my $strand = '+';
+    do_seq($seq, $key, $strand);
+    if ($both_strands) {
+	$strand = ($strand eq "-") ? "+" : "-";
+	$seq = rc($seq);
+	do_seq($seq, $key, $strand);
+    }
+}
+
+sub do_seq {
+    my ($seq, $chr, $strand) = @_;
+    my $len = length($seq);
+    my ($start, $end) = (1, $len);
+    my (%starts, %ends);
+    warn "doing seq $chr len $len on strand $strand\n" if $debug;
+    for (my $pos = $len - 1; $pos >= 0; $pos -= $offset) {
+	my $s = max(0, $pos - $max_bases + 1);
+	my $str_len = $pos - $s + 1;
+	my $seq_3 = substr($seq, $s, $str_len);
+	if (!$allow_repeats) {
+	    $seq_3 =~ tr/acgt/nnnn/;
+	}
+	if (my $probe = NimbleGen::get_longest_good_probe($seq_3, $max_cycles, $max_bases)) {
+	    for (; $probe; $probe = substr($probe, 1)) {
+		if (length($probe) < $min_bases) {
+		    $bad_len++;
+		    last;
+		}
+		if ($opt_g) {
+		    next if ! ::good_probe($tag1 . $probe . $tag2); # check for repeats, etc.
+		}
+		my $probe_start = $pos - length($probe) + 1; # probe offset
+		$probe_end = $probe_start + length($probe) - 1;
+		doit($probe, $probe_start, $probe_end, $strand, $chr, $start, $len);
+		last;
+	    }
+	}
+    }
+}
+
+#
+#   probe_start and probe_end are 0-based and relative to the marker
+#
+sub doit {
+    my ($probe, $probe_start, $probe_end, $probe_strand, $chr, $start, $len) = @_;
+
+    my @probe;
+
+    my $probe_len = length($probe);
+    if ($probe_strand eq '+') {
+	$probe_start = $start + $probe_start;
+    }
+    else {
+	$probe_start = $start + ($len - ($probe_end + 1));
+    }
+    $probe_id = sprintf "\U${chr}${probe_strand}P%d:%d", $probe_start, $probe_len;
+    my $probe_end = $probe_start + $probe_len - 1;
+    push(@probe, $probe_id, $chr, $probe_strand, $probe_start, $probe_end, $probe_len, $probe);
+    push(@probe, PerlTm::exact_tm($probe)) if $opt_t;
+    print join("\t", @probe), "\n";
+    $good_probes++;
+}
+
+if ($opt_g) {
+    printf STDERR "$0: N %d 8mer %d self10 %d too-short %d good %d total %d\n",
+	$N, $rep8, $self, $bad_len, $good_probes, $total_probes;
+}
+
+exit 0;
+

@@ -1,0 +1,95 @@
+#!/usr/bin/perl
+
+my $debug = 1;
+
+use strict 'vars';
+
+use Getopt::Long qw(:config no_ignore_case);
+
+my (@bad_patterns, @needed_patterns, $require_nimblegen);
+GetOptions(
+    "r=s@" => \@needed_patterns,
+    "R=s@" => \@bad_patterns,
+    "N" => \$require_nimblegen);
+
+my $bad_pattern  = join("|", grep(s/(.*)/($1)/, @bad_patterns));
+
+(@ARGV == 2) || die "\nUsage: $0 [options] infile probe_seq_col
+
+    Removes probes that meet one of these conditions:
+	1. Probe contains an 'N'
+	2. Probe contains /AAAAAAAA|TTTTTTTT|CCCCCCCC|GGGGGGGG|GTGTGTGT|CACACACA/
+	3. Probe has 10 base hairpin self-annealing site
+
+    Options:
+	-N			add Nimblegen requirement
+	-r regex		add regex that probe must match
+	-R regex		add regex that probe must NOT match
+
+    Parameters:
+	infile			name of Fasta file or tabbed text file
+	probe_seq_col		probe name prefix, e.g., \"i\" for intron, \"m\" for mRNA
+
+";
+
+my ($filename, $probe_seq_col) = @ARGV;
+
+use Cols;
+require 'NimbleGen.pl';
+require 'perl_tm.pl';
+
+my $seq_num = 0;
+my %bad_probes;
+
+my $cols = Cols::new($filename);
+$cols->print_header(STDOUT);
+while (my $row = $cols->get_row()) {
+    my $probe = $row->{$probe_seq_col};
+    if (check_probe($probe)) {
+	$cols->print_row(STDOUT, $row);
+    }
+}
+
+sub check_probe {
+    my ($probe) = @_;
+    my $bad = 0;
+    if ($bad_pattern ne '' && $probe =~ /$bad_pattern/) {
+	$bad_probes{pattern}++;
+	$bad = 1;
+    }
+    my $good = 1;
+    for my $pat (@needed_patterns) {
+	$good = 0 if ! ($probe =~ /$pat/);
+    }
+    if (!$good) {
+	$bad_probes{pattern}++;
+	$bad = 1;
+    }
+    if ($probe =~ /N/i) {
+	$bad_probes{N}++;
+	warn "N\t$probe\n" if $debug >= 2;
+	$bad = 1;
+    }
+    if ($probe =~ /AAAAAAAA|TTTTTTTT|CCCCCCCC|GGGGGGGG|GTGTGTGT|CACACACA/i) {
+	$bad_probes{repeat}++;
+	warn "REPEAT\t$probe\n" if $debug >= 2;
+	$bad = 1;
+    }
+    if (self_anneal(10, $probe)) {
+	$bad_probes{hairpin}++;
+	warn "HAIRPIN\t$probe\n" if $debug >= 2;
+	$bad = 1;
+    }
+    if ($require_nimblegen && !NimbleGen::good_probe($probe)) {
+	warn "NIMBLE\t$probe\n" if $debug >= 2;
+	$bad_probes{nimblegen}++;
+	$bad = 1;
+    }
+    return ! $bad;
+}
+
+my @bad = %bad_probes;
+printf STDERR "bad: @bad\n";
+
+exit 0;
+

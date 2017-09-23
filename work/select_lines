@@ -1,0 +1,28 @@
+#!/usr/bin/perl
+
+(@ARGV >= 2) || die "\nUsage: $0 col val[col val ...] < input
+
+";
+
+require 'columns.pl';
+require 'misc.pl';
+
+my @header = get_header(STDIN);
+while (@ARGV >= 2) {
+    my $col = shift;
+    my $val = shift;
+    $hash{$col} = $val;
+    must_col(\@header, $col);
+}
+
+$" = "\t";
+print "@header\n";
+while (my @row = get_row(STDIN)) {
+    next if "@row" eq "@header";
+    my $all_good = 1;
+    for my $col (keys %hash) {
+	my $val = get_col(\@header, \@row, $col);
+	$all_good = 0 if $val ne $hash{$col};
+    }
+    print "@row\n" if $all_good;
+}

@@ -1,0 +1,21 @@
+#!/usr/bin/perl
+
+require 'primer.pl';
+
+$chr = shift if $ARGV[0] =~ /^chr/;
+
+@ARGV || die "\nUsage: $0 [chr] primers\n\n";
+
+for my $primer (@ARGV) {
+	$seq{$primer} = 1;
+	$seq{rc($primer)} = 1;
+}
+
+@seq = keys %seq;
+
+if ($chr) {
+	system "chr_query $chr @seq";
+}
+else {
+	system "query @seq";
+}

@@ -1,0 +1,48 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 infile.fa ... > outfile.fa
+
+    Adds special terms to description lines, e.g.:
+
+	CHROMAT_FILE: STAA-aaa06f08.g1
+	PHD_FILE: STAA-aaa06f08.g1.phd.1
+	CHEM: term
+	DYE: big
+	TEMPLATE: STAA-aaa06f08
+	DIRECTION: rev
+	INSERT_SIZE: 4150
+
+";
+
+my $id = 0;
+while (<>) {
+    if (/^>(.*)/) {
+	$_ = $1;
+	my ($id, $rest) = split /\s+/, $_, 2;
+	print ">$id";
+	print " CHROMAT_FILE: $id";
+	print " PHD_FILE: $id.phd.1";
+	my ($key, $dir) = split /\./, $id;
+	print " CHEM: term";
+	print " DYE: big";
+	print " TEMPLATE: $key";
+	if ($dir eq 'b1') {
+	    print " DIRECTION: fwd";
+	}
+	elsif ($dir eq 'g1') {
+	    print " DIRECTION: rev";
+	}
+	else {
+	    die "unknown ending [$dir]";
+	}
+	print " INSERT_SIZE: 4150";
+	print "\n";
+	$id++;
+    }
+    else {
+	warn "converting null characters to N\n" if /\0/;
+	s/\0/N/g;
+	print;
+    }
+}
+

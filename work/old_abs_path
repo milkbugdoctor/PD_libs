@@ -1,0 +1,37 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('l');
+
+@ARGV || die "\nUsage: $0 [-l] filename
+
+    -l		use link target
+
+";
+
+use Cwd qw(cwd getcwd abs_path);
+
+my $file = shift;
+
+if (-d $file && ! -l $file) {
+    print abs_path($file), "\n";
+    exit 0;
+}
+
+if ($opt_l and -l $file) {
+    chomp(my $link = `ls -l "$file"`);
+    $link =~ / -> (.*)/;
+    $file = $1;
+}
+
+my $path;
+if ($file =~ m|^/|) {
+    $path = "$file";
+}
+else {
+    my $cwd = getcwd;
+    $cwd .= "/" if substr($cwd, -1) ne "/";
+    $path = "$cwd$file";
+}
+
+print "$path\n";

@@ -1,0 +1,32 @@
+#!/usr/bin/perl
+
+$0 =~ s|.*/||;
+@ARGV >= 1 || die "\nUsage: $0 col ... < infile > outfile\n\n";
+
+use Columns;
+
+my $columns = Columns::new(STDIN);
+my $header = $columns->get_header();
+
+my @col_nums;
+for my $arg (@ARGV) {
+    my $col_num = $columns->get_col_num('input_header', $arg);
+    die "can't find column '$arg'" if $col_num <= 0;
+    push(@col_nums, $col_num);
+}
+@col_nums = sort { $b <=> $a } @col_nums;
+
+for my $col_num (@col_nums) {
+    splice(@$header, $col_num - 1, 1);
+}
+
+$columns->print_header(STDOUT);
+
+while (my $row = $columns->get_row()) {
+    for my $col_num (@col_nums) {
+	splice(@$row, $col_num - 1, 1);
+    }
+    $columns->print_row(STDOUT, $row);
+}
+close(STDIN);
+

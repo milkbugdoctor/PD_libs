@@ -1,0 +1,54 @@
+#!/usr/bin/perl
+#
+#   Get best tagged NimbleGen probes
+#
+
+$debug = 0;
+
+(@ARGV >= 4) || die "\nUsage: $0 probes.txt primer1 primer2 num-bases > output.txt
+
+	primer1		left primer to be added to probe
+	primer2		right primer to be added to probe
+	num-bases	number of bases for primer/sequence match
+
+";
+
+require 'columns.pl';
+require 'probes.pl';
+require 'NimbleGen.pl';
+require 'read_markers.pl';
+
+my ($filename, $primer1, $primer2, $num_bases) = @ARGV;
+
+my $fd;
+open($fd, $filename) || die "can't open $filename";
+my @header = get_header($fd);
+my $comment = get_header_comments(@header);
+my @marker_cols = find_marker_columns(\@header, "probe");
+
+$" = "\t";
+
+print "$comment@header\n";
+
+my @marker;
+while (my @row = get_row($fd)) {
+    @marker = get_marker(\@header, \@row) or die "can't get marker in row @row";
+    my ($id, $chr, $strand, $start, $end, $len) = @marker;
+    my $seq = get_col(\@header, \@row, 'probe_seq');
+    my $left3 = substr($primer1, -$num_bases);
+    my $right3 = substr($primer2, -$num_bases);
+    if ($seq =~ /$left3/i) { $primer_end_hit++; next; }
+    if ($seq =~ /$right3/i) { $primer_end_hit++; next; }
+    $seq = rc($seq);
+    if ($seq =~ /$left3/i) { $primer_end_hit++; next; }
+    if ($seq =~ /$right3/i) { $primer_end_hit++; next; }
+    my $tag2 = rc($primer2);
+    next if ! good_probe($primer1 . $seq . $tag2);
+    print "@row\n";
+}
+
+printf STDERR "seqs %d N %d 8mer %d self %d primer$num_bases %d good %d total %d\n",
+	$seq_num, $N, $rep8, $self, $good_probes, $total_probes;
+
+exit 0;
+

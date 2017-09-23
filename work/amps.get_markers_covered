@@ -1,0 +1,102 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+#
+#	Query hit servers with primers and markers from markerfile.
+#	Return markers that are covered by primers.
+#
+#	Note: strand isn't used because primers amplify both strands
+#
+
+require 'misc.pl';
+require 'columns.pl';
+
+$total_time = time;
+
+$0 =~ s|.*/||;
+@ARGV == 8 ||
+	die "\nUsage: $0 primerfile markerfile prefix minamp maxamp ov res int
+
+	prefix		needed to find {prefix}_chr, {prefix}_start, etc.
+	minamp		min. amplicon length
+	maxamp		max. amplicon length
+	ov		min. overlap
+	res		0 if primer, 1 if restriction enzyme
+	int		1 if amp lengths do not include primer, else 0
+
+";
+($primerfile, $markerfile, $prefix, $min_amp, $max_amp, $overlap, $top, $internal, $add) = @ARGV;
+
+(-s $primerfile) || die "$primerfile does not exist";
+(-s $markerfile) || die "$markerfile does not exist";
+
+$* = 1;
+$primers = `cat $primerfile`;
+$primers =~ s/#.*\n//g;			# remove any comments
+@primers = split(/\n+/, $primers);
+undef $primers;
+
+open(MARKERS, $markerfile) || die "can't read $markerfile";
+my @header = get_header(MARKERS);
+my $chr_col   = must_col(\@header, "${prefix}_chr", 'chr');
+my $id_col    = must_col(\@header, "${prefix}_id", 'marker_id');
+my $start_col = must_col(\@header, "${prefix}_start", 'start');
+my $len_col   = must_col(\@header, "${prefix}_len", 'len');
+while (my @row = get_row(MARKERS)) {
+    my $chr   = get_col(\@header, \@row, $chr_col);
+    my $start = get_col(\@header, \@row, $start_col);
+    my $len   = get_col(\@header, \@row, $len_col);
+
+    $markers{"$chr\t$start\t$len\n"} = 1;
+    push(@{$marker_map{$chr}{"$start $len"}}, "@row");
+}
+my $markers = join('', keys %markers);
+die "no markers" if ! $markers;
+undef %markers;
+
+print_tabbed(STDOUT, "@header amp_prefix amp_chr amp_start");
+print_tabbed(STDOUT, " amp_len amp_p1 amp_p2 overlap_start overlap_end overlap_len\n");
+
+for $primer (@primers) {
+    my @literals = split(/\s+/, $primer);
+    warn "trying primer $primer\n";
+    my $primer_len = length($literals[0]);
+    my $max_amp_len = $max_amp;
+    my $min_amp_len = $min_amp;
+    if ($internal) {
+	$max_amp_len += $primer_len * 2;
+	$min_amp_len += $primer_len * 2;
+    }
+    $primer = join("\n", @literals);
+    $cmd = "get_markers_covered $max_amp_len $overlap 0 0 $top\n$primer\n";
+
+    if ($debug) {
+	print "running 'java AmpClient' with input:\n$cmd$markers\n";
+	exit;
+    }
+    @result = &cmd("java AmpClient", $cmd . $markers);
+    die "command failed" if $? != 0;
+    for my $line (@result) {
+	chomp($line);
+	die "$line\ncmd:$cmd".$markers if ($line =~ /ERROR/);
+	$line =~ /([^ ]+) /;	# first word is the chromosome
+	$chr = $1;
+	$line =~ s/\t/\n$chr /g;
+	for my $l (split(/\n/, $line)) {
+	    my ($chr, @rest) = split(/\s+/, $l);
+	    my ($pos, $len, $apos, $alen, @p) = @rest;
+	    my $rows = $marker_map{$chr}{"$pos $len"};
+	    if ($alen >= $min_amp_len) {
+		my $overlap_end = min($apos + $alen - 1, $pos + $len - 1);
+		my $overlap_start = max($apos, $pos);
+		my $overlap = $overlap_end - $overlap_start + 1;
+		for my $row (@$rows) {
+		    print_tabbed(STDOUT, "$row $prefix $chr $apos $alen @p");
+		    print_tabbed(STDOUT, " $overlap_start $overlap_end $overlap\n");
+		}
+	    }
+	}
+    }
+    print STDERR (time - $total_time)/60.0, " total minutes\n";
+}

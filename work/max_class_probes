@@ -1,0 +1,51 @@
+#!/usr/bin/perl
+
+require 'columns.pl';
+require 'probes.pl';
+
+#
+#	Throw out extra class probes
+#
+
+(@ARGV >= 2) || die "\nUsage: $0 max-per-class class-col file ...\n\n";
+my $max_per_class = shift;
+my $class_col = shift;
+
+my @header = get_header("ARGV");
+die "can't find class column '$class_col'" if ! has_col(\@header, $class_col);
+
+$" = "\t";
+print "@header\n";
+
+my $last_class;
+while (my @row = get_row("ARGV")) {
+    my $class = get_col(\@header, \@row, $class_col);
+
+    if ($class ne $last_class and $last_class ne '') {
+	&do_probes($last_class, $max_per_class, \@lines);
+    }
+    $last_class = $class;
+    push(@lines, \@row);
+}
+&do_probes($last_class, $max_per_class, \@lines);
+
+sub probe_sort {
+    my @a = split /\t/, $a;
+    my @b = split /\t/, $b;
+    my $posa = get_col(\@header, \@a, 'probe_start');
+    my $posb = get_col(\@header, \@b, 'probe_start');
+   return $a <=> $b;
+}
+
+sub do_probes {
+    my ($class, $max, $lines_ref) = @_;
+    my @good_lines = @${lines_ref};
+    @good_lines = trim_probes($max + 2, @good_lines);
+    pop(@good_lines) if @good_lines > $max;
+    shift(@good_lines) if @good_lines > $max;
+    for my $row (@good_lines) {
+	print "@$row\n";
+    }
+    @{$lines_ref} = ();
+}
+

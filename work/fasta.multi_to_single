@@ -1,0 +1,32 @@
+#!/usr/bin/perl
+
+require 'fasta.pl';
+
+my $gap_size = 2000;
+
+while ($ARGV[0] =~ /^-/) {
+    if ($ARGV[0] eq '-n') {
+	shift;
+	$gap_size = shift;
+    }
+}
+
+@ARGV || die "\n\nUsage: $0 [-n gap] header [infile ...] > outfile
+
+    -n gap	put N x <gap> between sequences, default 2000
+
+";
+
+my $header = shift;
+print ">$header\n";
+my $first = 1;
+while (<>) {
+    if (/^>/) {
+	if (!$first) {
+	    print_wrapped(STDOUT, "N" x $gap_size);
+	}
+	$first = 0;
+	next;
+    }
+    print;
+}

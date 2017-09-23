@@ -1,0 +1,39 @@
+#!/bin/bash
+
+. subs.sh
+
+tmpdir=`mktemp -d /tmp/tmp.fa.XXXXXXXXXX`
+
+while getopts o: foo
+do
+    if [ "$foo" = 'o' ]; then
+	options="$OPTARG"
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -lt 2 ]; then
+    echo -e "\nUsage: $0 [options] output-prefix our.fasta our.qual [other fasta and qual pairs ...]
+
+    Tags our contigs with "1." for easier extraction.  Runs phrap.
+
+    If a quality file name is of the form \"q<num>\", e.g. \"q20\", then a quality
+    file will be created with a contant quality score of <num>.
+
+    Options:
+	-o \"phrap options\"
+"
+    exit 1
+fi
+
+prefix="$1"; shift
+
+fasta.combine_pairs -t $tmpdir/all "$@"
+
+run "phrap.run -o \"$options\" $prefix $tmpdir/all.fa $tmpdir/all.qual"
+
+run "phrap.get_our_contigs $prefix '1\.\S+'"
+
+rm -rf "$tmpdir"
+
+exit 0

@@ -1,0 +1,45 @@
+#!/usr/bin/perl
+
+while ($ARGV[0] =~ /^-/) {
+    if ($ARGV[0] =~ /^-c/i) {
+	$chem = shift;
+    }
+    if ($ARGV[0] =~ /^-s/i) {
+	$same = shift;
+    }
+    if ($ARGV[0] =~ /^-d/i) {
+	$diff = shift;
+    }
+}
+@ARGV || die "\nUsage: $0 [-chem] [-diff] [-same] infile.fa ... > outfile.fa
+
+    Options:
+	-chem	add \"CHEM: other\" if CHEM is missing
+	-diff	add \"TEMPLATE: \$id\" if TEMPLATE is missing
+	-same	add \"TEMPLATE: 0\" if TEMPLATE is missing
+
+";
+
+my $id = 0;
+while (<>) {
+    if (/^>(.*)/) {
+	$_ = $1;
+	my ($id, $rest) = split /\s+/, $_, 2;
+	my $chem_already = /CHEM:/;
+	my $temp_already = /TEMPLATE:/;
+	print ">$id";
+	print " CHEM: other" if $chem && ! $chem_already;
+	if (!$temp_already) {
+	    print " TEMPLATE: $id" if $diff;
+	    print " TEMPLATE: 0" if $same;
+	}
+	print " $rest" if $rest;
+	print "\n";
+	$id++;
+    }
+    else {
+	warn "converting null characters to N\n" if /\0/;
+	s/\0/N/g;
+	print;
+    }
+}

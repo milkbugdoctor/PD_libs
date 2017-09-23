@@ -1,0 +1,60 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('bhq');
+
+$0 =~ s|.*/||;
+@ARGV >= 2 || die "\nUsage: $0 [options] col-name col-expr [...] < infile > outfile
+
+	E.g., $0 badness '({gp_badness} + {mrna_badness})/2'
+
+    Options:
+	-b	Insert new columns before old columns
+	-h	No header is present; use column numbers
+	-q	Don't automatically surround terms with quotes
+
+";
+use Cols;
+require 'misc.pl';
+
+$" = "\t";
+
+my $columns = Cols::new(STDIN, $opt_h);
+my @args = @ARGV;
+while (my ($a, $b) = splice(@args, 0, 2)) {
+    if ($opt_b) {
+	$columns->add_col_before($a);
+    }
+    else {
+	$columns->add_col($a);
+    }
+}
+$columns->print_header(STDOUT);
+
+while (my $row = $columns->get_row()) {
+    my @args = @ARGV;
+    while (my ($new_col, $col_expr) = splice(@args, 0, 2)) {
+	my @vals;
+	my $expr = $col_expr;
+	my @fixes;
+	while ($expr =~ /\{([^}]+)\}/g) {
+	    my ($pos, $len) = (length($`), length($&));
+	    my $param = $1;
+	    my $val = $columns->get_col($row, $param);
+	    my $fix;
+	    if ($opt_q) {
+		$fix = $val;
+	    }
+	    else {
+		$fix = "q$;$val$;";
+	    }
+	    substr($expr, $pos, $len) = $fix;
+	}
+	my $nnn = eval "$expr";
+	die "error in expr [$expr]" if ! defined $nnn;
+	$columns->set_col($row, $new_col, $nnn);
+    }
+    $columns->print_row(STDOUT, $row);
+}
+close(STDIN);
+

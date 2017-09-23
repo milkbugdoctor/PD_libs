@@ -1,0 +1,36 @@
+#!/usr/bin/perl
+
+require 'filter-blat.pl';
+
+sub usage {
+    $0 =~ s|.*/||;
+    die "\nUsage: $0 [options] < infile > outfile
+
+Converts standard PSL header to one-line header.
+
+Options:
+	-match num[%][c][t]
+
+	    %	percent of qsize
+	    c	contiguous
+	    %t	percent of tsize
+	    %b  % of best: max(qsize, tsize)
+
+
+	    e.g.: 20, 20c, 60%, 60%c, 60%t
+
+";
+    exit 1;
+}
+
+while ($ARGV[0] =~ /^-/) {
+	if ($ARGV[0] =~ /^-match/) {
+		shift;
+		$match = shift;
+	}
+	else {
+		&usage;
+	}
+}
+
+blat::filter_psl_results(\*ARGV, $match, STDOUT);

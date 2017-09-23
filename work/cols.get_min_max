@@ -1,0 +1,24 @@
+#!/usr/bin/perl
+
+$0 =~ s|.*/||;
+@ARGV || die "\nUsage: $0 col < infile
+
+    Print minimum and maximum values in column <col>.
+
+";
+
+use Columns;
+
+my $columns = Columns::new(STDIN);
+my ($min, $max);
+while (my $row = $columns->get_row()) {
+    my $val = $columns->get_col($row, $ARGV[0]);
+    if (!defined($min) or $val < $min) {
+	$min = $val;
+    }
+    if (!defined($max) or $val > $max) {
+	$max = $val;
+    }
+}
+
+print "$min\t$max\n";

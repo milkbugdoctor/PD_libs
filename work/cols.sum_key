@@ -1,0 +1,28 @@
+#!/usr/bin/perl
+
+$debug = 0;
+
+@ARGV >= 2 || die "
+Usage: $0 [options] name-col value-col [infile]
+
+";
+
+use Cols;
+require 'misc.pl';
+
+my $key_col = shift;
+my $val_col = shift;
+
+my %hash;
+
+my $c = Cols::new(ARGV);
+while (my $r = $c->get_row()) {
+    my $name = $r->{$key_col};
+    my $val = $r->{$val_col};
+    $hash{$name} += $val;
+}
+
+for my $key (sort keys %hash) {
+    print "$key\t$hash{$key}\n";
+}
+

@@ -1,0 +1,60 @@
+#!/usr/bin/perl
+
+my $max_gap = my $def_max_gap = 5;
+
+use BlastReader;
+use Cwd qw(cwd getcwd abs_path);
+use Getopt::Std;
+
+require 'file_stuff.pl';
+require 'delta.pl';
+require 'align_string.pl';
+
+@ARGV == 3 || die "\nUsage: $0 [options] blast_infile ref.fa query.fa > out.delta
+
+";
+
+my $blast_file = shift;
+my $ref_fa = abs_path(shift);
+my $query_fa = abs_path(shift);
+
+die "[$ref_fa] does not exist" if ! -s $ref_fa;
+die "[$query_fa] does not exist" if ! -s $query_fa;
+
+my %tempfile_hash;
+my ($last_query_name, $last_ref_name);
+my $blast = new BlastReader $blast_file;
+print "$ref_fa\t$query_fa\nNUCMER\n";
+while (my $r = $blast->get_next_alignment()) {
+    flush($r);
+}
+
+for my $name (sort keys %tempfile_hash) {
+    my ($fd, $filename) = @{$tempfile_hash{$name}};
+    seek($fd, 0, 0) || die "seek: $!";
+    while (<$fd>) {
+	print $_;
+    }
+    close $fd;
+}
+
+sub flush {
+    my ($r) = @_;
+    return if $r eq '';
+    my $ref_name = $r->{rname};
+    my $fd = get_file($ref_name);
+    if ($r->{qname} ne $last_query_name{$ref_name}) {
+	printf $fd ">%s %s %d %d\n", $r->{rname}, $r->{qname}, $r->{rsize}, $r->{qsize};
+    }
+    $last_query_name{$ref_name} = $r->{qname};
+    my $str = caf2delta($r);
+    print $fd $str;
+}
+
+sub get_file {
+    my ($name) = @_;
+    return $tempfile_hash{$name}->[0] if defined $tempfile_hash{$name};
+    my ($fd, $filename) = get_tempfile("/tmp/blast2delta.XXXXXX");
+    $tempfile_hash{$name} = [ $fd, $filename ];
+    return $fd;
+}

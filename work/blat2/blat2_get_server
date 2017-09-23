@@ -1,0 +1,10 @@
+#!/bin/bash
+
+. blat2_info.sh
+
+if [ $# -ne 1 ]; then
+	echo -e "\nUsage: $0 chr\n"
+	exit 1
+fi
+
+cat $blat2_work/data/$1.info 2> /dev/null

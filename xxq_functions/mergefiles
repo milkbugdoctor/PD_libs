@@ -1,0 +1,275 @@
+#!/usr/bin/env python
+
+'''
+mergefiles - merge (cbind) table-like files by some key columns. rows are
+	aligned by values in the key columns. It works like a full outer join in
+	SQL, but should be much faster, and only the key columns in the first file
+	will be retained.
+
+	Use "bindcols" if you want to bind selected columns together from different files.
+	Use "bindrows" if you want to merge files by rows (like rbind in R) with columns aligned by their names.
+	Use "rbind" if you want to simple cat some file together, but only the title from the first file will be retained.
+
+	refer to "addInfo.py".
+
+Usage: 
+	python mergeFiles.py -h | --help
+	python mergeFiles.py [--by-col=Common_ColumnName [--by-col=2col] ...]  [--keep-rows=all|left] [--right-reps=product|first|last|order] [--sort] [-o|--output-file=output_file] file1 file2 ...
+'''
+
+
+import os, sys, time
+from getopt import getopt # while use getopt, the options must lies before arguments
+
+try:
+	from dictreps import dictreps
+except:
+	def dictreps(optlist):
+		'''Convert a list of tuples into a dict, values for replicated keys are kept in a list.'''
+		rlt = {}
+		for k, v in optlist:
+			if k not in rlt:
+				rlt[k] = v
+				continue
+			vv = rlt[k]
+			if isinstance(vv, list):
+				vv.append(v)
+				continue
+			rlt[k] = [vv, v]
+		return rlt
+
+if sys.version_info[0:2] < (2, 3):
+	print "Python 2.3 or later needed!"
+	sys.exit(1)
+if sys.version_info[0:2] == (2, 3):
+	from sets import Set as set
+	def sorted(l, *t, **k):
+		l = l[:] # make a copy
+		apply(l.sort, t, k)
+		return l
+
+def mergeFilesByR(fobj, fsrcs, by_col=None, sort_rlt=False, sep='\t'):
+	R_code = '''fns <- c(%s); d1 <- read.delim(fns[1], colClasses="character"); for (fn in fns[-1]) {d2 <- read.delim(fn, colClasses="character"); d1 <- merge(d1, d2, %s sort=%s, all=TRUE)}; write.table(d1, file="%s", row.names=FALSE, col.names=TRUE, sep="\t", quote=FALSE)'''
+	fns = '"%s"' % '", "'.join(fsrcs)
+	#by_col = by_col and ('by = "%s",' % by_col) or ''
+	if not by_col:
+		by_col = ''
+	else:
+		if not isinstance(by_col, list): 
+			by_col = 'by = "%s",' % by_col
+		else:
+			by_col = ', '.join(map(lambda a:'"%s"' % a, by_col))
+			by_col = 'c(' + by_col + ')'
+	sort_rlt = sort_rlt and 'TRUE' or 'FALSE'
+	rcmd = R_code % (fns, by_col, sort_rlt, fobj)
+	os.system('''echo '%s' | R --vanilla''' % rcmd)
+
+# should replace mergeFiles by a pure python version, which it more flexible and reliable
+
+def mergeFilesByPython(fobj, fsrcs, by_col=None, sort_rlt=False, keep_rows='all', right_reps='product', sep='\t'):
+	#from sets import Set
+	t1 = t0 = time.time()
+	nf = len(fsrcs) 
+	if nf < 2: return
+	ny = nf -1
+	colnmx = map(str.strip, open(fsrcs[0]).readline().split(sep))
+	colnmys = map(lambda f:map(str.strip, open(f).readline().split(sep)), fsrcs[1:])
+	if by_col is None: # find columns in common
+		by_col = set(filter(lambda a:a, colnmx))
+		map(lambda b:by_col.intersection_update(filter(lambda a:a, colnmys)), fsrcs[1:])
+		if not by_col: 
+			print "No column shared in common! cannot match files!"
+			return
+		by_col = list(by_col)
+	if isinstance(by_col, basestring): # by_col is a list of column names.
+		by_col = [by_col]
+	# read first file
+	try:
+		idx = map(lambda a:colnmx.index(a), by_col)
+		seqidx = range(len(idx))
+		idys = map(lambda b:map(lambda a:colnmys[b].index(a), by_col), range(ny))
+	except:
+		print 'Some specified sharing columns do not exist in all the files, quit.'
+		return
+	#dx = map(lambda a:a.replace('\n','').replace('\r','').split(sep), open(fsrcs[0]).readlines())
+	#dx.pop(0)
+
+	# remove by_col from column names of other files
+	map(lambda b:map(lambda a:colnmys[b].remove(a), by_col), range(ny))
+
+	byx = []
+	byxdic = {}
+	def readFile(fn, idx, byx, byxdic, rmidx=False):
+		fp = open(fn)
+		head = fp.readline() # skip the column name row
+		ncol = len(head.split(sep))
+		if rmidx:
+			xdi = sorted(idx, reverse=True)
+		for line in fp:
+			v = line.replace('\n','').replace('\r','').split(sep)
+			lv = len(v)
+			if lv < ncol:
+				v.extend([''] * (v-lv))
+			elif lv > ncol:
+				raise
+			k = tuple(map(lambda a:v[a], idx))
+			#k = ''.join(map(lambda a:v[a], idx))
+			if rmidx:
+				map(lambda a:v.pop(a), xdi)
+			byx.append(k)
+			#byxdic[k] = v
+			byxdic.setdefault(k, []).append(v) # now for each key, there is a list of rows
+	try:
+		readFile(fsrcs[0], idx, byx, byxdic)
+	except:
+		print 'The first file is NOT a valid table-like file!'
+		byx = None
+	if not byx: return
+	blankx = [''] * len(byxdic[byx[0]][0])
+
+	for i in range(ny):
+		fn = fsrcs[i+1]
+		idy = idys[i]
+		byy = []
+		byydic = {}
+		try:
+			readFile(fn, idy, byy, byydic, rmidx=True)
+		except:
+			byy = None
+		if not byy: 
+			print 'Error in the %d file, skipped it.' % (i+1+1)
+			continue # skip this file
+		colnmx.extend(colnmys[i])
+		lnx = len(byxdic[byx[0]][0])
+		lny = len(byydic[byy[0]][0])
+		blanky = [''] * lny
+		# find common and differne rows
+		sx = set(byx)
+		sy = set(byy)
+		# remove replicates in byy, byy may contain replicates !!!
+		if False:
+			byy1 = byy
+			byy = []
+			sy = set()
+			for b in byy1:
+				if b not in sy:
+					sy.add(b)
+					byy.append(b)
+
+		rowxy = sx.intersection(sy)
+		rowx = sx - rowxy # sy
+		rowy = sy - rowxy # sx
+		# merge common rows
+		if False: # both are OK - now this is not ok since multi-multi match are allowed in else
+			for r in rowxy: 
+				byxdic[r].extend(byydic[r]) 
+				#byy.remove(r) # use byy instead of rowy to keep the original order of probes. # very very time costing for huge data sets over here !!!
+				del byydic[r] 
+			for r in rowx: # extend x-unique rows
+				byxdic[r].extend(blanky)
+		else: # both are OK
+			for v in byxdic.values():
+				map(lambda a,b=blanky:a.extend(b), v) # extend with blank first
+			for r in rowxy:
+				vx, vy = byxdic[r], byydic[r]
+				lvx, lvy = len(vx), len(vy)
+				if lvy > 1: # use Cartesian product
+					if right_reps == 'product':
+						for iy in range(lvy-1):
+							for ix in range(lvx):
+								vx.append(vx[ix][:])
+					elif right_reps == 'first':
+						lvy, vy = 1, vy[:1]
+					elif right_reps == 'last':
+						lvy, vy = 1, vy[-1:]
+					else: # right_reps == 'order'
+						pass
+				for ix in range(len(vx)):
+					vx[ix][lnx:] = vy[ix%lvy]
+				#byy.remove(r)
+				del byydic[r]
+
+		if keep_rows == 'left': 
+			continue
+
+		# remove shared keys in byy, the following codes are used to replace byy.remove(r)
+		if True: # both are much faster than byy.remove(r)
+			for r in range(len(byy)-1, -1, -1): 
+				if byy[r] in rowxy: byy.pop(r)
+		else: # both are much faster than byy.remove(r)
+			byy_dic = dict(zip(byy, range(len(byy))))
+			byy = map(lambda a,b=byy_dic:(byy_dic[a], a), rowy)
+			byy.sort()
+			byy = map(lambda a:a[1], byy)
+
+		# extend y-unique rows
+		r_dic = {}
+		for r in byy: #rowy:
+			if r in r_dic:
+				continue
+			r_dic[r] = True
+			for vy in byydic[r]:
+				vy[:0] = blankx 
+				# set key values
+				map(lambda a:vy.__setitem__(idx[a], r[a]), seqidx)
+
+		# add y-unique rows to x
+		byxdic.update(byydic)
+		byx.extend(byy)
+		blankx.extend(blanky) # = [''] * len(byxdic[byx[0]])
+	# save result
+	if sort_rlt: byx.sort()
+	if fobj:
+		fp = open(fobj, 'w')
+	else:
+		fp = sys.stdout
+	fp.write('\t'.join(colnmx) + '\n')
+	r_dic = {}
+	#r_last = None
+	for r in byx:
+		if r in r_dic: #r == r_last:
+			continue
+		r_dic[r] = True #r_last = r
+		for ar in byxdic[r]:
+			fp.write('\t'.join(ar) + '\n')
+	if fobj:
+		fp.close()
+	t2 = time.time(); 
+	#print 'Total time is %fs, %fm' % ( t2-t0, (t2-t0)/60 ); t1 = t2
+
+mergeFiles = mergeFilesByR
+mergeFiles = mergeFilesByPython
+
+def exitUsage():
+	print __doc__
+	sys.exit(0)
+
+def selColsMain(sep='\t'):
+	optlist, args = getopt(sys.argv[1:], 'ho:', ['help', 'by-col=', 'output-file=', 'keep-rows=', 'right-reps=', 'sort'])
+	optdict = dictreps(optlist)
+	#input_file = optdict.get('-i', optdict.get('--input-file', args and args.pop(0) or ''))
+	by_col = optdict.get('--by-col', None)
+	sort_rlt = '--sort' in optdict
+	if not args or len(args)<2 or '-h' in optdict or '--help' in optdict: exitUsage()
+	keep_rows = optdict.get('--keep-rows', 'all')
+	right_reps = optdict.get('--right-reps', 'product')
+	
+	output_file = optdict.get('-o', optdict.get('--output-file', None))
+	if output_file: fobj = output_file
+	else: 
+		fobj = None
+		#fobj = os.tempnam()
+		#ftmp = open(fobj, 'w')
+		#ftmp.close()
+		#os.chmod(fobj, 0664)
+		#ftmp = open(fntmp)
+
+	mergeFiles(fobj, args, by_col=by_col, sort_rlt=sort_rlt, keep_rows=keep_rows, right_reps=right_reps, sep=sep)
+	#if not output_file: 
+	#	map(lambda a:sys.stdout.write(a), ftmp)
+	#	ftmp.close()
+	#	os.unlink(fobj)
+
+
+if __name__ == '__main__': 
+	selColsMain()

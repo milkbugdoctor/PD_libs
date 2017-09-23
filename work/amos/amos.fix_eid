@@ -1,0 +1,16 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 infile.afg > out.afg\n\n";
+
+while (<>) {
+    if (/^iid:(\d+)/) {
+	$iid = $1;
+	print;
+    }
+    elsif (/^eid:/) {
+	print "eid:$iid\n";
+    }
+    else {
+	print;
+    }
+}

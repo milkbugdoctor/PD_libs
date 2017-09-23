@@ -1,0 +1,85 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 infile.txt ...
+
+    Creates quals.txt and histo.txt
+
+";
+
+use Cols;
+my %histo_hash;
+my %histo_max;
+for my $infile (@ARGV) {
+    warn "doing $infile\n";
+    my $cols = Cols::new($infile);
+    while (my $row = $cols->get_row()) {
+	my $len = $row->{len};
+	my $base = $row->{base};
+	my $quals = $row->{quals};
+	$quals =~ s/ +$//;
+	my $histo = $row->{histo};
+	my @histo = split /\s+/, $histo;
+	my %histo;
+	for my $h (@histo) {
+	    my ($sig, $num) = split /:/, $h;
+	    $histo{$sig} = $num;
+	}
+	for my $sig (sort { $a <=> $b } keys %histo) {
+	    my $num = $histo{$sig};
+
+	    my $key = ($base eq 'N') ? "$len.N" : $len;
+	    $histo_hash{$sig}{$key} += $num;
+	    my $sum = $histo_hash{$sig}{$key};
+	    $histo_max{$key} = max($histo_max{$key}, $sum) + 0;
+	    $histo_max{$key} .= " $sig\n";
+
+	    $key = ($base eq 'N') ? "$len.$quals.N" : "$len.$quals";
+	    $sum{$key} += $sig;
+	    $num{$key}++;
+	    if (!defined $min{"$key"}) {
+		$min{"$key"} = $sig;
+		$max{"$key"} = $sig;
+	    }
+	    else {
+		$min{"$key"} = min($min{"$key"}, $sig);
+		$max{"$key"} = max($max{"$key"}, $sig);
+	    }
+	}
+    }
+}
+
+open(FILE, ">quals.txt") || die "can't create file [quals.txt]";
+my @columns = sort {
+    my @a = split /\./, $a;
+    my @b = split /\./, $b;
+    return $a[0] <=> $b[0] || $a[1] cmp $b[1];
+} keys %sum;
+print FILE join("\t", "mean", "mid", "min", "max", "num", "len", "quals", "N") . "\n";
+for my $c (@columns) {
+    my ($len, $quals, $base) = split /\./, $c;
+    printf FILE "%.4f\t%f\t%f\t%f\t%d\t%s\t%s\t%s\n", $sum{$c} / $num{$c}, ($min{$c} + $max{$c})/2, $min{$c}, $max{$c}, $num{$c}, $len, $quals, $base;
+}
+
+
+open(FILE, ">histo.txt") || die "can't create file [histo.txt]";
+my @columns = sort {
+    my @a = split /\./, $a;
+    my @b = split /\./, $b;
+    return $a[0] <=> $b[0] || $a[1] cmp $b[1];
+} keys %histo_max;
+
+print FILE join("\t", "X", @columns) . "\n";
+for my $sig (sort { $a <=> $b } keys %histo_hash) {
+    my $tmp = $histo_hash{$sig};
+    my @row;
+    for my $c (@columns) {
+	if ($tmp->{$c} ne '') {
+	    push(@row, sprintf("%.5f", $tmp->{$c} / $histo_max{$c}));
+	}
+	else {
+	    push(@row, '');
+	}
+    }
+    print FILE join("\t", $sig, @row) . "\n";
+}
+

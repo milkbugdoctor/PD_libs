@@ -1,0 +1,52 @@
+#!/bin/bash
+
+def_min_cover=20
+def_min_ident=60
+def_min_qlen=20
+
+min_cover=$def_min_cover
+min_ident=$def_min_ident
+min_qlen=$def_min_qlen
+
+while getopts i:q:v: foo ; do
+    if [ "$foo" = 'v' ]; then
+        min_cover="$OPTARG"
+    fi
+    if [ "$foo" = 'i' ]; then
+        min_ident="$OPTARG"
+    fi
+    if [ "$foo" = 'q' ]; then
+        min_qlen="$OPTARG"
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -ne 4 ]; then
+    echo -e "\nUsage: $0 [options] ref.fa query.fa wordsize breaksize > result.alignments.txt
+
+    Get nucmer alignments.  Does NOT run delta-filter to get best alignments.
+    Uses delta.list to output results.
+
+    Options:
+        -i percent      minimum identity percent (default $def_min_ident)
+        -v percent      minimum coverage percent (default $def_min_cover)
+        -q len          minimum query bases used (qlen) (default $def_min_qlen)
+"
+    exit 1
+fi
+
+ref="$1" ; shift
+query="$1" ; shift
+wordsize="$1" ; shift
+breaksize="$1" ; shift
+
+tmp=/tmp/nucmer.$$
+if ! nucmer -p $tmp -b $breaksize -c $wordsize -l $wordsize --maxmatch --nosimplify "$ref" "$query" 2> $tmp.err; then
+    cat $tmp.err 1>&2
+    exit 1
+fi
+
+delta.list -x -a -i $min_ident -v $min_cover $tmp.delta | cols.select "{qlen} >= $min_qlen" || exit
+rm -f $tmp.delta $tmp.err
+exit 0
+

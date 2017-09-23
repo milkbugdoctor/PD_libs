@@ -1,0 +1,29 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ $# -ne 3 ]; then
+    echo -e "\nUsage: $0 prefix ref.fa query.fa
+"
+    exit 1
+fi
+
+prefix="$1" ; shift
+ref_fa="$1" ; shift
+query_fa="$1" ; shift
+
+i=$ref_fa
+ref_base=`basename $i .fa`
+j=$query_fa
+query_base=`basename $j .fa`
+delta=$prefix.deltas/$ref_base.$query_base.delta
+
+if need $i $j $delta; then
+    run "nucmer -p $prefix.deltas/$ref_base.$query_base $i $j"
+fi
+if need $delta $delta.1; then
+    run "delta-filter -1 $delta > $delta.1"
+fi
+if need $delta.1 $delta.1.aligns; then
+    run "delta.list -ac $delta.1 > $delta.1.aligns"
+fi

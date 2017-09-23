@@ -1,0 +1,28 @@
+#!/usr/bin/perl
+#use warnings;
+print "USAGE: swap_names.pl <input_file> <key_file> <output_file> \n Key file is a tab delimilited file where the first column has the text to be changed and the second column has the text that to be changed with\n";
+open (key, "$ARGV[1]")|| die "No key specified";
+@key=<key>;
+grep(s/\s+$//, @key);
+
+open (input, "$ARGV[0]")|| die "No input file specified\n";
+open (output, ">$ARGV[2]")|| die "No output file specified";
+
+%keys;
+foreach $key(@key){
+                   @string=split(/\t/,$key);
+				   $keys{$string[0]}=$string[1];
+				   }
+while(<input>)  {
+		$a=$_;
+		foreach $key(@key)
+				{
+                		@names=split(/\t/,$key);
+                                grep (s/$names[0]\b/$names[1]/, $a);
+
+                                }
+                print output "$a";
+                }
+
+
+

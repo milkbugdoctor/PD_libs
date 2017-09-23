@@ -1,0 +1,58 @@
+#!/bin/bash
+
+. subs.sh
+
+desc_file=nt/nt.txt
+
+while getopts t: foo ; do
+    if [ "$foo" = 't' ]; then
+        desc_file="$OPTARG"
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -lt 2 ]; then
+    echo -e "\nUsage: $0 [options] input.fa output-prefix [blat options]
+
+    Creates data/output-prefix.*
+
+    Options:
+	-t desc.txt	file containing id and desc from every FASTA header
+                        (nt/nt.txt by default)
+"
+    exit 1
+fi
+
+input="$1" ; shift
+key="$1" ; shift
+
+mkdir -p data
+ln -sf ~/work/chr/nt nt
+
+if need $input data/$key.blat; then
+    run "time -p do_fast.blat $input '-out=pslx $*' nt/*.2bit > data/$key.blat"
+fi
+if need data/$key.blat data/$key.blat.align.bs80; then
+    run "psl2align -b -g 100 data/$key.blat | cols.select '{best_score} >= 80' > data/$key.blat.align.bs80"
+fi
+if need data/$key.blat data/$key.blat.align; then
+    run "psl2align -b -g 100 data/$key.blat > data/$key.blat.align"
+fi
+if need data/$key.blat.align data/$key.blat.align.txt; then
+    run "join_files -add desc data/$key.blat.align $desc_file tname/id > data/$key.blat.align.txt"
+fi
+if need data/$key.blat.align.txt data/$key.best_nr.short.txt; then
+    run "cols.select '{qlen} < 1000' < data/$key.blat.align.txt \
+	| sort_file tname | get_best_hit tname matches | sort_file matches/nr \
+	| ncols qname tname ident matches qlen desc > data/$key.best_nr.short.txt"
+fi
+if need data/$key.blat.align.txt data/$key.best_nr.long.txt; then
+    run "cols.select '{qlen} >= 1000' < data/$key.blat.align.txt \
+	| sort_file tname | get_best_hit tname matches | sort_file matches/nr \
+	| ncols qname tname ident matches qlen desc > data/$key.best_nr.long.txt"
+fi
+if need data/$key.blat.align.txt data/$key.best_query.txt; then
+    run "cat data/$key.blat.align.txt \
+	| sort_file qname best_score/nr \
+	| ncols qname tname ident matches qlen qsize cover desc > data/$key.best_query.txt"
+fi

@@ -1,0 +1,47 @@
+#!/bin/bash
+
+if [ $# -ne 3 ]; then
+	echo -e "\nUsage: $0 hostname assigned-chr chr-file\n"
+	exit 1
+fi
+
+. $blat2_work/blat2_info.sh
+
+cd $blat2_work
+mkdir -p $blat2_work/data
+
+export PERLLIB=${blat2_work}:~/bin/perl/lib
+
+host=$1
+shift
+chr=$1
+shift
+chrfile=$1
+shift
+
+if ! type blat_server &> /dev/null; then
+    echo blat_server program not found
+fi
+if ! type server &> /dev/null; then
+    echo server program not found
+fi
+blat_server=`type -p blat_server`
+
+echo -n "querying server on $host... "
+check_status $chr
+status=$?
+if [ $status -lt 2 ]; then
+    exit 0
+fi
+
+blat2_port=`blat2_get_port`
+
+echo starting server on $host port $blat2_port for chr $chr
+
+cat <<FOO | rsh $host bash
+    cd $blat2_work
+    . ./bashrc
+    nohup $blat_server $blat2_port &> $blat2_work/data/server.$chr.$host.status &
+    blat2_set_server $chr $host $blat2_port \$! "$chrfile"
+FOO
+exit 0

@@ -1,0 +1,199 @@
+#!/usr/bin/env python
+
+'''
+The purpose is to map specified columns to a new column by a user-specified function
+
+Author: 
+	Dr. Xiao-Qin Xia
+License: 
+	GNU GPL
+
+Usage:
+	python mapColsByFun.py  [options]  parameters
+
+Options:
+	-h, --help:	Display this message, then exit
+	-i, --input:	Input file. If not provided, pop the first value in {parameters}, or STDIN
+	-o, --output:	Output file. If not provided, pop the first value in {parameters}, or STDOUT
+	-c:	Columns used for mapping. 
+	-t:	Titles (column names) for result columns. The number of titles should be consistent with the output from the function (see -f). If -t is not specified, it will be assigned as "map_rlt".
+	-f:	function string, with x[0], x[1], ... as the value in the cells of specified columns in the table. E.g., 'sum(map(int, " /// ".split(x[0])))'
+	-e: some python codes to be exec before making the lambda function from -f. Typically this can be used to import some functions from other packages. 
+	-s: separator string. Default is '\t'.
+	--append, --insert, --src-only:	"--append" for appending result column(s) to the end of the source data table.
+			"--insert" for insert result column(s) to the beginning of the source data table.
+			"--src-only" only output columns in the source data table.
+			only output result from the mapping funciton by default.
+	--by-index:	columns ("-c") are indices (1, 2, ...) instead of column names.
+	--version:	Print version information
+
+parameters:
+	Input file, Output file:	If these augments are not provided in Options.
+'''
+
+import os, sys
+try:
+	from basetools import exitMsg, TableFile
+except:
+	def TableFile(fp, sep='\t', fix_len=False): # for read only
+		'''fix_len:	make all rows has the same number of fields as the first row'''
+		fp = isinstance(fp, str) and open(fp) or fp
+		ln = None
+		for line in fp:
+			line = line.replace('\n', '').replace('\r', '').split(sep)
+			if fix_len:
+				ln1 = len(line)
+				if ln is None:
+					ln = ln1
+				elif ln1 != ln:
+					if ln1 > ln:
+						line = line[:ln]
+					else:
+						line.extend(['']*(ln-ln1))
+			yield line
+
+	def exitMsg(s=None, out=sys.stdout):
+		#print __doc__
+		if s:
+			f = isinstance(out, str) and open(out, 'w') or out
+			if isinstance(s, str):
+				f.write(s) #print >> f, s
+			else:
+				#print '\n'.join(s)
+				#for row in s:
+				#	print >> f, row
+				f.write('\n'.join(s))
+		sys.exit(0)
+
+__version__ = '0.0.1'
+
+def mapMain(fsrc, fobj, cols, fun, titles, append=False, insert=False, src_only=False, rlt_only=True, by_index=False, sep='\t'):
+	if titles:
+		if not isinstance(titles, (tuple, list)):
+			titles = [titles]
+	else: #if not src_only:
+		titles = ['map_rlt']
+	fsrc = TableFile(fsrc, sep=sep)
+	head_src = fsrc.next()
+	head_obj = append and head_src + titles or (insert and titles + head_src) or (src_only and head_src) or titles
+	multicols = len(titles) > 1
+	try:
+		fun = eval('lambda x:' + fun)
+		fail = False
+	except:
+		fail = True
+	if fail: exitMsg('Error - error in the function provided: %s\n' % fun, out=sys.stderr)
+	try:
+		i_cols = by_index and map(lambda a:int(a)-1, cols) or map(head_src.index, cols)
+		fail = False
+	except:
+		fail = True
+	if fail: exitMsg('Error - some specified columns not found in the source data:\n\tprovided: %s\n\tfound: %s\n\taborted!\n' % (str(cols), str(head_src)), out=sys.stderr)
+	fobj = isinstance(fobj, str) and open(fobj, 'w') or fobj
+	fobj.write(sep.join(head_obj)+ '\n')
+	for line in fsrc:
+		x = i_cols and map(line.__getitem__, i_cols) or line
+		v = fun(x)
+		if i_cols and not rlt_only: # write back the changed x to line
+			map(lambda a:line.__setitem__(a[0], a[1]), zip(i_cols, x))
+		if not src_only:
+			if multicols:
+				if not isinstance(v, (list, tuple)) or len(v) != len(titles):
+					exitMsg('Error - the number of results does not match the number of titles!\n')
+				#v = sep.join(map(str, v))
+				v = map(str, v)
+				if append: line.extend(v)
+				elif insert: line = v.extend(line)
+				else: line = v
+			else:
+				v = str(v)
+				if append: line.append(v)
+				elif insert: line.insert(0, v)
+				else: line = [v]
+		fobj.write(sep.join(line) + '\n')
+
+if __name__ == '__main__':
+	from getopt import getopt
+	optlst, args = getopt(sys.argv[1:], 'hi:o:c:t:f:s:e:', ['help', 'version', 'input=', 'output=', 'append', 'insert', 'src-only', 'by-index'])
+	repopts = ['-c', '-t']
+	err = []
+	if not repopts:
+		optdic = dict(optlst)
+	else:
+		try:
+			from newdicts import RepDict
+		except:
+			def RepDict(optlist):
+				'''Convert a list of tuples into a dict, values for replicated keys are kept in a list.'''
+				rlt = {}
+				for k, v in optlist:
+					if k not in rlt:
+						rlt[k] = v
+						continue
+					vv = rlt[k]
+					if isinstance(vv, list):
+						vv.append(v)
+						continue
+					rlt[k] = [vv, v]
+				return rlt
+		optdic = RepDict(optlst)
+		for k, v in optdic.items():
+			if isinstance(v, list) and k not in repopts:
+				err.append('Error: "%s" should be unique, but was provided for %d times' % (k, len(v)))
+		# change repopts into list
+		for k in repopts:
+			if k in optdic and not isinstance(optdic[k], list):
+				optdic[k] = [optdic[k]]
+		#except:
+		#	sys.stderr.write('Warning: the "newdict" module cannot be found! Then only the last value for multiple options ("%s") will be used!' % '", "'.join(repopts))
+		#	optdic = dict(optlst)
+
+	# print help information
+	if '-h' in optdic or '--help' in optdic:
+		exitMsg(__doc__)
+	if '--version' in optdic:
+		exitMsg(__file__ + ': ' + __version__)
+
+	try:
+		fsrc = optdic.get('-i', optdic.get('--input', None)) or args.pop(0)
+	except: fsrc = sys.stdin
+	try:
+		fobj = optdic.get('-o', optdic.get('--output', None)) or args.pop(0)
+	except: fobj = sys.stdout
+
+	cols = optdic.get('-c', [])
+	#if not cols: err.append('Error - No columns specified!')
+	codes = optdic.get('-e', None)
+	if isinstance(cols, str): cols = [cols]
+	fun = optdic.get('-f', None)
+	if not fun: err.append('Error - No function string provided!')
+	sep = optdic.get('-s', '\t')
+	titles = optdic.get('-t', None)
+	#if titles is None and cols:
+	#	titles = ['_'.join(['rlt'] + cols)]
+	append =  '--append' in optdic
+	insert = '--insert' in optdic
+	src_only = '--src-only' in optdic
+	by_index = '--by-index' in optdic
+	rlt_only = append + insert + src_only
+	if rlt_only > 1:
+		err.append('Error - more than one of the exclusive parameters ("append", "insert" and "src-only") used!')
+	rlt_only = not rlt_only
+
+	if args:
+		err.append('Error - unrecognized parameters:\n\t%s' % ', '.join(args))
+	# quit on error
+	if err:
+		err.append('\n\nPlease type "%s -h " for help.\n' % sys.argv[0])
+		exitMsg(err, out=sys.stderr)
+	
+	if codes:
+		try: 
+			exec codes
+			fail = False
+		except: fail = True
+		if fail: exitMsg('Error - error in codes provided: %s\n' % fun, out=sys.stderr)
+
+	# start job
+	mapMain(fsrc, fobj, cols, fun, titles, append=append, insert=insert, src_only=src_only, rlt_only=rlt_only, by_index=by_index, sep=sep)
+	

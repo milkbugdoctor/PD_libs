@@ -1,0 +1,52 @@
+#!/usr/bin/perl
+
+if ($ARGV[0] =~ /^-h/) {
+	$use_header = shift;
+}
+@ARGV >= 2 || die "\n\nUsage: $0 [-h] output-dir fasta-files
+
+	-h		use header for filenames
+
+";
+
+my $dir = shift;
+
+system "mkdir -p $dir";
+
+for $file (@ARGV) {
+    print "$file\n";
+    if ($file =~ /\.gz$/) {
+        open(FOO, "gunzip -c $file |") || die "open $file";
+    }
+    else {
+        open(FOO, "$file") || die "open $file";
+    }
+    $file =~ s/\.[^.]*?$//;    # remove extension
+    $file =~ s/.*\///;    # remove directory
+    $header = '';
+    $filename = "$dir/$file.txt";
+    while (<FOO>) {
+        if (/^>(.*)/) {
+            if ($header and ! $use_header) {
+                close GOO;
+                unlink $filename;
+                warn "Found another fasta header in $file!\n";
+                last;
+            }
+            $header = $1;
+	    if ($use_header) {
+		/^>(\S+)/;
+		$filename = "$dir/$1.txt";
+	    }
+	    open(GOO, ">$filename") || die "write";
+        }
+        else {
+	    s/\s//g;
+	    s/\d//g;
+	    print GOO $_;
+        }
+    }
+    close(FOO);
+    close(GOO);
+}
+

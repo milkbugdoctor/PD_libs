@@ -1,0 +1,24 @@
+#!/usr/bin/perl
+
+use Cols;
+
+@ARGV || die "\nUsage: $0 num-lines infile > outfile\n\n";
+
+my $num_lines = shift;
+my $infile = shift;
+
+my $cols = Cols::new($infile);
+$cols->print_header(STDOUT);
+while (my $row = $cols->get_row()) {
+    push(@lines, $row);
+}
+
+my $total_lines = @lines;
+while ($num_lines > 0) {
+    my $num = int(rand($total_lines));
+    next if $done{$num};
+    $done{$num} = 1;
+    my $row = $lines[$num];
+    $cols->print_row(STDOUT, $row);
+    $num_lines--;
+}

@@ -1,0 +1,22 @@
+#!/usr/bin/perl
+
+my $row = -1;
+my $max_col = -1;
+while (<>) {
+	$row++;
+	s/[\n\r]*$//;
+	my @line = split /\t/;
+	for (my $c = 0; $c <= $#line; $c++) {
+		$matrix[$row][$c] = $line[$c];
+		$max_col = $c if $c > $max_col;
+	}
+}
+
+for (my $c = 0; $c <= $max_col; $c++) {
+    my @new_row;
+    for (my $r = 0; $r <= $row; $r++) {
+	push(@new_row, $matrix[$r][$c]);
+    }
+    print join("\t", @new_row), "\n";
+}
+

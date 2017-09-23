@@ -1,0 +1,8 @@
+#!/bin/bash
+
+if [ ! "$1" ]; then
+    echo -e "\nUsage: $0 fasta-file > sorted-fasta-file\n"
+    exit 1
+fi
+
+fasta2tabbed key seq "$1" | cols.sort key | tabbed2fasta key seq -

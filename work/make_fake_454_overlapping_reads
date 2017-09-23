@@ -1,0 +1,62 @@
+#!/usr/bin/perl
+
+require 'fasta.pl';
+
+@ARGV == 5 || die "\nUsage: $0 genome.txt 454-reads.fa 454-reads.qual overlap prefix
+
+    Make fake reads with same length and quality as original reads,
+    but get sequence from genome.txt.
+
+";
+
+my $genome_file = shift;
+my $fa_file = shift;
+my $qual_file = shift;
+my $overlap = shift;
+my $prefix = shift;
+
+my $genome = join('', `cat $genome_file`);
+
+my $genome_len = length($genome);
+
+$genome .= $genome;	# for boundary reads
+
+my $count = 0;
+open(FA, $fa_file) or die "$fa_file: $!";
+while ((my ($header, $seq) = read_fasta(FA)) == 2) {
+    $id[$count] = $header;
+    $seq[$count] = $seq;
+    $count++;
+    printf STDERR "%d\n", $count if $count % 10000 == 0;
+}
+my $count = 0;
+open(QUAL, $qual_file) or die "$qual_file: $!";
+while ((my ($qheader, $qual) = read_fasta(QUAL, 1)) == 2) {
+    die "huh?" if $id[$count] ne $qheader;
+    $qual[$count] = $qual;
+    $count++;
+    printf STDERR "%d\n", $count if $count % 10000 == 0;
+}
+
+open(FA_OUT, ">$prefix.fa") or die "can't create $prefix.fa";
+open(QUAL_OUT, ">$prefix.fa.qual") or die "can't create $prefix.fa.qual";
+open(TXT, ">$prefix.txt") or die "can't create $prefix.txt";
+print TXT join("\t", 'orig_id', 'new_id', 'start', 'len', 'seq', 'qual'), "\n";
+my $pos = 0;
+for my $i (0 .. $count - 1) {
+    my ($header, $seq, $qual) = ($id[$i], $seq[$i], $qual[$i]);
+    $header =~ s/^>//;
+    my $len = length($seq);
+    my $seq = substr($genome, $pos, $len);
+    my $j = $i + 1;
+    my $pos1 = $pos + 1;
+    my $new_id = "$j.$pos1.$len";
+    print TXT join("\t", $header, $new_id, $pos, $len, $seq, $qual), "\n";
+    print FA_OUT ">$new_id\n";
+    print_wrapped(FA_OUT, $seq);
+    print QUAL_OUT ">$new_id\n";
+    print_wrapped(QUAL_OUT, $qual);
+    $count++;
+    printf STDERR "%d\n", $count if $count % 10000 == 0;
+    $pos = ($pos + $len - $overlap) % $genome_len;
+}

@@ -1,0 +1,26 @@
+#!/usr/bin/perl
+
+use AMOS;
+
+@ARGV == 2 || die "\nUsage: $0 infile.ctg bank-directory > new.ctg
+
+    Converts read names in the CTG file to IIDs.
+
+";
+
+my $ctg_file = shift;
+my $bank_dir = shift;
+
+open(CTG, $ctg_file) || die "can't open CTG file [$ctg_file]";
+
+my $hash = AMOS::get_read_map($bank_dir);
+
+while (<CTG>) {
+    if (/src:(\S+)/) {
+	my $iid = $hash->{$1};
+	die "iid not found for $_" if $iid eq '';
+	s/src:(\S+)/src:$iid/;
+    }
+    print;
+}
+

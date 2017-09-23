@@ -1,0 +1,54 @@
+#!/usr/bin/perl
+
+use Cols;
+require 'misc.pl';
+
+(@ARGV == 5) || die "\nUsage: $0 key best-file all-file unique-outfile xref-outfile
+
+    Creates <unique-outfile> and <xref-outfile>.
+
+    <unique-outfile>:
+	Build hash of unique probe sequences in <best-file> and give each a name based on <key>.
+
+    <xref-outfile>:
+	Read lines in <all-file> and outputs any that are in hash.
+	Basically we are building a cross-reference, assuming that
+	<all-file> contains all the possible matches for each probe
+	sequence, which is not really true.  Probably we should use BLAT
+	to map the probes instead.
+
+";
+
+my ($key, $bestfile, $allfile, $uniquefile, $dupsfile) = @ARGV;
+
+open(UNIQUE, ">$uniquefile") || die "can't write $uniquefile";
+print_tabbed(UNIQUE, "probe_seq probe_seq_id\n");
+open(DUPS, ">$dupsfile") || die "can't write $dupsfile";
+
+open(BEST, "sort_file probe_seq < $bestfile |") || die "ack: $!";
+my $best = Cols::new(BEST);
+my $uniq_id = 1;
+while (my $row = $best->get_row()) {
+    my $seq = uc($row->{probe_seq});
+    if ($hash{$seq} eq '') {
+	my $probe_name = sprintf "${key}_%06d", $uniq_id;
+	print_tabbed(UNIQUE, "$seq $probe_name\n");
+	$hash{$seq} = $uniq_id++;
+    }
+}
+close UNIQUE;
+
+my $all = Cols::new($allfile);
+$all->add_col_before('probe_seq_id');
+$all->print_header(DUPS);
+while (my $row = $all->get_row()) {
+    my $seq = uc($row->{probe_seq});
+    my $uniq_id = $hash{$seq};
+    if ($uniq_id ne '') {
+	my $probe_name = sprintf "${key}_%06d", $uniq_id;
+	$row->{probe_seq_id} = $probe_name;
+	$all->print_row(DUPS, $row);
+    }
+}
+close DUPS;
+

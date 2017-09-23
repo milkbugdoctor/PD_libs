@@ -1,0 +1,10 @@
+#!/usr/bin/perl
+
+require 'NimbleGen.pl';
+
+while (<>) {
+	chomp;
+	my ($seq) = split /\t+/;
+	my $c = NimbleGen::get_cycles($seq);
+	print "$seq\t$c\n";
+}

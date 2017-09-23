@@ -1,0 +1,42 @@
+#!/usr/local/bin/perl
+
+require 'blat.pl';
+
+my @std_options = split /\s+/, $std_options;
+
+while (@ARGV) {
+    my $arg = shift;
+    if ($arg =~ /^-std/) {
+	unshift(@options, @std_options);
+    }
+    elsif ($arg eq '-c') {
+	@chr = split /\s+/, shift;
+    }
+    elsif ($arg =~ /^-d$/) {
+	$debug = 1;
+    }
+    elsif ($arg =~ /^-/) {
+	push(@options, $arg);
+    }
+    else {
+	push(@args, $arg);
+    }
+}
+
+(@args == 2) || die "\nUsage: $0 query.fa match [options]
+
+	match	    minimum bp-match or percent-match, e.g.: 20, 20c, 60%, 60%c
+
+    Options:
+	-c chr      use only this chromosome
+	-std        use faster options: $std_options
+	blat-options
+
+";
+
+require 'blat3.pl';
+
+my ($filename, $match) = @args;
+
+blat_fasta_query($filename, "@options", $match, 1, @chr);
+

@@ -1,0 +1,53 @@
+#!/usr/bin/perl
+
+#
+# get amplified sequence with extra padding around it
+#
+
+(@ARGV == 5) || die "\nUsage: $0 primer-col-1 primer-col-2 padding primer-file amp-seq-outfile\n\n";
+
+my ($col1, $col2, $padding, $infile, $outfile) = @ARGV;
+
+open(FOO, $infile) || die "huh?";
+open(AMP, ">$outfile") || die "huh?";
+
+require 'new_amps.pl';
+require 'columns.pl';
+require 'misc.pl';
+
+$" = "\t";
+
+my @header = get_header(*FOO);
+print AMP "# amp_start      - leftmost position of the amplicon\n";
+print AMP "# amp_end        - rightmost position of the amplicon\n";
+print AMP "# amp_left_pad   - top-strand sequence preceeding amplicon\n";
+print AMP "# amp_right_pad  - top-strand sequence succeeding amplicon\n";
+print AMP "@header\tamp_id\tamp_chr\tamp_start\tamp_end\tamp_len";
+print AMP "\tamp_left_pad\tamp_seq\tamp_right_pad\n";
+my $amp_id = 0;
+while (my @line = get_row(*FOO)) {
+    my ($forward_primer, $rev_primer) = get_cols(\@header, \@line, $col1, $col2);
+    next if $forward_primer eq "";
+    next if $rev_primer eq "";
+    local *foo;
+printf STDERR "getting amps %d for $forward_primer $rev_primer\n", ++$nnn;
+    get_amps(*foo, 0, 1500, 1, 0, $forward_primer, $rev_primer);
+printf STDERR "got %d amps\n", scalar @foo;
+    for my $amp (@foo) {
+	chomp($amp);
+	my ($chr, $start, $len, @primers) = split /\s/, $amp;
+	my $left_pad_start = max(1, $start - $padding);
+	my $left_pad_len = $start - $left_pad_start;
+	my $right_pad_start = $start + $len;
+	my $left_seq = get_seq($chr, $left_pad_start, $left_pad_len);
+	my $seq = get_seq($chr, $start, $len);
+	my $right_seq = get_seq($chr, $right_pad_start, $padding);
+	my $end = $start + $len - 1;
+printf STDERR "$left_pad_start / $start / $right_pad_start\n";
+	print AMP join("\t", @line, $amp_id, $chr, $start, $end, $len,
+	    $left_seq, $seq, $right_seq), "\n";
+	$amp_id++;
+    }
+print STDERR "processed amps\n";
+}
+close AMP;

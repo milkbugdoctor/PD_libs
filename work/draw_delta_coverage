@@ -1,0 +1,60 @@
+#!/bin/bash
+
+. subs.sh
+
+while getopts g:l:n:r:sv foo ; do
+    if [ "$foo" = 'n' ]; then
+        options="$options -n '$OPTARG'"
+    elif [ "$foo" = 's' ]; then
+        options="$options -s"
+    elif [ "$foo" = 'g' ]; then
+        genome_coverage="$OPTARG"
+    elif [ "$foo" = 'l' ]; then
+        link="-l '$OPTARG'"
+    elif [ "$foo" = 'r' ]; then
+        do_repeats=1
+        repeats_file="$OPTARG"
+    elif [ "$foo" = 'v' ]; then
+        vertical="-v"
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -lt 1 ]; then
+    echo -e "\nUsage: $0 [options] delta-file [prefix]
+
+    Options:
+
+	-g file         read genome/read coverage file
+	-l pat          link fragmented contigs matching pat
+	-n pat          for printable portion of contig name
+	-r repeats      draw repeats if repeats file exists
+	-s              draw longest contigs first
+	-v              print contig names vertically
+"
+    exit 1
+fi
+
+delta="$1" ; shift
+prefix="$1" ; shift
+
+if [ ! "$prefix" ]; then
+    prefix=out
+fi
+
+ref=`head -1 $delta | sed 's/ .*//'` || exit 1
+
+if need "$delta" $prefix.contig-coverage; then
+    run "amos.get_delta_coverage '$delta' contig > $prefix.contig-coverage"
+fi
+
+if [ ! "$genome_coverage" -o ! -s "$genome_coverage" ]; then
+    genome_coverage=/tmp/genome-coverage.$$
+    amos.get_genome_coverage "$ref" > "$genome_coverage"
+fi
+
+if [ "$do_repeats" -a -s "$repeats_file" ]; then
+    repeats="-r '$repeats_file'"
+fi
+
+run "draw_coverage -p $prefix $vertical $options $link $repeats $genome_coverage $prefix.contig-coverage"

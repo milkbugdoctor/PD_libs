@@ -1,0 +1,76 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('fqr');
+
+@ARGV == 2 && ($opt_f || $opt_q) || die "\nUsage: $0 [options] infile.ace out-prefix
+
+    Options:
+
+	-f	create output-prefix.fa
+	-q	create output-prefix.qual
+	-r	output reads instead of contigs
+
+    You must choose -f, -q, or both.
+
+";
+
+my $infile = shift;
+my $prefix = shift;
+
+open(ACE, $infile) or die "can't read file '$infile'";
+open(FASTA, ">$prefix.fa") or die "can't create file '$prefix.fa'" if $opt_f;
+open(PADDED, ">$prefix.padded.fa") or die "can't create file '$prefix.padded.fa'" if $opt_f;
+open(QUAL, ">$prefix.qual") or die "can't create file '$prefix.qual'" if $opt_q;
+while (<ACE>) {
+    chomp;
+    if (!$opt_r && /^CO (\S+)/) {
+	print FASTA ">$1\n" if $opt_f;
+	print PADDED ">$1\n" if $opt_f;
+	print QUAL ">$1\n" if $opt_q;
+	my ($seq_len, $qual_len);
+	while (<ACE>) {
+	    chomp;
+	    last if /^\s*$/;
+	    s/\s//g;
+	    print PADDED "$_\n";
+	    s/\*//g;
+	    $seq_len += length($_);
+	    print FASTA "$_\n";
+	}
+	while (<ACE>) {
+	    chomp;
+	    last if ! /^\s*$/;
+	}
+	my $bq = $_;
+	die "did not find expected BQ line:\n$bq\n" if $bq !~ /^BQ/;
+	my @qual;
+	while (<ACE>) {
+	    chomp;
+	    last if /^\s*$/;
+	    s/^\s+//g;
+	    my @words = split /\s+/;
+	    $qual_len += @words;
+	    push(@qual, @words);
+	    while (@qual >= 17) {
+		my @line = splice(@qual, 0, 17);
+		print QUAL join(" ", @line), "\n";
+	    }
+	}
+	print QUAL (join(" ", @qual), "\n") if @qual;
+	die "$seq_len != $qual_len" if $seq_len != $qual_len;
+    }
+    if ($opt_r) {
+	if ($opt_f && /^RD (\S+) (\d+) (\d+) (\d+)/) {
+	    my ($name, $len, $hmm1, $hmm2) = ($1, $2, $3, $4);
+	    my $seq;
+	    while (<ACE>) {
+		last if /^\s+$/;
+		$seq .= "$_";
+	    }
+	    print PADDED ">$name\n$seq\n";
+	    $seq =~ s/\*//g;
+	    print FASTA ">$name\n$seq\n";
+	}
+    }
+}

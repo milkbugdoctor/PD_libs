@@ -1,0 +1,45 @@
+#!/usr/bin/perl
+
+use Columns;
+require 'fasta.pl';
+require 'primers.pl';
+
+@ARGV || die "\nUsage: $0 infile.fasta blat2.output\n\n";
+
+my $fasta = shift;
+my $blat2 = shift;
+
+my %qname;
+my $best_qname;
+my $c = Columns::new($blat2);
+while (my $row = $c->get_row()) {
+    my ($match, $qname, $tname, $strand) = $c->get_col($row, 'match',
+	'qname', 'tname', 'strand');
+    $qname{$qname}{'hits'}++;
+    $qname{$qname}{'match'} += $match;
+    $qname{$qname}{'strand'}{$tname} = $strand;
+}
+my @qnames = sort cmp_qname keys %qname;
+my $best_qname = $qnames[-1];
+
+open(FASTA, $fasta) or die "$fasta: $!";
+while ((my ($header, $seq) = read_fasta(FASTA)) == 2) {
+    print "$header\n";
+    $header =~ />(\S+)/;
+    my $tname = $1;
+    my $strand = $qname{$best_qname}{'strand'}{$tname};
+warn "strand $best_qname $tname $strand\n";
+    if ($strand eq '-') {
+	warn "reversing $tname\n";
+        print_wrapped(STDOUT, rc($seq));
+    }
+    else {
+        print_wrapped(STDOUT, $seq);
+    }
+}
+
+sub cmp_qname {
+    $qname{$a}{'hits'} <=> $qname{$b}{'hits'} ||
+	$qname{$a}{'match'} <=> $qname{$b}{'match'};
+    
+}

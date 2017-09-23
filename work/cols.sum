@@ -1,0 +1,30 @@
+#!/usr/bin/perl
+
+use Cols;
+use Getopt::Std;
+getopts('b');
+
+(@ARGV == 1) || die "\nUsage: $0 column < input > output
+
+    Output sum for column.
+
+    Options:
+	-b	don't count blank cells
+
+";
+
+my $col = shift;
+
+my $cols = Cols::new(STDIN);
+
+my $total_tm;
+my $num_tm;
+while (my $row = $cols->get_row()) {
+    my $tm = $row->{$col};
+    next if $opt_b && $tm eq '';
+    $total_tm += $tm;
+    $num_tm++;
+}
+printf "%f\n", $total_tm;
+
+exit 0;

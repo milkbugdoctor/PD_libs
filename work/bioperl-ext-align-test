@@ -1,0 +1,18 @@
+#!/usr/bin/env activeperl-5.8
+
+# this is undocumented low-level stuff
+# use Bio::Tools::pSW instead
+
+use Bio::Ext::Align;
+
+my ($seq1, $seq2) = @ARGV;
+
+$matrix = "/usr/local/src/perl/modules/bioperl-ext-1.5.1/Bio/Ext/Align/blosum62.bla";
+&Bio::Ext::Align::change_max_BaseMatrix_kbytes(20000);
+$cm   = &Bio::Ext::Align::CompMat::read_Blast_file_CompMat($matrix);
+$seq1 = &Bio::Ext::Align::new_Sequence_from_strings("one", $seq1);
+$seq2 = &Bio::Ext::Align::new_Sequence_from_strings("two", $seq2);
+
+$alb = &Bio::Ext::Align::Align_Sequences_ProteinSmithWaterman($seq1,$seq2,$cm,-12,-2);
+
+&Bio::Ext::Align::write_pretty_str_align($alb,$seq1->name,$seq1->seq,$seq2->name,$seq2->seq,15,50,STDERR);

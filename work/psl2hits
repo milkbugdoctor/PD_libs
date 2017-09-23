@@ -1,0 +1,81 @@
+#!/usr/bin/perl
+
+use strict;
+use psl;
+
+my $debug = 0;
+
+our ($opt_d, $opt_h, $opt_i, $opt_s);
+use Getopt::Std;
+getopts('dhis');
+
+die "\nUsage: $0 [options] [infile] [< infile]
+
+    Convert psl file blocks to simple alignments.
+
+    This program has been superceded by psl2caf.
+
+    Options:
+	-d	print some useless debugging info
+	-h	print this helpful usage info
+	-i	calculate identity score
+	-s	output sequences
+
+" if $opt_h || (@ARGV == 0 && -t STDIN);
+
+$debug = 1 if $opt_d;
+$| = 1 if $debug;
+
+use Cols;
+require 'sequences.pl';
+
+my $c = new psl *ARGV;
+
+my @header = qw{align_num block_num strand qname qstart qend tname tstart tend len};
+push(@header, 'ident') if $opt_i;
+push(@header, 'qseq', 'tseq') if $opt_s;
+print join("\t", @header), "\n";
+my $align_num = 0;
+while (my $r = $c->get_next_line()) {
+    my $strand = $r->{strand};
+    my $qname = $r->{qname};
+    my $tname = $r->{tname};
+    my @tstarts = split /,/, $r->{tstarts};
+    my @qstarts = split /,/, $r->{qstarts};
+    my @blocks = split /,/, $r->{blocksizes};
+    my @qseqs = split /,/, $r->{qseqs};
+    my @tseqs = split /,/, $r->{tseqs};
+    my $tstart = $r->{tstart};
+    my $tend = $r->{tend};
+    my $qstart = $r->{qstart};
+    my $qend = $r->{qend};
+    my $qlen = $r->{qsize};
+    $align_num++;
+warn "\nt $tstart-$tend q $qstart-$qend blocks @blocks, tstarts @tstarts \n\n" if $debug;
+    for my $i (0 .. $#blocks) {
+	my $tstart = $tstarts[$i] + 1;
+	my $qstart = $qstarts[$i] + 1;
+	my $qend = $qstarts[$i] + $blocks[$i];
+	if ($strand eq '-') {
+	    $qend = $qlen - $qstarts[$i];
+	    $qstart = $qlen - $qstarts[$i] - $blocks[$i] + 1;
+	}
+	my $tend = $tstarts[$i] + $blocks[$i];
+	my $len = $blocks[$i];
+	my @line = ($align_num, $i + 1, $strand, $qname, $qstart, $qend, $tname,
+	    $tstart, $tend, $len);
+	if ($opt_i) {
+	    die "input file must be in pslx format to compute identity score"
+		if $qseqs[$i] eq '' || $tseqs[$i] eq '';
+	    my $m = num_matches($qseqs[$i], $tseqs[$i]);
+	    my $ident = round_to($m/$len * 100, .01);
+	    push(@line, $ident)
+	}
+	if ($opt_s) {
+	    die "input file must be in pslx format to output sequences"
+		if $qseqs[$i] eq '' || $tseqs[$i] eq '';
+	    push(@line, $qseqs[$i], $tseqs[$i]);
+	}
+	print join("\t", @line), "\n";
+    }
+}

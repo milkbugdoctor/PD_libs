@@ -1,0 +1,30 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('r');
+
+@ARGV >= 2 || die "\nUsage: $0 [-r] column infile.txt < matches.txt > outfile.txt
+
+    matches.txt contains keys for matching
+
+    -r	keep non-matching rows
+
+";
+
+use Columns;
+
+my %keys;
+for my $key (<STDIN>) {
+    $key =~ s/\s+$//;
+    $keys{$key} = 1;
+}
+
+my $col = shift;
+
+my $c = Columns::new(ARGV);
+$c->must_col($col);
+$c->print_header(STDOUT);
+while (my $r = $c->get_row()) {
+    my $id = $c->get_col($r, $col);
+    $c->print_row(STDOUT, $r) if ($keys{$id} && ! $opt_r) or ($opt_r && ! $keys{$id});
+}

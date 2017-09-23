@@ -1,0 +1,60 @@
+#!/bin/bash
+
+. subs.sh
+
+#       set_options "flags" "$@"
+#       set -- "${new_args[@]}"
+
+if [ $# -lt 5 ]; then
+    echo -e "\nUsage: $0 target.fa refs.fa genes.fa genes.txt prefix
+
+    Calculate, fix, and annotate the gene alignments.
+
+    Parameters:
+	target.fa - the genome we want to annotate
+	refs.fa   - the genomes that the genes are from (for 1-to-1 mapping)
+	genes.fa  - the genes we want to align
+	genes.txt - the gene descriptions
+	prefix    - prefix for output files
+
+    Creates:
+	prefix.delta
+	prefix.delta.q (not used)
+	prefix.aligns.90
+	prefix.aligns.90.genes
+	prefix.aligns.90.genes.1
+"
+    exit 1
+fi
+
+target_fa="$1" ; shift
+all_genomes_fa="$1" ; shift
+all_genes_fa="$1" ; shift
+all_genes_txt="$1" ; shift
+prefix="$1" ; shift
+
+if need $target_fa $all_genes_fa $prefix.delta.q; then
+    run "nucmer.get_best_hits -p $prefix $target_fa $all_genes_fa"
+fi
+if false && need $prefix.delta $prefix.aligns.98; then
+    Run -r "delta.list -x $prefix.delta | cols.select '{score} >= 98' > $prefix.aligns.98"
+fi
+if need $prefix.delta $prefix.aligns.90; then
+    Run -r "delta.list -x $prefix.delta | cols.select '{score} >= 90' > $prefix.aligns.90"
+fi
+# add it gene columns, especially gene_seq
+if need $all_genes_txt $prefix.aligns.90 $prefix.aligns.90.1; then
+    Run -r "join_files -outer -add 'all' $prefix.aligns.90 $all_genes_txt \
+            qname/gene_id > $prefix.aligns.90.1"
+fi
+if need $prefix.aligns.90.1 $prefix.aligns.90.2; then
+    Run "do_fast 'fix_and_annotate_gene_alignments $target_fa $all_genes_fa' \
+	1000 $prefix.aligns.90.1 $prefix.aligns.90.2 \
+	2> $prefix.aligns.90.2.stderr"
+fi
+if need $target_fa $all_genomes_fa $prefix.1to1.aligns; then
+    run "get_1to1_mappings -p $prefix.1to1 $target_fa  $all_genomes_fa $prefix.1to1.aligns"
+fi
+if need $prefix.aligns.90.2 $prefix.1to1.aligns $prefix.aligns.90.genes; then
+    run "add_is_right_place $prefix.1to1.aligns $prefix.aligns.90.2 > $prefix.aligns.90.genes"
+fi

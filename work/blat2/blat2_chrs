@@ -1,0 +1,5 @@
+#!/bin/bash
+
+. blat2_info.sh
+
+cat $blat2_work/data/chrs 2> /dev/null

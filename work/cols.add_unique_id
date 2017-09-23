@@ -1,0 +1,47 @@
+#!/usr/bin/perl
+
+use Cols;
+
+use Getopt::Std;
+getopts('f:p:s:');
+
+$from_col = $opt_f;
+
+@ARGV >= 1 || die "\nUsage: $0 [options] new-col-name [id-prefix] < infile > outfile
+
+    options:
+	-f col      create 1:1 correspondence between this column and new id
+	-s <num>    start at <num>
+	-p fmt      use sprintf to create id
+
+";
+
+my ($name, $prefix) = @ARGV;
+
+my $cols = Cols::new(STDIN);
+$cols->add_col_before($name);
+$cols->print_header(STDOUT);
+
+my $count = $opt_s + 0;
+while (my $row = $cols->get_row()) {
+    my ($id, $val);
+    if ($from_col) {
+	$val = $row->{$from_col};
+	if (defined(my $hashed = $id_hash{$val})) {
+	    $id = $hashed;
+	}
+    }
+    if (! defined $id) {
+	if ($opt_p) {
+	    $id = sprintf $opt_p, $count++;
+	}
+	else {
+	    $id = $prefix . $count++
+	}
+    }
+    if ($from_col) {
+	$id_hash{$val} = $id;
+    }
+    $cols->set_col($row, $name, $id);
+    $cols->print_row(STDOUT, $row);
+}

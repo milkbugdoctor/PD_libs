@@ -1,0 +1,23 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ ! "$1" ]; then
+    echo -e "\nUsage: $0 file1.sam [file2.sam ...] > outfile.sam
+
+    Concatenates the SAM files by stripping the header from all but the
+    first file.\n"
+
+    exit 1
+fi
+
+first=1
+for file in "$@"
+do
+    if [ "$first" ]; then
+	cat "$file"
+    else
+	sed '/^@/d' "$file"
+    fi
+    unset first
+done

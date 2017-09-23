@@ -1,0 +1,52 @@
+#!/bin/bash
+
+. subs.sh
+
+while getopts g:l:n:p:r:sv foo ; do
+    if [ "$foo" = 'n' ]; then
+        options="$options -n '$OPTARG'"
+    elif [ "$foo" = 'p' ]; then
+        prefix="$OPTARG"
+    elif [ "$foo" = 's' ]; then
+        options="$options -s"
+    elif [ "$foo" = 'l' ]; then
+        link="-l '$OPTARG'"
+    elif [ "$foo" = 'r' ]; then
+        do_repeats=1
+        repeats_file="$OPTARG"
+    elif [ "$foo" = 'v' ]; then
+        vertical="-v"
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -lt 1 ]; then
+    echo -e "\nUsage: $0 [options] coverage-files ...
+
+    Options:
+
+	-l pat          link fragmented contigs matching pat
+	-n pat          for printable portion of contig name
+	-p prefix	prefix for created files (default: \"out\")
+	-r repeats      draw repeats if repeats file exists
+	-s              draw longest contigs first
+	-v              print contig names vertically
+"
+    exit 1
+fi
+
+if [ ! "$prefix" ]; then
+    prefix=out
+fi
+
+if need "$@" $prefix.coverage; then
+    run "unsplit_files +h $* | amos.fix_coverage > $prefix.coverage"
+fi
+
+if [ "$do_repeats" -a -s "$repeats_file" ]; then
+    repeats="-r '$repeats_file'"
+fi
+
+if need $prefix.coverage $prefix.png; then
+    run "amos.draw_coverage $vertical $options $link $repeats $prefix.coverage | tee $prefix.draw | draw_gd > $prefix.png"
+fi

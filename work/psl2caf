@@ -1,0 +1,78 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+my $max_gap = my $def_max_gap = 5;
+
+use psl;
+use Getopt::Std;
+getopts('abdg:t');
+$debug = 1 if $opt_d;
+$| = 1 if $debug;
+$max_gap = $opt_g if $opt_g ne '';
+
+@ARGV == 1 || die "\nUsage: $0 [options] psl_infile > alignment.txt
+
+    Converts psl_infile to Fred's \"Common Alignment Format\", which is
+    similar to delta.list's output format.
+
+    psl_infile must be in BLAT's \"plsx\" format, because it needs the
+    sequence columns to build the alignments.
+
+    Options:
+	-a		add alignment string
+	-b		output both query and target versions of coverage and score
+	-d		debug
+	-g gap		maximum gap allowed (default $def_max_gap)
+	-t		change column names to implement old psl2aligns program.
+
+";
+
+use psl;
+use Cols;
+require 'misc.pl';
+require 'sequences.pl';
+require 'align_string.pl';
+
+my $infile = shift;
+
+my $c = new psl $infile;
+
+my @cols = qw{align_num block_num rname rstart rend rlen rsize qstrand qname qstart qend qlen qsize match score ident cover};
+push(@cols, "rcover", "rscore", "best_score") if $opt_b;
+push(@cols, "align_str") if $opt_a;
+grep(s/^r/t/, @cols) if $opt_t;
+grep(s/^match$/matches/, @cols) if $opt_t;
+print join("\t", @cols), "\n";
+my $align_num = 0;
+while (my $r = $c->get_next_line()) {
+    my @aligns = psl2caf($r, $max_gap);
+    $align_num++;
+    for my $hash (@aligns) {
+	print "$align_num";
+	print "\t$hash->{block_num}";
+	print "\t$hash->{rname}";
+	print "\t$hash->{rstart}";
+	print "\t$hash->{rend}";
+	print "\t$hash->{rlen}";
+	print "\t$hash->{rsize}";
+	print "\t$hash->{strand}";
+	print "\t$hash->{qname}";
+	print "\t$hash->{qstart}";
+	print "\t$hash->{qend}";
+	print "\t$hash->{qlen}";
+	print "\t$hash->{qsize}";
+	print "\t$hash->{match}";
+	print "\t$hash->{score}";
+	print "\t$hash->{ident}";
+	print "\t$hash->{cover}";
+	if ($opt_b) {
+	    print "\t$hash->{rcover}";
+	    print "\t$hash->{rscore}";
+	    print "\t$hash->{bscore}";
+	}
+	if ($opt_a) {
+	    print "\t$hash->{align}";
+	}
+	print "\n";
+    }
+}

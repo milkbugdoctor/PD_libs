@@ -1,0 +1,60 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+if ($ARGV[0] =~ /^-p/) {
+    shift;
+    $pad = shift;
+}
+@ARGV == 5 || die "\nUsage: $0 [-pad bases] genes.txt sequence.txt start-col end-col strand-col > outfile.txt\n\n";
+
+use Columns;
+require 'misc.pl';
+require 'primers.pl';
+
+my $genes_file = shift;
+my $seq_file = shift;
+my $start_col = shift;
+my $end_col = shift;
+my $strand_col = shift;
+
+my $cols = Columns::new($genes_file);
+$cols->must_all($start_col, $end_col);
+$cols->add_col('upstream') if $pad;
+$cols->add_col('seq');
+$cols->add_col('downstream') if $pad;
+$cols->print_header(STDOUT);
+while (my $row = $cols->get_row()) {
+    my ($first, $last, $strand) = $cols->get_col($row, $start_col, $end_col, $strand_col);
+    die "bad strand '$strand' in @$row" if $strand !~ /^[-+]$/;
+    if ($start_col eq $end_col) {
+	$first =~ /(\d+)[^\d]+(\d+)/;
+	($first, $last) = ($1, $2);
+    }
+    my ($start, $end, $upstream, $downstream, $orf);
+    ($start, $end) = ($first, $last);
+    $first -= $pad;
+    $last += $pad;
+warn "$loc, first $first start $start end $end last $last\n" if $debug;
+    my $len = $last - $first + 1;
+    $seq = get_file_seq_circular($seq_file, $first - 1, $len);
+    warn "seq len is not $len" if length($seq) != $len;
+    $last = $first + length($seq) - 1;
+    if ($strand =~ /^-/) {
+	$seq = rc($seq) if $strand eq '-';
+	$upstream = substr($seq, 0, $last - $end);
+	$downstream = substr($seq, $last - $start + 1);
+	$orf = substr($seq, $last - $end, $end - $start + 1);
+    }
+    else {
+	$upstream = substr($seq, 0, $start - $first);
+	$downstream = substr($seq, $end - $first + 1);
+	$orf = substr($seq, $start - $first, $end - $start + 1);
+    }
+    $cols->set_col($row, 'upstream', $upstream) if $pad;
+    $cols->set_col($row, 'seq', $orf);
+    $cols->set_col($row, 'downstream', $downstream) if $pad;
+    $cols->print_row(STDOUT, $row);
+}
+close GENES;
+

@@ -1,0 +1,6 @@
+#!/usr/bin/perl -i
+
+while (<>) {
+	$_ =~ s/\r?\n$//;
+	print join("\t", split(/\t/, $_)), "\n";
+}

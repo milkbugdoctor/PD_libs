@@ -1,0 +1,194 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+my $sep_pat = "[/,\\s]+";
+
+my @args;
+while (my $arg = shift @ARGV) {
+    if    ($arg =~ /^-es/)  { $either_strand = $arg; }
+    elsif ($arg =~ /^-oc1/) { $m1_cols = shift; }
+    elsif ($arg =~ /^-oc2/) { $m2_cols = shift; }
+    elsif ($arg =~ /^-r/)   { $reverse = $arg; }
+    elsif ($arg =~ /^-ic1/) { $ic1 = shift; }
+    elsif ($arg =~ /^-ic2/) { $ic2 = shift; }
+    elsif ($arg =~ /^-ip1/) { $ip1 = shift; }
+    elsif ($arg =~ /^-ip2/) { $ip2 = shift; }
+    elsif ($arg =~ /^-x1/)  { $exons1 = shift; }
+    elsif ($arg =~ /^-x2/)  { $exons2 = shift; }
+    else                    { push(@args, $arg); }
+}
+@ARGV = @args;
+
+$0 =~ s|.*/||;
+(@ARGV == 3) || die qq{\nUsage: $0 [options] marker1-file marker2-file covered > overlaps
+
+Loads marker2 into memory, then finds overlaps with marker1.
+
+	covered:	'all1' | 'all2' | 'any'
+
+	options:
+	    -es			match on either strand
+	    -ic1 "cols"		marker1 input columns: chr, strand, start, end
+	    -ic2 "cols"		marker2 input columns: chr, strand, start, end
+	    -ip1 "prefixes"	marker1 prefixes for finding columns (chr, strand, start, end)
+	    -ip2 "prefixes"	marker2 prefixes for finding columns (chr, strand, start, end)
+	    -oc1 "cols"		marker1 columns to output (default is all columns)
+	    -oc2 "cols"		marker2 columns to output (default is all columns)
+	    -x1 col		use exons for marker1 instead of whole marker
+	    -x2 col		use exons for marker2 instead of whole marker
+	    -r			reverse: output marker2 then marker1
+
+};
+
+use Cols;
+require 'markers.pl';
+
+$| = 1;
+
+my $m1_file = shift;
+my $m2_file = shift;
+my $cover = shift;
+
+my $m1_columns = Cols::new($m1_file);
+my $m2_columns = Cols::new($m2_file);
+my @m1_header = $m1_columns->get_header();
+my @m2_header = $m2_columns->get_header();
+
+my ($m1_chr, $m1_strand, $m1_start, $m1_end);
+if ($ic1 ne '') {
+    ($m1_chr, $m1_strand, $m1_start, $m1_end) = split m|$sep_pat|, $ic1;
+    $m1_columns->has_all(1, $m1_chr, $m1_strand, $m1_start, $m1_end);
+}
+elsif ($ip1 ne '') {
+    my @prefixes = split m|$sep_pat|, $ip1;
+    my @keys = qw{chr strand start end};
+    my @tmp = ($m1_chr, $m1_strand, $m1_start, $m1_end) = $m1_columns->find_prefixed_cols(0, \@prefixes, @keys);
+    for my $i (0 .. $#keys) {
+	warn "marker1: col for key [$keys[$i]] is empty\n" if $tmp[$i] eq '';
+    }
+}
+else {
+    die "need to specify -ic1 or -ip1 for marker1 columns";
+}
+warn "using marker1 input columns ($m1_chr, $m1_strand, $m1_start, $m1_end)\n" if $debug;
+
+my ($m2_chr, $m2_strand, $m2_start, $m2_end);
+if ($ic2 ne '') {
+    ($m2_chr, $m2_strand, $m2_start, $m2_end) = split m|$sep_pat|, $ic2;
+    $m2_columns->has_all(1, $m2_chr, $m2_strand, $m2_start, $m2_end);
+}
+elsif ($ip2 ne '') {
+    my @prefixes = split m|$sep_pat|, $ip2;
+    my @keys = qw{chr strand start end};
+    my @tmp = ($m2_chr, $m2_strand, $m2_start, $m2_end) = $m2_columns->find_prefixed_cols(0, \@prefixes, @keys);
+    for my $i (0 .. $#keys) {
+	warn "marker2: col for key [$keys[$i]] is empty\n" if $tmp[$i] eq '';
+    }
+}
+else {
+    die "need to specify -ic2 or -ip2 for marker1 columns";
+}
+warn "using marker2 input columns ($m2_chr, $m2_strand, $m2_start, $m2_end)\n" if $debug;
+
+warn "using marker1 exon column $exons1\n" if $debug && $exons1;
+warn "using marker2 exon column $exons2\n" if $debug && $exons2;
+
+my (@m2_cols, @m1_cols);
+if ($m1_cols eq '') {
+    @m1_cols = @m1_header;
+}
+else {
+    @m1_cols = split m|$sep_pat|, $m1_cols;
+}
+warn "using marker1 output columns (@m1_cols)\n" if $debug;
+if ($m2_cols eq '') {
+    @m2_cols = @m2_header;
+}
+else {
+    @m2_cols = split m|$sep_pat|, $m2_cols;
+}
+warn "using marker2 output columns (@m2_cols)\n" if $debug;
+
+if ($cover =~ /^any/) {
+    $cover = 'any';
+}
+elsif ($cover =~ /^all1/) {
+    $cover = 'all_me';
+}
+elsif ($cover =~ /^all2/) {
+    $cover = 'all_marker';
+}
+else {
+    die "unknown cover type '$cover'";
+}
+
+my @output_cols = $reverse ? (@m2_cols, @m1_cols) : (@m1_cols, @m2_cols);
+$" = "\t";
+print "@output_cols\n";
+
+my $count = 0;
+my $exons = 0;
+my $markers2 = new markers;
+while (my $row = $m2_columns->get_row()) {
+    my @mk_cols = $m2_columns->get_col($row, @m2_cols);
+    if ($exons2) {
+	for my $exon (split /,/, $row->{$exons2}) {
+	    my ($s, $len) = split /:/, $exon;
+	    my $e = $s + $len - 1;
+	    $markers2->add_marker($row->{$m2_chr}, $row->{$m2_strand},
+		$s, $e, @mk_cols);
+	    warn "adding exon chr $row->{$m2_chr} $row->{$m2_strand} $s-$e rest @mk_cols\n" if $debug >= 2;
+	    $exons++;
+	}
+	$count++;
+	warn "loaded $count markers, $exons exons\n" if $debug and $exons % 10000 == 0;
+    }
+    else {
+	$markers2->add_marker($row->{$m2_chr}, $row->{$m2_strand},
+	    $row->{$m2_start}, $row->{$m2_end}, @mk_cols);
+	warn "adding marker chr $row->{$m2_chr} $row->{$m2_strand} $row->{$m2_start}-$row->{$m2_end} rest @mk_cols\n" if $debug >= 2;
+	warn "loaded $count markers\n" if $debug and ++$count % 10000 == 0;
+    }
+}
+warn "loaded $count markers\n" if $debug;
+
+$count = 0;
+$exons = 0;
+while (my $mark = $m1_columns->get_row()) {
+    my ($chr, $strand, $s, $e, @my_cols) = $m1_columns->get_col($mark, $m1_chr, $m1_strand, $m1_start, $m1_end, @m1_cols);
+    $count++;
+    if ($exons1) {
+	for my $exon (split /,/, $mark->{$exons1}) {
+	    my ($s, $len) = split /:/, $exon;
+	    my $e = $s + $len - 1;
+	    do_marker($chr, $strand, $s, $e, @my_cols);
+	    $exons++;
+	    warn "processed $count markers, $exons exons from $m1_file\n" if $debug and $exons % 10000 == 0;
+	}
+    }
+    else {
+	do_marker($chr, $strand, $s, $e, @my_cols);
+	warn "processed $count markers from $m1_file\n" if $debug and $count % 10000 == 0;
+    }
+}
+
+sub do_marker {
+    my ($chr, $strand, $s, $e, @my_cols) = @_;
+    warn "checking marker $chr $strand $e-$e\n" if $debug >= 2;
+    for my $strand_num (1 .. 2) {
+	if ($strand_num == 2) {
+	    last if ! $either_strand;
+	    $strand =~ s/-/+/ or $strand =~ s/\+/-/;
+	}
+	my @markers = $markers2->get_covering_markers($cover, $chr, $strand, $s, $e);
+	next if @markers == 0;
+	for my $marker (@markers) {
+	    my ($m_chr, $m_strand, $m_s, $m_e, @m_cols) = split /\t/, $marker;
+	    warn "\tgot hit $marker\n" if $debug >= 2;
+	    if ($reverse) { print join("\t", @m_cols, @my_cols), "\n"; }
+	    else          { print join("\t", @my_cols, @m_cols), "\n"; }
+	}
+    }
+}
+
+exit 0;

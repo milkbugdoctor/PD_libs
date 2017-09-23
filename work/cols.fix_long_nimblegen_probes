@@ -1,0 +1,32 @@
+#!/usr/bin/perl
+
+require 'NimbleGen.pl';
+use Cols;
+
+@ARGV == 3 || die "\nUsage: $0 max-cycles seq-col name-col < infile > outfile
+
+    Truncates long probes and adds _t to their names.
+
+";
+
+my $max_cycles = shift;
+my $seq_col = shift;
+my $name_col = shift;
+
+my $cols = Cols::new(STDIN);
+$cols->add_col('cycles');
+$cols->print_header(STDOUT);
+while (my $row = $cols->get_row()) {
+    my $seq = $row->{$seq_col};
+    my $c = NimbleGen::get_cycles($seq);
+    my $name = $row->{$name_col};
+    while ($c > $max_cycles) {
+	chop $seq;
+	$c = NimbleGen::get_cycles($seq);
+	$name = $row->{$name_col} . '_t';
+    }
+    $row->{cycles} = $c;
+    $row->{$name_col} = $name;
+    $row->{$seq_col} = $seq;
+    $cols->print_row(STDOUT, $row);
+}

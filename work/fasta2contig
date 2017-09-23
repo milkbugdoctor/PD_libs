@@ -1,0 +1,52 @@
+#!/usr/bin/perl
+
+my $gap_size = 2000;
+
+while ($ARGV[0] =~ /^-/) {
+    if ($ARGV[0] eq '-h') {
+	$use_header = shift;
+    }
+    if ($ARGV[0] eq '-n') {
+	shift;
+	$gap_size = shift;
+    }
+}
+
+if (@ARGV != 1) {
+    print STDERR "\n\nUsage: $0 [-n gap] file
+
+    -n gap	Number of Ns to put between sequences
+
+";
+    exit 1;
+}
+
+my $last_header;
+for $file (@ARGV) {
+    open(FOO, "$file") || die "open $file";
+    $file =~ s/\.[^.]+$//;	# remove fasta extension
+    $file =~ s/.*\///;	# remove directory
+    $header = $sequence = '';
+    while (<FOO>) {
+	if (/^>(.*)/) {
+	    &write_file;
+	    $header = $1;
+	    $sequence = '';
+	}
+	else {
+	    $sequence .= substr($_, 0, -1);
+	}
+    }
+    &write_file;
+    close(FOO);
+}
+
+sub write_file {
+    my $filename;
+    return if $header eq '';
+    if ($last_header ne '') {
+	print "N" x $gap_size;
+    }
+    print $sequence;
+    $last_header = $header;
+}

@@ -1,0 +1,102 @@
+#!/bin/bash
+
+parallel=1
+
+. subs.sh
+
+if [ $# -lt 6 ]; then
+    echo -e "\nUsage: $0 reference.fa input.fa input.qual output-prefix word-size break-size [options]\n"
+    exit 1
+fi
+
+ref="$1" ; shift
+seq="$1" ; shift
+qual="$1" ; shift
+prefix="$1" ; shift
+wordsize="$1" ; shift
+breaksize="$1" ; shift
+options="$@"
+
+mkdir -p $prefix 2> /dev/null
+
+last_ref="$ref"
+last_align_file=
+count=1
+while true
+do
+    echo iteration $count 1>&2
+    pre=$prefix/tmp.$count
+    echo nucmer $count 1>&2
+
+    all_aligns="$pre.aligns.txt"
+    if need "$last_ref" "$seq" "$all_aligns"; then
+	if [ "$parallel" ]; then
+	    prog=nucmer2align.parallel
+	else
+	    prog=nucmer2align
+	fi
+	if ! $prog "$last_ref" "$seq" $wordsize $breaksize > "$all_aligns" 2> /tmp/nucmer.err.$$; then
+	    cat /tmp/nucmer.err.$$ 1>&2
+	    rm -f /tmp/nucmer.err.$$
+	    exit 1
+	fi
+    fi
+
+    if [ "$last_align_file" ]; then
+	if need "$last_align_file" "$all_aligns" $pre.aligns.improved-contigs; then
+	    run "amos.get_improved_align_contigs '$last_align_file' '$all_aligns' > $pre.aligns.improved-contigs"
+	fi
+	num_improved="`wc -l < $pre.aligns.improved-contigs`"
+	if [ "$num_improved" -eq 0 ]; then
+	    echo done 1>&2
+	    if need $fastas $prefix.fa; then
+		run "fasta.replace_entries $fastas > $prefix.fa"
+	    fi
+	    if need $quals $prefix.qual; then
+		run "fasta.replace_entries $quals > $prefix.qual"
+	    fi
+	    if false; then
+		for i in $last_prefix.*
+		do
+		    rest=`echo "$i" | sed "s|^$last_prefix\.||"` || exit
+		    if need $i $prefix.$rest; then
+			run "ln $i $prefix.$rest"
+		    fi
+		done
+	    fi
+	    exit 0
+	else
+	    if need $all_aligns $pre.aligns.improved-contigs $pre.aligns.improved.txt; then
+		run "cols.get_matching rname $all_aligns < $pre.aligns.improved-contigs > $pre.aligns.improved.txt"
+	    fi
+	    last_align_file="$pre.aligns.improved.txt"
+	    layout_file="$pre.aligns.improved.layout"
+	fi
+    else
+	last_align_file="$all_aligns"
+	layout_file="$pre.aligns.layout"
+    fi
+
+    if need "$last_align_file" "$layout_file"; then
+	tmp=/tmp/amos.aligned2layout.err.$$
+	echo amos.aligns2layout $count 1>&2
+	if ! amos.aligns2layout "$last_align_file" > "$layout_file" 2> $tmp; then
+	    cat $tmp 1>&2
+	    rm -f $tmp
+	    exit 1
+	fi
+    fi
+
+    if need "$last_ref" "$seq" "$layout_file" "$pre.graceful_exit"; then
+	echo cheater $count 1>&2
+	run "time -p amos.cheater $options $layout_file $last_ref $seq $qual $pre 2> $pre.get_contigs.err"
+	echo yes > $pre.graceful_exit
+    fi
+
+    last_ref="$pre.fa"
+    last_prefix="$pre"
+    fastas="$fastas $pre.fa"
+    quals="$quals $pre.qual"
+
+    : $((count++))
+done

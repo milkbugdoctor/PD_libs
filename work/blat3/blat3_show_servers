@@ -1,0 +1,8 @@
+#!/bin/bash
+
+. blat3_info.sh
+
+for chr in `blat3_chrs`
+do
+	printf "%-15s\t%s\n" $chr "`tail $blat3_work/data/$chr.info`"
+done

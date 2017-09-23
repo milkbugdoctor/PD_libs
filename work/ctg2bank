@@ -1,0 +1,17 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ $# -ne 3 ]; then
+    echo -e "\nUsage: $0 infile.ctg src-bank dest-bank\n"
+    exit 1
+fi
+
+mkdir -p $3
+rm -f $3/*
+
+ln $2/{UNV,RED}.* $3
+bank-unlock $3 2> /dev/null
+
+run "bank-transact -b $3 -m $1"
+

@@ -1,0 +1,56 @@
+#!/bin/bash
+
+. subs.sh
+
+break=100
+while getopts b: foo ; do
+    if [ "$foo" = 'b' ]; then
+        break="$OPTARG"
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -lt 2 ]; then
+    echo -e "\nUsage: $0 [options] ref.fa contigs.fa [prefix]
+
+    Options:
+	-b break	break parameter for nucmer
+
+    Outputs prefix.layout
+"
+    exit 1
+fi
+
+ref="`abs_path $1`" ; shift	# why do we need abs_path here? -fjel
+contigs="$1" ; shift
+prefix="$1" ; shift
+
+if [ ! "$prefix" ]; then
+    prefix=out
+fi
+
+if need $ref $contigs $prefix.delta; then
+    run "nucmer -b $break -p $prefix $ref $contigs --maxmatch -c 20 2> $prefix.nucmer.stderr > /dev/null"
+fi
+
+foo() {
+    while read rid tname tstart tend
+    do
+	echo "C $rid 0 $tname $tstart-$tend"
+    done
+}
+
+for i in q
+do
+    if need $prefix.delta $prefix.delta.$i; then
+	run "delta-filter -$i $prefix.delta > $prefix.delta.$i"
+    fi
+    if need $prefix.delta.$i $prefix.layout.$i; then
+	run "amos.get_read_hits -m $prefix.delta.$i | ncols -h rid tname tstart tend \
+	    | foo > $prefix.layout.$i"
+    fi
+done
+
+if need $prefix.layout.q $prefix.layout; then
+    cp $prefix.layout.q $prefix.layout
+fi

@@ -1,0 +1,11 @@
+#!/usr/bin/perl
+
+require 'misc.pl';
+
+$batch = 400;
+
+@primers = split(/\s+/, join('', <>));
+
+while (@batch = splice(@primers, 0, $batch)) {
+    &command("query @batch\n");
+}

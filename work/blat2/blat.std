@@ -1,0 +1,27 @@
+#!/usr/local/bin/perl
+
+require 'blat.pl';
+
+my @options = split /\s+/, $std_options;
+
+for my $arg (@ARGV) {
+    if ($arg =~ /^-/) {
+	push(@options, $arg);
+    }
+    else {
+	push(@args, $arg);
+    }
+}
+
+if (@args == 3) {
+    system "blat '$args[0]' '$args[1]' '$args[2]' @options";
+}
+else {
+    print STDERR "\nUsage: $0 db infile outfile [options]
+
+    Run blat with \"standard\" options:
+
+    $std_options
+
+";
+}

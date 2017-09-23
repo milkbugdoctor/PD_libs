@@ -1,0 +1,61 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('im:p:');
+
+require 'primers.pl';
+require 'fasta.pl';
+
+@ARGV || die "\nUsage: $0 [options] infile ...
+
+    -i		    change file in-place
+    -p fmt	    sprintf format, e.g. \"key.%d\"
+    -m mapfile	    save mapping to file
+
+";
+
+if ($opt_m) {
+    open(MAP, ">$opt_m") or die "can't create '$opt_m': $!";
+}
+
+my $out_fd;
+my $num = 1;
+for my $file (@ARGV) {
+    open(FILE, $file) or die "$file: $!";
+    if ($opt_i) {
+	chomp($tmp = `mktemp /tmp/fix.fa.XXXXXXXXXX`);
+	open($out_fd, ">$tmp") or die "$tmp: $!";
+    }
+    else {
+	$out_fd = *STDOUT;
+    }
+    my $in;
+    open($in, $file) or die "$file: $!";
+    $seq = '';
+    while (<$in>) {
+	if (/^>/) {
+	    chomp;
+	    &do_seq;
+	    my $header = $_;
+	    my $new_header;
+	    if ($opt_p) {
+		$new_header = sprintf $opt_p, $num++;
+	    }
+	    else {
+		$new_header = $num++;
+	    }
+	    print MAP "$new_header\t$header\n";
+	    print $out_fd ">$new_header\n";
+	    next;
+	}
+	$seq .= $_;
+    }
+    &do_seq;
+    system "mv '$tmp' '$file'" if $opt_i;
+}
+
+sub do_seq {
+    return if $seq eq '';
+    print_wrapped($out_fd, $seq);
+    $seq = '';
+}

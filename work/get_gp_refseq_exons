@@ -1,0 +1,39 @@
+#!/usr/bin/perl
+
+#
+#	goldenpath start positions are 0-based, but ends are 1-based
+#
+
+$refseq = "gp_nov8.refFlat";
+
+(($exon_file) = @ARGV) == 1 ||
+	die "\nUsage: $0 exon-file\n\n";
+
+open(EXONS, ">$exon_file") || die "couldn't create $exon_file";
+
+require 'mysql.pl';
+require 'misc.pl';
+
+$fd = mysql_output("select geneName, name, chrom, strand,
+    txStart, txEnd, cdsStart, cdsEnd, exonStarts, exonEnds from $refseq");
+$marker_num = 0;
+print_tabbed(EXONS, "marker_id gene refseq chr strand" .
+	" tx_start tx_end cd_start cd_end exon_starts exon_ends\n");
+while (<$fd>) {
+	chomp;
+	($geneName, $name, $chrom, $strand,
+	    $tx_start, $tx_end, $cd_start, $cd_end, $exonStarts, $exonEnds) = split /\t/;
+	$chr = $chrom;
+	@starts = split(/,/, $exonStarts);
+	grep($_++, @starts); # add one to start positions
+	@ends = split(/,/, $exonEnds);
+	$tx_start++;
+	$cd_start++;
+	$" = " ";
+	print EXONS "$marker_num\t$geneName\t$name\t";
+	print_tabbed(EXONS, "$chr $strand $tx_start $tx_end".
+		" $cd_start $cd_end @starts @ends\n");
+	$marker_num++;
+}
+close(EXONS);
+

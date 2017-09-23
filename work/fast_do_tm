@@ -1,0 +1,30 @@
+#!/bin/bash
+
+echo "no longer up-to-date with do_tm..."
+exit
+
+if [ $# -lt 4 ]; then
+    echo -e "\nUsage: $0 avg-tm class-col min-keep files ...\n"
+    exit 1
+fi
+tm="$1"
+shift
+class="$1"
+shift
+keep="$1"
+shift
+
+stderr=/usr/local/tmp/fast_do_tm.stderr.$$
+rm -f $stderr
+for i in "$@"
+do
+    job.add do_tm $tm $i $class $keep <<FOO
+	do_tm $tm $i $class $keep 2> /tmp/do_tm.\$\$.lost > /tmp/do_tm.\$\$
+	mv /tmp/do_tm.\$\$ $i
+	lock_and_cat /tmp/do_tm.\$\$.lost >> $stderr
+	rm -f /tmp/do_tm.\$\$.lost
+FOO
+done
+job.wait do_tm
+cat $stderr 1>&2
+rm -f $stderr

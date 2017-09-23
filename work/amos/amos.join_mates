@@ -1,0 +1,53 @@
+#!/usr/bin/perl
+
+use Fasta;
+use strict vars;
+
+require 'sequences.pl';		# rc()
+require 'fasta.pl';		# print_wrapped()
+
+@ARGV == 4 || die "\nUsage: $0 reads.fa reads.qual constraints.con prefix\n\n";
+
+my $reads_fa = shift;
+my $reads_qual = shift;
+my $constraint_file = shift;
+my $prefix = shift;
+
+my $fa = Fasta::new($reads_fa);
+$fa->get_seq_positions(1);
+my $qual = Fasta::new($reads_qual);
+$qual->get_seq_positions(1);
+
+open(MATES, $constraint_file) || die "$constraint_file: $!";
+open(FA, ">$prefix.fa") || die "$prefix.fa: $!";
+open(QUAL, ">$prefix.qual") || die "$prefix.qual: $!";
+while (<MATES>) {
+    my ($left_seq, $right_seq, $left_qual, $right_qual);
+    chomp;
+    my ($left, $right, $min, $max, $name) = split /\s+/;
+    $left_seq = $right_seq = '';
+    eval { $left_seq = $fa->get_seq($left); };
+    if ($left_seq ne '') {
+	$left_qual = $qual->get_seq($left);
+    }
+    eval { $right_seq = rc($fa->get_seq($right)); };
+    if ($right_seq ne '') {
+	$right_qual = $qual->get_seq($right);
+	my @qual = reverse(split /\s+/, $right_qual);
+	$right_qual = join(' ', @qual);
+    }
+    print FA ">$name\n";
+    print QUAL ">$name\n";
+    if ($left_seq ne '' && $right_seq ne '') {
+	print_wrapped(FA, $left_seq . "N" x 1000 . $right_seq);
+	print_wrapped(QUAL, $left_qual . " " . "0 " x 1000 . $right_qual);
+    }
+    elsif ($left_seq ne '') {
+	print_wrapped(FA, $left_seq);
+	print_wrapped(QUAL, $left_qual);
+    }
+    elsif ($right_seq ne '') {
+	print_wrapped(FA, $right_seq);
+	print_wrapped(QUAL, $right_qual);
+    }
+}

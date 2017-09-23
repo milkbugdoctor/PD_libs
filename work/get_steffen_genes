@@ -1,0 +1,180 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('2o:p:');
+
+my $debug = 1;
+
+$0 =~ s|.*/||;
+(@ARGV >= 13) || die "
+Usage: $0 [options] <markers> <me> covered > overlaps
+
+    Loads markers into memory, then finds overlaps with your sequences.
+
+	<marker>:	id chr strand start end file
+	<me>:		id chr strand start end file
+	covered:	'all_me' | 'all_marker' | 'any' | num-bases
+
+    Output format 1 (default):
+	Adds columns: genes_same_strand, genes_other_strand, genes_either_strand
+	Each column:
+	    IR gene1 - gene2	marker hits in between gene1 and gene2
+	    gene1[ + gene2]	marker overlaps genes
+
+    Output format 2:
+	Adds columns: genes_upstream, genes_overlapped, genes_ov%, genes_downstream
+
+    Options:
+	-p prefix	prefix for output columns (e.g., 'test_')
+	-2		output format 2
+        -o 'cols'       other columns to add
+
+";
+
+use Cols;
+require 'markers.pl';
+
+my $mark_id = shift;
+my $mark_chr = shift;
+my $mark_strand = shift;
+my $mark_start = shift;
+my $mark_end = shift;
+my $mark_file = shift;
+my $me_id = shift;
+my $me_chr = shift;
+my $me_strand = shift;
+my $me_start = shift;
+my $me_end = shift;
+my $me_file = shift;
+my $cover = shift;
+
+my $marker_columns = Cols::new($mark_file);
+my $me_columns = Cols::new($me_file);
+my @added_columns;
+
+if ($opt_2) {
+    $me_columns->add_col(qw/genes_upstream genes_overlapped genes_ov% genes_downstream/);
+}
+else {
+    our $same_col = $opt_p . 'genes_same_strand';
+    our $other_col = $opt_p . 'genes_other_strand';
+    our $either_col = $opt_p . 'genes_either_strand';
+    $me_columns->add_col($same_col, $other_col, $either_col);
+}
+$me_columns->print_header(STDOUT);
+
+my $count = 0;
+my $markers1 = new markers('use_refs');
+while (my $row = $marker_columns->get_row()) {
+    die "need id for marker!" if $row->{$mark_id} eq '';
+    if ($row->{$mark_start} > $row->{$mark_end}) {
+	die "start > end for $row->{$mark_id}\n";
+	($row->{$mark_start}, $row->{$mark_end}) = ($row->{$mark_end}, $row->{$mark_start});
+    }
+    die "got bad strand [$row->{$mark_strand}]\n" if $row->{$mark_strand} !~ /^(\+|-)$/;
+    $markers1->add_marker($row->{$mark_chr}, $row->{$mark_strand},
+	$row->{$mark_start}, $row->{$mark_end}, $row->{$mark_id}, $row);
+    $markers1->add_marker($row->{$mark_chr}, 'any',
+	$row->{$mark_start}, $row->{$mark_end}, $row->{$mark_id}, $row);
+    warn "adding marker chr=$row->{$mark_chr} $row->{$mark_strand} $row->{$mark_start}-$row->{$mark_end} id=$row->{$mark_id}\n" if $debug >= 2;
+    warn "loaded $count markers\n" if $debug and ++$count % 10000 == 0;
+}
+warn "loaded $count markers\n" if $debug;
+
+my $count = 0;
+while (my $row = $me_columns->get_row()) {
+    my ($id, $chr, $strand, $s, $e) = $me_columns->get_col($row, $me_id, $me_chr, $me_strand, $me_start, $me_end);
+    die "need id for me!" if $id eq '';
+    warn "no chr found in col [$me_chr] for id [$id]!" if $chr eq '';
+    $strand = 'any';
+
+    if ($opt_2) {
+	my @markers = $markers1->get_covering_markers($cover, $chr, $strand, $s, $e);
+	my $result, $result2;
+	my ($leftmost_hit, $rightmost_hit) = ($s, $e);
+	if (@markers == 0) {
+	    $result = "";
+	    $result2 = "";
+	}
+	else {
+	    my (@tmp, @percent);
+	    for my $marker (@markers) {
+		my ($m_chr, $m_strand, $m_s, $m_e, $m_id) = @$marker;
+		$leftmost_hit = min($leftmost_hit, $m_s);
+		$rightmost_hit = max($rightmost_hit, $m_e);
+		my $ov_left = max($s, $m_s);
+		my $ov_right = min($e, $m_e);
+		if ($m_s == $ov_left && $m_e == $ov_right) {
+		    push(@tmp, $m_id);
+		    push(@percent, "$m_id:100%");
+		}
+		else {
+		    push(@tmp, sprintf("$m_id:%s-%s", $ov_left - $m_s + 1, $ov_right - $m_s + 1));
+		    push(@percent, sprintf("$m_id:%.1f%", ($ov_right - $ov_left + 1) / ($m_e - $m_s + 1) * 100));
+		}
+	    }
+	    $result = join(" + ", @tmp);
+	    $result2 = join(" + ", @percent);
+	}
+	$me_columns->set_col($row, 'genes_overlapped', $result);
+	$me_columns->set_col($row, 'genes_ov%', $result2);
+
+	my ($left)  = $markers1->get_nearest_markers($chr, $strand, $leftmost_hit - 1, $leftmost_hit - 1, -1);
+	my ($right) = $markers1->get_nearest_markers($chr, $strand, $rightmost_hit + 1, $rightmost_hit + 1, 1);
+	$me_columns->set_col($row, 'genes_upstream', $left->[4]);
+	$me_columns->set_col($row, 'genes_downstream', $right->[4]);
+    }
+    else {
+        my @strands = ('+', '-', 'any');
+	for my $marker_strand (@strands) {
+	    my @markers = $markers1->get_covering_markers($cover, $chr, $marker_strand, $s, $e);
+	    my $result;
+	    if (@markers == 0) {
+		my $offset = ($cover > 0) ? $cover - 1 : 0;
+		my ($left)  = $markers1->get_nearest_markers($chr, $marker_strand, $s + $offset, $e - $offset, -1);
+		my ($right) = $markers1->get_nearest_markers($chr, $marker_strand, $s + $offset, $e - $offset, 1);
+		if (defined $left || defined $right) {
+		    my ($ll, $rr) = ($left->[4], $right->[4]);
+		    $ll = 'start' if $ll eq '';
+		    $rr = 'end' if $rr eq '';
+		    $result = "IR " . join(" - ", $ll, $rr);
+		}
+		else {
+		    $result = "";
+		}
+	    }
+	    else {
+		my @tmp;
+		for my $marker (@markers) {
+		    my ($m_chr, $m_strand, $m_s, $m_e, $m_id) = @$marker;
+		    push(@tmp, $m_id);
+		}
+                my $sep = ' + ';
+		$result = join($sep, @tmp);
+	    }
+            if ($marker_strand eq 'any') {
+                $me_columns->set_col($row, $either_col, $result);
+            }
+            elsif ($strand eq $marker_strand) {
+                $me_columns->set_col($row, $same_col, $result);
+            }
+            else {
+                $me_columns->set_col($row, $other_col, $result);
+            }
+	}
+    }
+    $me_columns->print_row(STDOUT, $row);
+    warn "processed $count \"me\" sequences\n" if $debug and ++$count % 10000 == 0;
+}
+
+sub get_combined {
+    my ($col, $markers) = @_;
+    my @tmp;
+    for my $marker (@$markers) {
+        my ($m_chr, $m_strand, $m_s, $m_e, $m_id, $row) = @$marker;
+        push(@tmp, $row->{$col});
+    }
+    return join(' + ', @tmp);
+}
+
+exit 0;

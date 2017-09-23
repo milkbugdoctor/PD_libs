@@ -1,0 +1,60 @@
+#!/usr/bin/perl
+
+$verbose = shift if $ARGV[0] eq '-v';
+$fuzzy = shift if $ARGV[0] eq '-f';
+
+if (@ARGV < 2) {
+	chomp($prog = `basename $0`);
+	print "\nUsage: $prog [-v] [-f] sequence files\n\n";
+	exit 1;
+}
+
+$seq = shift;
+
+for $file (@ARGV) {
+
+    $contig = `cat $file`;
+
+    if ($fuzzy) {
+	    &match($seq, $contig);
+	    my $pat;
+	    for ($i = 0; $i < length($seq); $i++) {
+		    $pat = $seq;
+		    substr($pat, $i, 1) = ".";
+		    &match($pat, $contig);
+	    }
+    }
+    else {
+	    &match($seq, $contig);
+    }
+}
+
+exit 0;
+
+sub try {
+	my ($contig, $seq, $type) = @_;
+
+	if ($contig =~ /$seq/i) {
+		print "$file ", length($`)+1, " ", length($`) + length($&), "\n";
+		return 1;
+	}
+	elsif ($verbose) {
+		print "filename: $file\n";
+		print "type: $type\n";
+		print "filelen:", length($contig), "\n";
+		print "loc:", length($`)+1, " len:", length($&),
+			" end:", length($`) + length($&), "\n";
+		print "sequence: $seq\n";
+		print "\n";
+		return 0;
+	}
+}
+
+sub match {
+	my ($seq, $contig) = @_;
+	&try($contig, $seq, "normal");
+	&try($contig, scalar reverse($seq), "reverse");
+	$seq =~ tr/ACGTacgt/TGCAtgca/;
+	&try($contig, $seq, "trans");
+	&try($contig, scalar reverse($seq), "trans reverse");
+}

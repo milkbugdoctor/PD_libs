@@ -1,0 +1,108 @@
+#!/bin/bash
+
+it=fasta.get_unused_pieces_iteration
+stderr=" 2> /dev/null "
+stderr=
+
+while [ "`expr match \"$1\" '-'`" -eq 1 ]
+do
+    if [ "$1" = "-b" ]; then
+	opts="$opts -b $2"
+	shift ; shift
+    elif [ "$1" = "-r" ]; then
+	opts="$opts -r $2"
+	shift ; shift
+    elif [ "$1" = "-m" ]; then
+	opts="$opts -m $2"
+	shift ; shift
+    elif [ "$1" = "-o" ]; then
+	opts="$opts -o $2"
+	shift ; shift
+    elif [ "$1" = "-h" ]; then
+	opts="$opts -h $2"
+	shift ; shift
+    elif [ "$1" = "-x" ]; then
+	opts="$opts -x $2"
+	shift ; shift
+    else
+	echo "unknown option '$1'" 1>&2
+	set --
+    fi
+done
+
+if [ $# -ne 2 ]; then
+    echo -e "\nUsage: $0 [options] reference.fa infile.fa > outfile.fa
+
+    Removes pieces from infile.fa that match reference.fa
+
+    Options:
+        -b break        nucmer look-ahead length, controls stringency of alignments
+        -r bases        maximum gap allowed in merged unused sequence
+        -m bases        minimum unused sequence size
+        -o bases        minimum combined output sequence size
+        -h bases        pad hits on left and right by this amount
+        -x extra        amount of surrounding sequence to include in output
+
+    See $it for parameter defaults.
+
+"
+    exit 1
+fi
+
+ref="$1" ; shift
+infile="$1" ; shift
+
+bases()
+{
+    fasta.get_headers "$1" | tail +2 | cols 3 | add | tail -1
+}
+
+outfile=`mktemp /tmp/tmp.XXXXXXXXXX`
+while true
+do
+    echo "fasta.get_unused_pieces_iteration $opts -p $outfile $ref $infile" 1>&2
+    fasta.get_unused_pieces_iteration $opts -p $outfile $ref $infile > $outfile $stderr || exit 1
+    first=`bases $infile`
+    second=`bases $outfile`
+    echo before $first after $second 1>&2
+    remove="$remove $outfile.delta $outfile.cluster"
+    infile=$outfile
+    if [ "$second" = '' ]; then
+	echo "no unused pieces at all!" 1>&2
+	exit 0
+    fi
+    if [ "$first" = "$second" -o "$second" = '' ]; then
+	rm -f $remove 1>&2
+	break
+    fi
+    remove="$remove $outfile"
+    outfile=`mktemp /tmp/tmp.XXXXXXXXXX`
+done
+
+# now remove self-repeats
+
+outfile=`mktemp /tmp/tmp.XXXXXXXXXX`
+while true
+do
+    echo "fasta.get_unused_pieces_iteration $opts -p $outfile -s $infile $infile" 1>&2
+    fasta.get_unused_pieces_iteration $opts -p $outfile -s $infile $infile > $outfile $stderr || exit 1
+    first=`bases $infile`
+    second=`bases $outfile`
+    echo before $first after $second 1>&2
+    remove="$remove $outfile $outfile.delta $outfile.cluster"
+    infile=$outfile
+echo "first $first second $second" 1>&2
+    if [ "$second" = '' ]; then
+	echo "no unused pieces at all!" 1>&2
+	exit 0
+    fi
+    if [ "$first" = "$second" ]; then
+	cat $outfile
+	rm -f $remove 1>&2
+	break
+    fi
+    outfile=`mktemp /tmp/tmp.XXXXXXXXXX`
+done
+
+echo "$0 finished" 1>&2
+exit 0

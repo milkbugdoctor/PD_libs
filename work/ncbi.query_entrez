@@ -1,0 +1,33 @@
+#!/usr/bin/env activeperl
+
+use LWP::Simple;
+use HTML::FormatText;
+use HTML::Parse;
+use IO::Handle;
+use ncbi;
+
+autoflush STDOUT 1;
+
+print join("\t", qw{sym gi new_sym new_gi GeneID organism symbol aliases name}) . "\n";
+while (<>) {
+    chomp;
+    my $term = $_;
+    $term =~ s/\s+$//;	# remove whitespace after
+    $term =~ s/^\s+//;	# remove whitespace before
+    my $sym = $term;
+    # $sym =~ s/-\d$//;
+    my $id;
+    ($sym, $id) = get_pair($sym);
+    $sym = $term if $sym eq '';
+    my ($new_sym, $new_id) = get_latest_ids($id);
+    my @genes = get_gene_ids($new_sym || $sym);
+    if (! @genes) {
+	print "$sym\t$id\t$new_sym\t$new_id\n";
+    }
+    for my $gene (@genes) {
+	my @info = get_gene_info($gene);
+	$" = "\t";
+	print "$sym\t$id\t$new_sym\t$new_id\t$gene\t@info\n";
+    }
+}
+

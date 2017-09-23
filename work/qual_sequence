@@ -1,0 +1,33 @@
+#!/usr/bin/perl
+
+while (<>) {
+    chomp;
+    my @a = split /\s+/;
+    warn "@a\n";
+    my $rest = 1;
+    my $i = 1;
+    my ($num, $denom);
+    for ($i = 1; $i < @a; $i++) {
+	my $a = $a[$i - 1];
+	my $b = $a[$i];
+	my $p1 = (1 - q_to_p($a));
+	my $p2 = (1 - q_to_p($b));
+	my $diff = $p1 - $p2;
+	warn "${i}+: $p1, $i: $diff\n";
+	$rest -= $diff;
+	$num += $i * $diff;
+    }
+    $num += $i * $rest;
+    printf STDERR "$i: %.4f\n", $rest;
+    warn "avg: $num\n\n";
+}
+
+sub p_to_q {
+    my ($p) = @_;
+    return -10 * log10($p);
+}
+
+sub q_to_p {
+    my ($q) = @_;
+    return 10 ** ($q / -10);
+}

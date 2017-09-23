@@ -1,0 +1,42 @@
+#!/usr/bin/perl
+
+use Cols;
+use Getopt::Std;
+getopts('a');
+
+@ARGV >= 1 || die "\nUsage: $0 [options] files ...
+
+    Concatenates files, using columns from first file.
+
+    Options:
+	-a	use all columns from all files
+
+";
+
+my $printed_header;
+my @header;
+if ($opt_a) {
+    my %header;
+    for my $file (@ARGV) {
+	my $cols = Cols::new($file);
+	for my $col ($cols->get_header()) {
+	    if (! defined $header{$col}) {
+		$header{$col}++;
+		push(@header, $col);
+	    }
+	}
+    }
+}
+
+for my $file (@ARGV) {
+    my $cols = Cols::new($file);
+    @header = $cols->get_header() if @header == 0;
+    $cols->set_output_header(@header);
+    if (!$printed_header) {
+	$cols->print_header(STDOUT);
+	$printed_header = 1;
+    }
+    while (my $row = $cols->get_row()) {
+	$cols->print_row(STDOUT, $row);
+    }
+}

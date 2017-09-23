@@ -1,0 +1,32 @@
+#!/bin/bash
+
+. subs.sh
+
+PATH=${PATH}:/home/flong/current
+
+if [ $# -lt 1 ]; then
+    echo -e "\nUsage: $0 dir ...\n"
+    exit 1
+fi
+
+for dir in $*
+do
+    dir="`abs_path $dir`"	# why do we need abs_path here? -fjel
+    base="`basename $dir`"
+    prefix="$dir/$base"
+    ref=$dir/reference.fa
+    repeats=$ref.repeats
+    layout=$prefix.layout.final
+
+    run "amos.draw $prefix $prefix.png"
+
+    if need $ref.headers $prefix.read-hits.txt $prefix.read-coverage.txt; then
+	run "amos.get_read_coverage $ref.headers $prefix.read-hits.txt > $prefix.read-coverage.txt"
+    fi
+    if need $ref $prefix.fasta $prefix.mapped-contigs.layout; then
+	run "amos.get_mapped_layout $ref $prefix.fasta $prefix.mapped-contigs"
+    fi
+    if need $prefix.read-coverage.txt $prefix.mapped-contigs.delta.q $prefix.mapped-contigs.png; then
+	run "draw_delta_coverage -r $repeats -l '\d+' -g $prefix.read-coverage.txt $prefix.mapped-contigs.delta.q $prefix.mapped-contigs"
+    fi
+done

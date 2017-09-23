@@ -1,0 +1,17 @@
+#!/usr/bin/perl
+
+require 'fasta.pl';
+
+@ARGV == 2 || die "\nUsage: $0 quality-score seqs.fa > seqs.qual\n\n";
+
+my $qual = shift;
+my $fasta_file = shift;
+
+open(FA, $fasta_file) or die "$fasta_file: $!";
+while ((my ($header, $seq) = read_fasta(FA)) == 2) {
+    print "$header\n";
+    my $len = length($seq);
+    $seq = join(" ", ($qual) x $len);
+    print_wrapped(STDOUT, $seq);
+}
+

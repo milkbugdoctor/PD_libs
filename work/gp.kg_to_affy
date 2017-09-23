@@ -1,0 +1,13 @@
+
+mysql <<FOO
+    use gp_nov8;
+
+    create temporary table names select name from knownToU133;
+    insert into names select name from knownToU133Plus2;
+    create temporary table uniq select distinct name from names;
+    select uniq.name kg_name, a.value u133, b.value u133plus2
+	from uniq
+	left join knownToU133 a using (name)
+	left join knownToU133Plus2 b using (name)
+FOO
+

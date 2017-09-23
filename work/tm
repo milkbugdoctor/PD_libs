@@ -1,0 +1,12 @@
+#!/usr/bin/perl
+
+$ENV{NN_PATH} = "/usr/local/share/MELTING4/NNFILES";
+
+$params = "-Hdnadna -N0.05 -P0.00000005 -T1000 -B";
+
+open(FOO, "/usr/local/bin/melting $params |") || die "melting";
+while (<FOO>) {
+    /.*Melting temperature:\s+(\S+)\s.*/ || next;
+    print "$1\n";
+}
+

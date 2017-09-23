@@ -1,0 +1,152 @@
+#!/usr/bin/perl
+
+require 'misc.pl';
+use strict vars;
+
+my $debug = 0;
+
+my $max_primer_end_match = 4;
+my $max_similarity = 97;
+my $min_product_diff = 4;
+my $match1 = 5;
+my $match2 = 3;
+my $match3 = 5;
+our ($opt_m, $opt_s, $opt_p, $opt_1, $opt_2, $opt_3);
+
+use Getopt::Std;
+getopts('1:2:3:m:p:s:');
+
+(@ARGV == 0) || die "\nUsage: $0 [options] < infile > outfile
+
+    Options:
+	-m bases	min. product length difference (default $min_product_diff)
+	-s percent	max. similarity percent for product length (default $max_similarity)
+	-p bases	max. primer end bases that match (default $max_primer_end_match)
+	-1 m1		see below (default $match1)
+	-2 m2		see below (default $match2)
+	-3 m3		see below (default $match3)
+
+    Possible conflicts:
+	Primers vs product:
+	    Conflict if m1/m1 end match, preceded by m2/m3 match.
+
+	Primers vs primers:
+	    Conflict if >= $max_primer_end_match end-bases match.
+
+	Product length vs product length more than $max_similarity% similar.
+
+    Needs columns: primer1_seq, primer2_seq, prod_seq, prod_id
+
+";
+
+$min_product_diff = $opt_m if $opt_m ne '';
+$max_primer_end_match = $opt_p if $opt_p ne '';
+$max_similarity = $opt_s if $opt_s ne '';
+$match1 = $opt_1 if $opt_1 ne '';
+$match2 = $opt_2 if $opt_2 ne '';
+$match3 = $opt_3 if $opt_3 ne '';
+$max_similarity /= 100;
+
+use Columns;
+require 'primers.pl';
+require 'sequences.pl';
+
+my $columns = Columns::new(ARGV);
+$columns->must_all("primer1_seq", "primer2_seq");
+$columns->must_all("prod_seq", "seq_id", "prod_id");
+
+my @sols;
+my @conflicts;
+my $count = 0;
+
+while (my $row = $columns->get_row()) {
+    my $left_seq = $columns->get_col($row, 'primer1_seq');
+    my $right_seq = $columns->get_col($row, 'primer2_seq');
+    my $seq_id = $columns->get_col($row, 'seq_id');
+    my $prod_id = $columns->get_col($row, 'prod_id');
+    my $product = $columns->get_col($row, 'prod_seq');
+    push(@sols, join("\t", $prod_id, $left_seq, $product, $right_seq));
+}
+
+my %hash;
+for my $index1 (1 .. @sols - 1) {
+    my $s1 = $sols[$index1 - 1];
+    my ($id1, $left1, $prod1, $right1) = split /\t/, $s1;
+    my $len1 = length($prod1);
+printf STDERR "$index1/%d\n", scalar @sols;
+    for my $index2 ($index1 + 1 .. @sols) {
+	my $s2 = $sols[$index2 - 1];
+	my ($id2, $left2, $prod2, $right2) = split /\t/, $s2;
+	my $len2 = length($prod2);
+
+	my @lengths = sort { $a <=> $b } ($len1, $len2);
+	my $dist = $lengths[1] - $lengths[0];
+	if ($lengths[0] / $lengths[1] > $max_similarity or $dist < $min_product_diff) {
+	    warn "products lengths too similar: $lengths[0] vs $lengths[1]\n" if $debug;
+	    print "$id1 $id2\n";
+	    $hash{product_size}++;
+	    next;
+	}
+
+	if (primer_primer_conflict($max_primer_end_match,
+				   $left1, $right1, $left2, $right2)) {
+warn "primer/primer conflict\n" if $debug;
+	    print "$id1 $id2\n";
+	    $hash{primer_primer}++;
+	    next;
+	}
+
+	if (primer_seq_conflict($prod1, $left2, $right2) or
+	    primer_seq_conflict($prod2, $left1, $right1)) {
+warn "primer/product conflict\n" if $debug;
+	    print "$id1 $id2\n";
+	    $hash{primer_product}++;
+	    next;
+	}
+    }
+}
+my @hash = %hash;
+warn "@hash\n";
+
+sub primer_primer_conflict {
+    my ($num_bp, @primers) = @_;
+    for my $i (1 .. @primers - 1) {
+	my $seq1 = rc(substr($primers[$i - 1], -$num_bp));
+	for my $j ($i .. @primers) {
+	    my $seq2 = substr($primers[$j - 1], -$num_bp);
+	    return 1 if "\U$seq2" eq "\U$seq1";
+	}
+    }
+    return 0;
+}
+
+sub primer_seq_conflict {
+    my ($seq, @primers) = @_;
+    for my $primer (@primers) {
+	return 1 if seq_conflict($seq, $primer);
+    }
+    $seq = rc($seq);
+    for my $primer (@primers) {
+	return 1 if seq_conflict($seq, $primer);
+    }
+    return 0;
+}
+
+sub seq_conflict {
+    my ($seq, $primer) = @_;
+    return 0 if $seq =~ /^$primer/i;
+    my $last5 = substr($primer, -$match1);
+    while ($seq =~ /$last5/ig) {
+	return 1 if ($match2 == 0);
+	my $seq_prev5 = substr($`, -$match3);
+	my $primer_prev5 = substr($primer, -($match1 + $match3), $match3);
+	if (length($seq_prev5) != length($primer_prev5)) {
+	    $seq_prev5 = sprintf("%-${match3}s", $seq_prev5);
+	    $primer_prev5 = sprintf("%-${match3}s", $primer_prev5);
+	}
+	if (num_matches($seq_prev5, $primer_prev5) >= $match2) {
+	    return 1;
+	}
+    }
+    return 0;
+}

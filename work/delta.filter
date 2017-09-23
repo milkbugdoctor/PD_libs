@@ -1,0 +1,68 @@
+#!/usr/bin/perl
+
+use Delta;
+use Getopt::Std;
+getopts('g:i:Q:s:t:v:');
+require 'misc.pl';
+
+@ARGV || die "\nUsage: $0 [options] infile.delta
+
+    Options:
+	-g gap		maximum internal gap or unused portion of read
+	-i ident	minimum alignment identity [0, 100], default 0
+	-v cover	minimum coverage [0, 100], default 0
+	-Q query	select only this query
+	-s score	minimum score
+	-t trim		maximum trim (unused portion of read)
+
+";
+
+my $delta = shift;
+
+my $foo = Delta::new($delta);
+print $foo->{header};
+
+$foo->set_penalties(-2, -4, -1, -4);	# mismatch rgapstart rgapextend qgapstart
+
+while (my $entry = $foo->get_entry) {
+    $entry->print(STDOUT) if filter($entry);
+}
+
+sub filter_print {
+    my ($entries) = @_;
+    for my $entry (@$entries) {
+	if (filter($entry)) {
+	    $entry->print(STDOUT);
+	}
+    }
+}
+
+sub filter {
+    my ($entry) = @_;
+    return 0 if ref($entry) ne "Entry";
+    if ($opt_Q ne '') {
+	my ($ref_name, $ref_size, $query_name, $query_size) = $entry->get_header();
+	return 0 if $opt_Q ne $query_name;
+    }
+    if ($opt_i ne '' or $opt_v ne '' or $opt_s ne '') {
+	my ($ident, $rgap, $tgap, $align_len, $score, $cover) = $entry->get_align_stats();
+	return 0 if $ident < $opt_i;
+	return 0 if $cover < $opt_v;
+	return 0 if $score < $opt_s;
+    }
+    if ($opt_g ne '') {
+	return 0 if $entry->get_max_gap() > $opt_g;
+    }
+    if ($opt_t ne '') {
+	return 0 if $entry->get_max_trim() > $opt_t;
+    }
+    return 1;
+}
+
+sub cmp_ref_pos {
+    ($a->get_align())[0] <=> ($b->get_align())[0];
+}
+
+sub cmp_query_pos {
+    ($a->get_align())[2] <=> ($b->get_align())[2];
+}

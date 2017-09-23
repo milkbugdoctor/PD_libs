@@ -1,0 +1,34 @@
+#!/bin/bash
+
+if [ $# -lt 3 ]; then
+    echo -e "\nUsage: $0 fasta qual ref output-dir\n"
+    exit 1
+fi
+
+fasta="$1" ; shift
+qual="$1" ; shift
+ref="$1" ; shift
+dir="$1" ; shift
+
+mkdir -p "$dir" || exit 1
+
+if [ ! -s "$fasta" ]; then
+    echo -e "$fasta not found!" 1>&2
+    exit 1
+fi
+ln -s "`abs_path \"$fasta\"`" $dir/mira_in.fasta
+
+if [ ! -s "$qual" ]; then
+    echo -e "$qual not found!" 1>&2
+else
+    ln -s "`abs_path \"$qual\"`" $dir/mira_in.fasta.qual
+fi
+
+if [ -s "$ref" ]; then
+    ln -s "`abs_path \"$ref\"`" $dir/mira_backbone_in.fasta
+    cd $dir
+    mira -454data -fasta -SB:lb=1:sbuil=2:bsn=LT2:bbq=60
+else
+    cd $dir; mira -454data -fasta
+fi
+

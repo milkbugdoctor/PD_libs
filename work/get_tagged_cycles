@@ -1,0 +1,18 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 tag1 tag2 < file\n\n";
+
+my $tag1 = shift;
+my $tag2 = shift;
+
+require 'NimbleGen.pl';
+
+print "seq\tcycles1\tcycles2\n";
+
+while (<>) {
+	chomp;
+	my ($seq) = split /\t+/;
+	my $c = NimbleGen::get_cycles($seq);
+	my $d = NimbleGen::get_cycles($tag1 . $seq . $tag2);
+	print "$seq\t$c\t$d\n";
+}

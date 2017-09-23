@@ -1,0 +1,92 @@
+#!/usr/bin/perl
+
+require 'fasta.pl';
+
+$opt_p = "fake";
+
+use Getopt::Std;
+getopts('ce:p:');
+
+my $prefix = $opt_p || 'fake';
+
+@ARGV == 3 || die "\nUsage: $0 [options] genome.fa 454-reads.fa 454-reads.qual
+
+    -c		circular
+    -e err	err is probability of error, e.g. \".01\"
+    -p prefix	file prefix; default is 'fake'
+
+";
+
+my $genome_file = shift;
+my $fa_file = shift;
+my $qual_file = shift;
+
+my $genome = join('', `fasta2contig -n 0 $genome_file`);
+my $genome_len = length($genome);
+$genome .= $genome if $opt_c;	# for boundary reads
+
+my $count = 0;
+open(FA, $fa_file) or die "$fa_file: $!";
+while ((my ($header, $seq) = read_fasta(FA)) == 2) {
+    $id[$count] = $header;
+    $seq[$count] = $seq;
+    $count++;
+    printf STDERR "%d\n", $count if $count % 10000 == 0;
+}
+my $count = 0;
+open(QUAL, $qual_file) or die "$qual_file: $!";
+while ((my ($qheader, $qual) = read_fasta(QUAL, 1)) == 2) {
+    die "huh?" if $id[$count] ne $qheader;
+    $qual[$count] = $qual;
+    $count++;
+    printf STDERR "%d\n", $count if $count % 10000 == 0;
+}
+
+open(OUT, ">$prefix.txt") or die "can't create $prefix.txt: $!";
+
+print OUT join("\t", 'orig_id', 'new_id', 'start', 'len', 'seq', 'qual'), "\n";
+for my $i (0 .. $count - 1) {
+    my ($header, $seq, $qual) = ($id[$i], $seq[$i], $qual[$i]);
+    $header =~ s/^>//;
+    my $len = length($seq);
+    my $pos = int(rand $genome_len);
+    my $seq = substr($genome, $pos, $len);
+    my $j = $i + 1;
+    if (rand() < $opt_e) {	# introduce an error
+	add_error($seq, $qual);
+	$len = length($seq);
+    }
+    my $pos1 = $pos + 1;
+    print OUT join("\t", $header, "$j.$pos1.$len", $pos, $len, $seq, $qual), "\n";
+    $count++;
+    printf STDERR "%d\n", $count if $count % 10000 == 0;
+}
+
+system "make_fasta new_id seq $prefix.txt > $prefix.fa";
+system "make_fasta new_id qual $prefix.txt > $prefix.qual";
+
+
+sub add_error {
+    my ($seq, $qual) = @_;
+    my $len = length($seq);
+    my $type = int(rand 3);
+    my $pos = int(rand $len);
+    my @chars = ('A', 'C', 'G', 'T');
+    my $char = $chars[int(rand 4)];
+    if ($type == 0) {
+	substr($seq, $pos, 1) = $char;
+    }
+    elsif ($type == 1) {
+	substr($seq, $pos, 0) = $char;
+	my @qual = split /\s+/, $qual;
+	splice(@qual, $pos, 0, 25);
+	$qual = join(' ', @qual);
+    }
+    elsif ($type == 2) {
+	substr($seq, $pos, 1) = '';
+	my @qual = split /\s+/, $qual;
+	splice(@qual, $pos, 1);
+	$qual = join(' ', @qual);
+    }
+    ($_[0], $_[1]) = ($seq, $qual);
+}

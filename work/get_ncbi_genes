@@ -1,0 +1,75 @@
+#!/bin/bash
+
+shopt -s nullglob
+
+if [ $# -ne 3 ]; then
+    echo -e "\nUsage: $0 input-dir output-dir genome-short-name
+
+    Extracts genes from .ptt, .gff, and .fna files.  Puts final result
+    in \$output/\$short_name.genes.txt.
+"
+    exit 1
+fi
+
+input="$1" ; shift
+output="$1" ; shift
+short_name="$1" ; shift
+
+. subs.sh
+
+mkdir -p $output
+
+genome_fasta=
+for i in $input/*.fna
+do
+    base=`basename $i .fna`
+    if need $input/$base.fna $output/$base.fa; then
+	run "fasta.fix_ncbi_headers $input/$base.fna > $output/$base.fa"
+    fi
+    genome_fasta="$genome_fasta $output/$base.fa"
+done
+
+for i in $input/*.ptt
+do
+    base=`basename $i .ptt`
+    if need $i $output/$base.ptt-CDS.txt; then
+	run "ptt2text $i $output/$base.fa > $output/$base.ptt-CDS.txt"
+    fi
+    if need $i $output/$base.ptt-CDS.fa; then
+	run "make_fasta synonym seq $output/$base.ptt-CDS.txt > $output/$base.ptt-CDS.fa"
+    fi
+done
+
+txt=
+fasta=
+for i in $input/*.gff
+do
+    base=`basename $i .gff`
+    if need $input/$base.fna $output/$base.fa; then
+	run "fasta.fix_ncbi_headers $input/$base.fna > $output/$base.fa"
+    fi
+    if need $i $output/$base.gff_genes.txt; then
+	run "get_gff_genes -a $i | add_seq_from_fasta -c - $output/$base.fa $base start end strand > $output/$base.gff_genes.txt"
+    fi
+    if need $output/$base.gff_genes.txt $output/$base.gff_genes.fa; then
+	run "make_fasta -e 'Type: [{type}] Genes: [{gene}, {synonym}]' \
+	    locus_tag seq $output/$base.gff_genes.txt | sed 's/, \]/]/' \
+	    > $output/$base.gff_genes.fa"
+    fi
+    txt="$txt $output/$base.gff_genes.txt"
+    fasta="$fasta $output/$base.gff_genes.fa"
+done
+
+if need $txt $output/$short_name.genes.txt; then
+    cols="chr=gene_chr locus_tag=gene_id gene=gene_gene gene_synonym \
+	type=gene_type strand=gene_strand start=gene_start end=gene_end \
+	product=gene_product note=gene_note seq=gene_seq"
+    run "cols.concat_files -a $txt | ncols $cols | sort_file gene_chr gene_id > $output/$short_name.genes.txt"
+fi
+
+if need $txt $output/$short_name.genes.fa; then
+    run "cat $fasta > $output/$short_name.genes.fa"
+fi
+if need $genome_fasta $output/$short_name.fa; then
+    run "cat $genome_fasta > $output/$short_name.fa"
+fi

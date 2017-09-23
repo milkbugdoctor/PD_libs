@@ -1,0 +1,50 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ $# -lt 3 ]; then
+    echo -e "\nUsage: $0 db.fa input.fa output-prefix [blat options]
+
+    Creates output-prefix.*
+"
+    exit 1
+fi
+
+db="$1" ; shift
+input="$1"  ; shift
+key="$1"    ; shift
+
+dir=`dirname "$key"`
+
+mkdir -p "$dir"
+
+if need $input $key.blat; then
+    run "blat '$db' '$input' '$key.blat' -out=pslx $*"
+fi
+if need $key.blat $key.blat.align; then
+    run "psl2align -b -g 100 $key.blat > $key.blat.align"
+fi
+if need $key.blat.align $key.best.short.txt; then
+    run "cols.select '{qlen} < 1000' < $key.blat.align \
+	| sort_file tname | get_best_hit tname matches | sort_file matches/nr \
+	| ncols qname tname ident matches qlen > $key.best.short.txt"
+fi
+if need $key.blat.align $key.best.long.txt; then
+    run "cols.select '{qlen} >= 1000' < $key.blat.align \
+	| sort_file tname | get_best_hit tname matches | sort_file matches/nr \
+	| ncols qname tname ident matches qlen > $key.best.long.txt"
+fi
+if need $key.blat.align $key.best_query.txt; then
+    run "cat $key.blat.align \
+	| sort_file qname matches/nr \
+	| ncols qname tname ident matches qlen qsize cover > $key.best_query.txt"
+fi
+
+if need $key.blat $key.delta; then
+    run "psl2delta $key.blat "$db" "$input" > $key.delta"
+fi
+
+if need $key.delta $key.delta.1; then
+    run "delta-filter -q '$key.delta' > '$key.delta.q'"
+fi
+

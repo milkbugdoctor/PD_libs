@@ -1,0 +1,64 @@
+#!/usr/bin/perl
+
+my $overlap = 100;
+
+use Getopt::Std;
+getopts('d');
+
+$debug = $opt_d;
+
+@ARGV == 1 || die "\nUsage: $0 [-d] prefix\n\n";
+
+my $prefix = shift;
+my $coverage_file = "$prefix.mapped-contigs.coverage";
+
+use Cols;
+require 'misc.pl';
+require 'ranges.pl';
+require 'markers.pl';
+require 'need.pl';
+
+open(HITS, "$prefix.read-hits.txt") or die "$prefix.read-hits.txt: $!";
+
+my $cols = Cols::new($coverage_file);
+while (my $row = $cols->get_row()) {
+    my $scaff = $row->{'scaff'};
+    my $what = $row->{'what'};
+    my $start = $row->{'start'};
+    my $end = $row->{'end'};
+    if ($what eq 'genome') {
+	$uncovered{$scaff} = [ $start, $end ];
+	$genome_name{$scaff} = $row->{name};
+	$genome_id{$row->{name}} = $scaff;
+    }
+    elsif ($what eq 'contig') {
+	$start += $overlap;
+	$end -= $overlap;
+	if ($start < $end) {
+	    range_sub($start, $end, $uncovered{$scaff});
+	}
+    }
+}
+
+my $m = markers::new();
+for my $scaff (keys %uncovered) {
+    my $ranges = $uncovered{$scaff};
+    for (my $i = 0; $i < @$ranges; $i += 2) {
+	my ($s, $e) = @$ranges[$i, $i + 1];
+	$m->add_marker($scaff, '+', $s, $e);
+    }
+}
+
+my $hits = Cols::new(HITS);
+while (my $row = $hits->get_row()) {
+    my $scaff = $genome_id{$row->{tname}};
+    my $start = $row->{tstart};
+    my $end = $row->{tend};
+    next if $row->{tname} =~ /contig/i;	# don't include contig pieces
+    my @hits = $m->get_covering_marker_indexes('any', $scaff, '+', $start, $end);
+    $read_hash{$row->{tname}} = 1 if @hits;
+}
+
+open(OUT, ">$prefix.gap-reads.txt") or die "$prefix.gap-reads.txt: $!";
+print OUT join("\n", keys %read_hash), "\n";
+close OUT;

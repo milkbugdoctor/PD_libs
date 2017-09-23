@@ -1,0 +1,71 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+require 'blat.pl';
+
+my @std_options = split /\s+/, $std_options;
+
+while (@ARGV) {
+    my $arg = shift;
+    if ($arg =~ /^-match/) {
+	@psl_options = ($arg);
+	my $arg = shift;
+	push(@psl_options, $arg);
+	$match = $arg;
+    }
+    elsif ($arg =~ /^-std/) {
+	push(@options, @std_options);
+    }
+    elsif ($arg =~ /^-d$/) {
+	$debug = 1;
+    }
+    elsif ($arg =~ /^-/) {
+	push(@options, $arg);
+    }
+    else {
+	push(@args, $arg);
+    }
+}
+
+($args[2] = '/dev/stdout') if ($args[2] eq 'stdout');
+
+my %options;
+set_options(\%options, "@options", $match);
+my $want_psl = $options{-out};
+$options = flatten_options(\%options);
+
+if (@args == 3) {
+    if ($want_psl =~ /^psl/) {
+	warn "blat '$args[0]' '$args[1]' stdout $options | psl_filter @psl_options > '$args[2]'\n" if $debug;
+	system "blat '$args[0]' '$args[1]' stdout $options | psl_filter @psl_options > '$args[2]'";
+    }
+    else {
+	warn "blat '$args[0]' '$args[1]' stdout $options > '$args[2]'\n" if $debug;
+	system "blat '$args[0]' '$args[1]' stdout $options > '$args[2]'";
+    }
+}
+else {
+    $0 =~ s|.*/||;
+    die "\nUsage: $0 [options] db query result
+
+    $0 options:
+
+	-d      print blat command-lines
+	-std    use standard options:
+		    @std_options
+
+	-match num[%][c][t]
+
+	    %   percent of qsize
+	    c   contiguous
+	    %t  percent of tsize
+
+	    e.g.: 20, 20c, 60%, 60%c, 60%t
+
+    Blat options:
+
+	Run \"blat\" to see all the blat-specific options.
+
+";
+}

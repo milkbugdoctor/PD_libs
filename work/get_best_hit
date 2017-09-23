@@ -1,0 +1,75 @@
+#!/usr/bin/perl
+
+use strict vars;
+
+my $debug = 1;
+
+our ($get_all, $opt_a, $opt_b, $opt_h);
+use Getopt::Std;
+getopts('abh');
+$get_all = $opt_a;
+my $mult = ($opt_b) ? -1 : 1;
+
+(@ARGV >= 2) || die "\nUsage: $0 [options] id-col goodness-col < input > output
+
+    For each id, keep row with best match.
+
+    Input must be sorted by id-col.
+
+    Options:
+
+	-a      get all best hits, not just one
+	-b      using badness column (-goodness)
+	-h	input file does not have a header
+
+";
+
+use Cols;
+
+my $class_col = shift;
+my $match_col = shift;
+
+my $columns = Cols::new(ARGV, $opt_h);
+if (!$opt_h) {
+    $columns->must_col($class_col);
+    $columns->must_col($match_col);
+}
+
+$columns->print_header(STDOUT);
+
+my ($last_class, @lines);
+while (my $row = $columns->get_row()) {
+    my $class = $columns->get_col($row, $class_col);
+    die "bad id [$class] found" if $class eq '';
+    my $tmp = $columns->get_col($row, $match_col);
+    die "bad goodness [$tmp] found" if $tmp eq '';
+    if ($class ne $last_class and $last_class ne '') {
+	&do_probes($last_class, \@lines);
+	@lines = ();
+    }
+    $last_class = $class;
+    push(@lines, $row);
+}
+&do_probes($last_class, \@lines);
+
+sub do_probes {
+    my ($class, $lines_ref) = @_;
+
+    my ($best_val, @best_lines);
+    for my $line (@$lines_ref) {
+	my $match = $mult * $columns->get_col($line, $match_col);
+	if (@best_lines == 0 or $match > $best_val) {
+	    $best_val = $match;
+	    @best_lines = ($line);
+	}
+	elsif ($get_all and $match >= $best_val) {
+	    push(@best_lines, $line);
+	}
+    }
+
+    for my $best_line (@best_lines) {
+	$columns->print_row(STDOUT, $best_line);
+    }
+    @$lines_ref = ();
+}
+

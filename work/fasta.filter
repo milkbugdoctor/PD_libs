@@ -1,0 +1,27 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 expr infile.fa > outfile.fa
+
+    Keep lines that match expression.
+
+	variables:	{head} and {seq}
+
+	exp e.g.:	\"length({seq}) > 800\"
+			\"{head} =~ s/\t.*//\"
+
+";
+
+my $expr = shift;
+
+require 'fasta.pl';
+
+while ((my ($head, $seq) = read_fasta(ARGV)) == 2) {
+    $head =~ s/^>//;
+    my $e = $expr;
+    $e =~ s/{head}/\$head/g;
+    $e =~ s/{seq}/\$seq/g;
+    if (eval $e) {
+	print ">$head\n";
+	print_wrapped(stdout, $seq);
+    }
+}

@@ -1,0 +1,45 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('dh');
+
+(@ARGV >= 1) || die "\nUsage: $0 [-h] where-clause < input
+
+    Use { and } to delimit column names.  The rest is a normal
+    Perl expression.
+
+    E.g.:
+	{col1} eq 'foo' and {col2} ne 'goo'
+
+    Options:
+	-d	debug: output expression
+	-h	No header; use {1} for column 1, etc.
+
+";
+
+my $where_expr = shift;
+
+use Columns;
+require 'misc.pl';
+
+my $c = Columns::new(ARGV, $opt_h);
+
+$c->print_header(STDOUT) if ! $opt_h;
+
+while (my $row = $c->get_row()) {
+    my $expr = $where_expr;
+	warn "got [$expr]\n" if $opt_d;
+    while ($expr =~ /\{([^}]+)\}/) {
+	my $col = $1;
+	my $match = $&;
+	my $val = $c->get_col($row, $col);
+	warn "substituting, col [$1], match [$&], val [$val]\n" if $opt_d;
+	$match =~ s/\{/\\\{/;
+	$match =~ s/\}/\\\}/;
+	warn "[$expr] =~ s/$match/'$val'/\n" if $opt_d;
+	$val =~ s/'/\\'/g; # quote single quotes
+	$expr =~ s/$match/'$val'/;
+	warn "expr now: [$expr]\n" if $opt_d;
+    }
+    $c->print_row(STDOUT, $row) if eval $expr;
+}

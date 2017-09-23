@@ -1,0 +1,49 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('a');
+
+@ARGV || die "\nUsage: $0 [-a] file.conflicts
+
+    -a		show all supported
+
+";
+
+my %types = qw{0 INDEL 1 HIBREAK 2 LOBREAK};
+
+print join("\t", qw{ref status pos gapR gapQ type no yes dis sup}), "\n";
+while (<>) {
+    chomp;
+    if (/^>(\S+)/) {
+	$ref = $1;
+    }
+    elsif (/^\?\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+N\.(\d+)\s+Y\.(\d+)/) {
+	@first = ("ambig", $1, $2, $3, $4, $5, $6);
+    }
+    elsif (/^\-\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+N\.(\d+)\s+Y\.(\d+)/) {
+	@first = ("unsupp", $1, $2, $3, $4, $5, $6);
+    }
+    elsif (/^\+\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+N\.(\d+)\s+Y\.(\d+)/) {
+	@first = ("supp", $1, $2, $3, $4, $5, $6);
+    }
+    elsif (/^\.\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+N\.(\d+)\s+Y\.(\d+)/) {
+	@first = ("artif", $1, $2, $3, $4, $5, $6);
+    }
+    elsif (/^ S: (.*)/) {
+	$support = $1;
+    }
+    elsif (/^ D: (.*)/) {
+	$disagree = $1;
+    }
+    elsif (/^$/) {
+	my ($status, $pos, $gapR, $gapQ, $type, $no, $yes) = @first;
+	next if $status =~ /unsup/;
+	next if $status =~ /artif/;
+	next if ! $opt_a and $status =~ /sup/ and $types{$type} eq "INDEL";
+	print "$ref\t$status\t$pos\t$gapR\t$gapQ\t$types{$type}\t$no\t$yes\t";
+	print "$disagree\t$support\n";
+    }
+    else {
+	warn "huh? on line $_\n";
+    }
+}

@@ -1,0 +1,129 @@
+#!/usr/bin/perl
+
+our $opt_b = 10;
+our $opt_m = 200;
+our $prefix = "used";
+
+use Cols;
+use Getopt::Std;
+getopts('b:m:p:q:s');
+
+require 'fasta.pl';
+require 'need.pl';
+require 'ranges.pl';
+
+$allowed_repeat = $opt_r if defined $opt_r;
+$prefix = $opt_p if $opt_p;
+
+@ARGV >= 2 || die "\nUsage: $0 [options] ref.fa contigs.fa [contigs.qual]
+
+    Options:
+	-b break-len		for nucmer (default 10)
+	-p prefix		prefix for output files (default \"used\")
+	-s			self: ref.fa and contigs.fa are the same
+	-m bases		minimum sequence size to output ($opt_m);
+
+";
+
+my $ref = shift;
+my $contigs = shift;
+my $contigs_qual = shift;
+
+if (need($ref, $contigs, "$prefix.delta")) {
+    run("nucmer -b $opt_b --nosimplify -c 20 --maxmatch $ref $contigs -p $prefix 2> $prefix.nucmer.err");
+}
+
+my $delta = "$prefix.delta";
+if (!$opt_s) {
+    if (need("$prefix.delta", "$prefix.delta.q")) {
+	run("delta-filter -q $prefix.delta > $prefix.delta.q");
+    }
+    $delta = "$prefix.delta.q";
+}
+
+warn "delta is $delta\n";
+open(HITS, "delta.list $delta |") or die "huh?";
+my $cols = Cols::new(HITS);
+while (my $hash = $cols->get_row()) {
+    my $id = $hash->{'qname'};
+    my $qsize = $hash->{'qsize'};
+    if (!defined $range{$id}) {
+	$range{$id} = [ ];
+    }
+    my $tid = $hash->{'rname'};
+    my $tsize = $hash->{'rsize'};
+    my $qstart = $hash->{'qstart'};
+    my $qend = $hash->{'qend'};
+    my $tstart = $hash->{'rstart'};
+    my $tend = $hash->{'rend'};
+    my $qlen = $hash->{qlen};
+    my $tlen = $hash->{rlen};
+
+    if ($id eq $tid and $qstart == $tstart and $qend == $tend) {	# it hit itself
+	next;
+    }
+
+    push(@{$range{$id}}, $qstart, $qend);
+}
+close HITS;
+
+warn "reading $contigs\n";
+open(FILE, $contigs) or die "$contigs: $!";
+open(OUT, ">$prefix.fa") or die "$prefix.fa: $!";
+while ((my ($header, $seq) = read_fasta(FILE)) == 2) {
+    my $id = $header;
+    $id =~ s/^>//;
+    $id =~ s/\s.*$//;
+    my $seq_len = length($seq);
+    if ($range{$id}) {
+	my @range = @{$range{$id}};
+	my $counter = 1;
+	for (my $i = 0; $i < $#range; $i += 2) {
+	    my ($s, $e) = ($range[$i], $range[$i+1]);
+	    my $len = $e - $s + 1;
+	    if ($len >= $opt_m) {
+		if (@range == 2 && $s == 1 && $e == $seq_len) {
+		    print OUT "$header\n";
+		}
+		else {
+		    print OUT ">$id.$counter [$id $s-$e of $seq_len]\n";
+		}
+		$counter++;
+		print_wrapped(OUT, substr($seq, $s - 1, $len));
+	    }
+	}
+    }
+}
+
+exit 0 if $contigs_qual eq '';
+
+warn "reading $contigs_qual\n";
+open(FILE, $contigs_qual) or die "$contigs_qual: $!";
+open(OUT, ">$prefix.qual") or die "$prefix.qual: $!";
+while ((my ($header, $seq) = read_fasta(FILE)) == 2) {
+    my $id = $header;
+    $id =~ s/^>//;
+    $id =~ s/\s.*$//;
+    my @seq = split /\s+/, $seq;
+    my $seq_len = @seq;
+    if ($range{$id}) {
+	my @range = @{$range{$id}};
+	my $counter = 1;
+	for (my $i = 0; $i < $#range; $i += 2) {
+	    my ($s, $e) = ($range[$i], $range[$i+1]);
+	    my $len = $e - $s + 1;
+	    if ($len >= $opt_m) {
+		if (@range == 2 && $s == 1 && $e == $seq_len) {
+		    print OUT "$header\n";
+		}
+		else {
+		    print OUT ">$id.$counter [$id $s-$e of $seq_len]\n";
+		}
+		$counter++;
+		print_wrapped(OUT, join(" ", @seq[$s - 1 .. $e - 1]));
+	    }
+	}
+    }
+}
+
+system "rm -rf $remove.*" if $remove;

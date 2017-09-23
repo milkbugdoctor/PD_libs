@@ -1,0 +1,69 @@
+. subs.sh
+
+while getopts c:t foo ; do
+    if [ "$foo" = 'c' ]; then
+        con="$OPTARG"
+    elif [ "$foo" = 't' ]; then
+        tag="-t"
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -lt 3 ]; then
+    echo -e "\nUsage: $0 [options] prefix file.fa file.qual [autopcap-options]
+
+    The output file prefix is of the form \"[directory/]filebase\".
+
+    Options:
+        -c cf	     constraints file
+        -t           tag sequences for uniqueness with 'fasta.tag_and_cat -n ...'
+
+"
+    exit 1
+fi
+prefix="$1" ; shift
+base="`basename \"$prefix\"`"
+
+pcap_opts=
+files=
+while [ $# -ge 1 ]
+do
+    i="$1"
+    if [[ "$i" =~ "^-" ]]; then
+	pcap_opts="$*"
+	break
+    else
+	files="$files `quote_args $i`"
+    fi
+    shift
+done
+
+mkdir -p $prefix
+ls -ld $prefix
+run "fasta.combine_pairs $tag $prefix/input $files"
+fasta=$prefix/input.fa
+qual=$prefix/input.qual
+
+ln -f "$qual" $prefix/input.qual.fa || exit 1
+if [ -s "$con" ]; then
+    ln "$con" $prefix/$base.con 2> /dev/null
+fi
+fasta=input.fa
+qual=input.qual.fa
+cd $prefix
+
+new_fasta="input.fa.gz"
+new_qual="input.fa.qual.gz"
+if need "$fasta" "$new_fasta"; then
+    run "gzip < '$fasta' > '$new_fasta'"
+fi
+if need "$qual" "$new_qual"; then
+    run "gzip < '$qual' > '$new_qual'"
+fi
+if need $prefix; then
+    echo "$fasta" > $prefix
+fi
+touch $base.con
+echo "running [pcap.run_jobs $pcap_opts $prefix] from `pwd`" > log
+# run "/usr/bin/time -p pcap.run_jobs $pcap_opts $base >> log 2> err"
+run "/usr/bin/time -p pcap.run_jobs $pcap_opts $base"

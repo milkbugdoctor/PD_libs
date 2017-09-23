@@ -1,0 +1,32 @@
+#!/usr/bin/perl
+
+my $max_gap = my $def_max_gap = 5;
+
+use Cwd qw(cwd getcwd abs_path);
+use Getopt::Std;
+getopts('g:');
+$max_gap = $opt_g if $opt_g ne '';
+
+@ARGV == 3 || die "\nUsage: $0 [options] psl_infile ref.fa query.fa > out.delta
+
+    psl_infile must be in pslx or psl_filter format.
+
+    Options:
+	-g gap		maximum gap allowed (default $def_max_gap)
+
+";
+
+use psl;
+
+my $psl_file = shift;
+my $ref_fa = abs_path(shift);
+my $query_fa = abs_path(shift);
+
+my $c = new psl $psl_file;
+
+print "$ref_fa\t$query_fa\nNUCMER\n";
+my $align_num = 0;
+while (my $r = $c->get_next_line()) {
+    my $delta = psl2delta($r, $max_gap);
+    print $delta;
+}

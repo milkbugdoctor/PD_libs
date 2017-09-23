@@ -1,0 +1,10 @@
+#!/usr/bin/perl
+
+@ARGV == 1 || die "\nUsage: $0 samfile\n\n";
+
+open(PIPE, "samtools view -H $ARGV[0] |");
+while (<PIPE>) {
+    if (/SN:(\S+)/) {
+        print "$1\n";
+    }
+}

@@ -1,0 +1,33 @@
+#!/usr/bin/perl
+
+use Columns;
+require 'misc.pl';
+
+use Getopt::Std;
+getopts('b:');
+
+$opt_b = 500 if ! defined $opt_b;
+
+@ARGV || die "\nUsage: $0 [-b bases] prefix|file.layout
+
+    -b bases	only count contigs at least <bases> long
+
+";
+
+my $prefix = shift;
+if (! -f $prefix) {
+    $prefix .= ".layout";
+}
+
+open(LAYOUT, "$prefix") or die "can't open $prefix";
+while (<LAYOUT>) {
+    my ($c, $num, $num, $genome, $pos) = split /\s+/;
+    next if $c ne "C";
+    $pos =~ /(-?\d+)-(-?\d+)/;
+    my ($s, $e) = ($1, $2);
+    my $len = ($e - $s + 1);
+    next if $len < $opt_b;
+    $num_contigs++;
+}
+
+print "$num_contigs\n";

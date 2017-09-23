@@ -1,0 +1,5 @@
+finished connecting to all servers
+options -tileSize=11 -minMatch=2 -out=psl -stepSize=11 -minIdentity=90 -minScore=30
+real 14.31
+user 1.51
+sys 0.26

@@ -1,0 +1,18 @@
+#!/usr/bin/perl
+
+@ARGV >= 1 || die "\nUsage: $0 infile.pir [outfile.nex]\n\n";
+
+if ($ARGV[1] eq '') {
+    $ARGV[1] = $ARGV[0];
+    $ARGV[1] =~ s|\.pir$|.nex|i;
+}
+
+open(PAUP, "| paup -n > /dev/null") || die "can't run paup";
+print PAUP <<FOO;
+#NEXUS
+
+begin paup;
+FOO
+print PAUP "tonexus format=pir from='$ARGV[0]' to='$ARGV[1]';\n";
+print PAUP "end;\n";
+close PAUP;

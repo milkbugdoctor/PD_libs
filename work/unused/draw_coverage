@@ -1,0 +1,234 @@
+#!/usr/bin/perl
+
+use Carp 'confess';
+use Getopt::Std;
+getopts('f');
+
+$opt_f = "-r" if $opt_f;
+
+@ARGV == 2 || die "\nUsage: $0 [-f] ref.headers coverage-file.txt
+
+    -f     fragmented: draw small contigs last
+
+    contig-file columns: scaff what start end len name
+
+";
+
+use Columns;
+
+my %colors;
+my @rgb = (0, 0, 0);
+
+my $y_pos = -10;
+my $y_inc = 1.5;
+
+require 'markers.pl';
+my $m = markers::new();
+
+my $headers_file = shift;
+my $contig_file = shift;
+
+my %headers;
+my $headers = Columns::new($headers_file);
+my $genome = 0;
+print "background white\n";
+while (my $r = $headers->get_row()) {
+    my ($id, $desc, $len) = $headers->get_col($r, qw{id desc len});
+    $genome++;
+    $headers{$genome}{'id'} = $id;
+    $headers{$genome}{'desc'} = $desc;
+    $headers{$genome}{'size'} = $len;
+    die "too man genomes!" if $genome > 7;
+    printf "text 2 %s black 30 left center \"genome $id   [$desc]   len $len\"\n", $y_pos;
+    $y_pos += $y_inc;
+}
+
+my $min = 1;
+my ($xc, $yc) = (50, 55);
+
+my $contig_num = 0;
+
+open(CONTIGS, "sort_file $opt_f -n len < $contig_file |") or die "huh?: $!";
+my $hits = Columns::new(CONTIGS);
+while (my $r = $hits->get_row()) {
+    my ($qname, $what, $start, $end, $len, $tnum) = $hits->get_col($r, qw{name what start end len scaff});
+    if ($what eq 'contig') {
+    }
+    elsif ($what eq 'genome') {
+	next;
+    }
+    else {
+	die "unknown coverage item '$what'";
+    }
+
+    my $genome = $headers{$tnum}{'id'};
+    die "unknown genome [$tnum]" if $genome eq '';
+
+    $contig_num = $contig_map{$qname} || (keys %contig_map) + 1;
+    $contig_map{$qname} = $contig_num;
+
+    my $color = get_color($contig_num);
+
+    if ($contig_num =~ /(\d+)$/) {
+	warn "changing $contig_num to $1\n";
+	$contig_num = $1;
+    }
+
+    my $len = length($contig_num);
+    my $mult = get_mult($tnum);
+    my $tsize = $headers{$tnum}{'size'};
+    confess "got illegal tsize [$tsize] for scaffold [$tnum]" if $tsize <= 1;
+    my @ang = get_angle($tsize, $start, $end);
+    my $contig_level = 0;
+    print "# contig $contig_num $start - $end\n";
+    printf "radial_box $xc $yc @ang %s %s $color black .01\n",
+	(91 - 3 * $contig_level) * $mult, 3 * $mult;
+    if ($ang[1] - $ang[0] > $len * .002) {
+	my $ang = ($ang[0] + $ang[1]) / 2;
+	printf "radial_text $xc $yc $ang %s black %s center center \"$contig_num\"\n",
+	    (89.5 - 3 * $contig_level) * $mult, 20 * $mult;
+    }
+}
+
+printf "box 2 %s 5 %s purple\n", $y_pos - .5, $y_pos + .5;
+printf "text 6 %s black 30 left center \"contig\"\n", $y_pos;
+$y_pos += $y_inc;
+
+exit 0 if (keys %headers) == 0;
+
+for my $g (keys %headers) {
+    my $max = $headers{$g}{'size'};
+    confess "max == 0 for [$g]" if $max == 0;
+    my $mult = get_mult($g);
+    my $big = $max * $mult / 30;
+    if ($big > 50000) {
+        $big = round_to($big, 50000);
+    }
+    elsif ($big > 10000) {
+        $big = round_to($big, 10000);
+    }
+    elsif ($big > 5000) {
+        $big = round_to($big, 5000);
+    }
+    elsif ($big > 1000) {
+        $big = round_to($big, 1000);
+    }
+    elsif ($big > 500) {
+        $big = round_to($big, 500);
+    }
+    elsif ($big > 100) {
+        $big = round_to($big, 100);
+    }
+    elsif ($big > 50) {
+        $big = round_to($big, 50);
+    }
+    for (my $s = 0; $s <= .99 * $max; $s += $big) {
+	my ($ang) = get_angle($max, $s);
+	$ang = 0 if $s == 0;
+	my $text = get_num($s);
+	printf "radial_line $xc $yc $ang %s %s black 1.5\n",
+	    88 * $mult, 6 * $mult;
+	printf "radial_text $xc $yc $ang %s black %s center center \"$text\"\n",
+	    80 * $mult, 30 * $mult;
+    }
+    for (my $s = $big/2; $s <= .99 * $max; $s += $big) {
+	my ($ang) = get_angle($max, $s);
+	$ang = 0 if $s == 0;
+	my $text = get_num($s);
+	printf "radial_line $xc $yc $ang %s %s black 1\n",
+	    88 * $mult, 3 * $mult;
+	printf "radial_text $xc $yc $ang %s black %s center center \"$text\"\n",
+	    83 * $mult, 17 * $mult;
+    }
+    for (my $s = $big/4; $s <= .995 * $max; $s += $big/2) {
+	my ($ang) = get_angle($max, $s);
+	$ang = 0 if $s == 0;
+	my $text = get_num($s);
+	printf "radial_line $xc $yc $ang %s %s gray 1\n",
+	    88 * $mult, 1.5 * $mult;
+	printf "radial_text $xc $yc $ang %s black %s center center \"$text\"\n",
+	    86 * $mult, 15 * $mult;
+    }
+}
+
+sub get_angle {
+    my ($max, @pos) = @_;
+    confess "max is 0" if $max == 0;
+    my @angles;
+    for my $pos (@pos) {
+	my $ang = ($pos - $min) / ($max - $min + 1);
+	push(@angles, $ang);
+    }
+    return sort {$a <=> $b} @angles;
+}
+
+sub get_mult {
+    my ($my_genome) = @_;
+    my @sizes;
+    for my $g (keys %headers) {
+        my $size = $headers{$g}{'size'};
+	confess "size is 0" if $size == 0;
+	push(@sizes, $size);
+    }
+    @sizes = sort { $b <=> $a } @sizes;
+    my $my_size = $headers{$my_genome}{'size'};
+    my $index;
+    for ($index = 0; $index < $#sizes; $index++) {
+        last if $my_size == $sizes[$index];
+    }
+    my $mult = .8 ** $index;
+    return $mult;
+}
+
+sub round_to {
+    my ($val, $multiple) = @_;
+    return int($val / $multiple + .5) * $multiple;
+}
+
+sub get_num {
+    my ($s) = @_;
+    if ($s >= 1000000) {
+	$s = sprintf "%.2f", ($s / 1000000);
+	$s = remove_zeroes($s) . "M";
+    }
+    elsif ($s >= 1000) {
+	$s = sprintf "%.2f", ($s / 1000);
+	$s = remove_zeroes($s) . "K";
+    }
+    else {
+	$s = sprintf "%.2f", $s;
+	$s = remove_zeroes($s);
+    }
+    return $s;
+}
+
+sub remove_zeroes {
+    my ($s) = @_;
+    my @s = split //, $s;
+    while ($s[-1] eq '0') { pop(@s); }
+    while ($s[-1] eq '.') { pop(@s); }
+    my $sss = join('', @s);
+    return join('', @s);
+}
+
+sub get_color {
+    my ($name) = @_;
+    return $colors{$name} if $colors{$name};
+
+    while (1) {
+	my $color = int(rand(2**24));
+	my @rgb;
+	push(@rgb, $color & 255);
+	$color >>= 8;
+	push(@rgb, $color & 255);
+	$color >>= 8;
+	push(@rgb, $color & 255);
+	my $total = $rgb[0] + $rgb[1] + $rgb[2];
+	my ($lowest) = sort { $a <=> $b } @rgb;
+	next if $total < 300;
+	$colors{$name} = join("/", @rgb);
+	warn "new $name -> $colors{$name}\n"; # ZZZ
+	return $colors{$name};
+    }
+}
+

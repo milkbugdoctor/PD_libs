@@ -1,0 +1,52 @@
+#!/usr/bin/perl
+#
+#   Get introns, exons, and transcripts from a Golden Path track.
+#
+
+$debug = 0;
+
+use Getopt::Std;
+getopts('c:');
+
+@ARGV == 1 || die "\nUsage: $0 track > exons.out
+
+    track	ens (Ensembl)
+		est (EST)
+		kg (Known Genes)
+		ref (RefSeq)
+		mi (miRNA)
+		mrna (Human mRNA)
+		uni (UniGene)
+		u95 (Affy U95 probes)
+		u133 (Affy U133 probes)
+		u133plus2 (Affy U133Plus2 probes)
+
+
+";
+my $track = shift;
+
+require 'golden_path.pl';
+require 'misc.pl';
+require 'columns.pl';
+
+my @header = get_gp_track_header($track);
+
+print_tabbed(STDOUT,
+    "${track}_id ${track}_name exon_id exon_chr exon_strand exon_start exon_end exon_len\n");
+my $reader = gp_reader::new($track);
+my $item;
+while (($item = $reader->get_next()) ne '') {
+    my $exon_id = 1;
+    my @row = split /\t/, $item;
+    my ($id, $name, $chr, $strand, $exons)
+	= get_cols(\@header, \@row, qw{id name chr strand exons});
+    my @exons = split /,/, $exons;
+    for my $exon (@exons) {
+	my ($start, $len) = split /:/, $exon;
+	my $end = $start + $len - 1;
+	print_tabbed(STDOUT, "$id $name $id.$exon_id $chr $strand $start $end $len\n");
+	$exon_id++;
+    }
+}
+
+exit 0;

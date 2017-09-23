@@ -1,0 +1,34 @@
+#!/usr/bin/env activeperl-5.8
+
+use Getopt::Std;
+getopts('r');
+
+$0 =~ s|.*/||;
+@ARGV >= 2 || die "\nUsage: $0 [options] dna-col new-prot-col < infile > outfile
+
+    Options:
+	-r	remove last stop codon (*) if present.
+
+    Uses BioPerl's translate_as_string function to convert DNA to a string
+    of amino acids.
+
+";
+
+my $dna_col = shift;
+my $prot_col = shift;
+
+use Cols;
+require 'translate.pl';
+
+my $columns = Cols::new(STDIN);
+$columns->add_col($prot_col);
+$columns->print_header(STDOUT);
+
+while (my $row = $columns->get_row()) {
+    my $pep =  nuc_to_amino($row->{$dna_col});
+    $pep =~ s/\*$// if $opt_r;
+    $row->{$prot_col} = $pep;
+    $columns->print_row(STDOUT, $row);
+}
+close(STDIN);
+

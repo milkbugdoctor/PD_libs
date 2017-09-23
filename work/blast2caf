@@ -1,0 +1,40 @@
+#!/usr/bin/perl
+
+my $max_gap = my $def_max_gap = 5;
+
+use BlastReader;
+use Cwd qw(cwd getcwd abs_path);
+use Getopt::Std;
+
+require 'file_stuff.pl';
+require 'delta.pl';
+require 'align_string.pl';
+
+@ARGV == 1 || die "\nUsage: $0 [options] blast_infile > out.caf
+
+    Converts Blast file to Fred's \"Common Alignment Format\".
+
+";
+
+my $blast_file = shift;
+
+my @cols = qw{rname rstart rend rlen rsize qname qstrand qstart qend qlen qsize align};
+
+my $blast = new BlastReader $blast_file;
+print join("\t", @cols) . "\n";
+while (my $r = $blast->get_next_alignment()) {
+    flush($r);
+}
+
+sub flush {
+    my ($r) = @_;
+    return if $r eq '';
+    my $ref_name = $r->{rname};
+    my @row;
+    $r->{rlen} = $r->{rend} - $r->{rstart} + 1;
+    $r->{qlen} = $r->{qend} - $r->{qstart} + 1;
+    for my $col (@cols) {
+	push(@row, $r->{$col});
+    }
+    print join("\t", @row) . "\n";
+}

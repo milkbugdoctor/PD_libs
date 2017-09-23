@@ -1,0 +1,14 @@
+#!/bin/bash
+
+if [ $# -lt 2 ]; then
+    echo -e "\nUsage: $0 db.fa infile.fa [options]
+
+    Splits infile.fa and runs blat.filtered on each piece.\n" 1>&2
+    exit 1
+fi
+
+db="$1"; shift
+infile="$1"; shift
+
+fasta.do_fast "blat.filtered '$db' %s stdout $*" 100 $infile 
+

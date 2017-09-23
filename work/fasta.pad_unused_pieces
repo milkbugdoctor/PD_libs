@@ -1,0 +1,34 @@
+#!/usr/bin/perl
+
+use Fasta;
+require 'fasta.pl';
+require 'misc.pl';
+
+@ARGV == 3 || die "\nUsage: $0 padding infile.fa reference.fa\n\n";
+
+my $padding = shift;
+my $file = shift;
+my $ref_file = shift;
+
+my $ref = Fasta::new($ref_file);
+
+open(FASTA, $file) or die "can't open '$file'";
+while ((my ($header, $seq) = read_fasta(FASTA)) == 2) {
+    $header =~ s/^>//;
+    my ($key, $rest) = split /\s+/, $header, 2;
+    $rest =~ /\[(\S+)\s+(\d+)-(\d+) size (\d+)\]/;
+    my ($other_key, $start, $end, $size) = ($1, $2, $3, $4);
+    warn "got $key / $rest [$other_key/$start/$end/$size]\n" if $debug;
+    my $new_start = max(1, $start - $padding);
+    my $new_end = min($end + $padding, $size);
+    warn "got $key / $rest [$other_key/$start/$end/$size]\n\n" if $debug;
+    my $lpad = $start - $new_start;
+    my $rpad = $new_end - $end;
+    print ">$key [$other_key $start-$end size $size lpad $lpad rpad $rpad]\n";
+    my $seq = $ref->get_seq($other_key);
+    my $real_size = length($seq);
+    die "size mismatch: $real_size != $size" if $real_size != $size;
+    my $len = $new_end - $new_start + 1;
+    my $padded_seq = substr($seq, $new_start, $len);
+    print_wrapped(STDOUT, $padded_seq);
+}

@@ -1,0 +1,33 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ ! "$1" ]; then
+    echo -e "\nUsage: $0 diff\n"
+    exit 1
+fi
+
+diff="$1" ; shift
+prefix=`basename \`pwd\``
+
+eval set -- `cat $prefix.options`
+
+while [ "$1" -a "$2" ]
+do
+    eval "export $1='$2'"
+    shift
+    shift
+done
+
+run "amos.fix_delta $diff $prefix.delta > new.delta"
+ls -l new.delta
+amos.get_read_hits new.delta | amos.add_read_name $prefix.bank > new-read-hits
+casm-layout $CASM -U lll new.delta -C ccc
+echo contigs before
+grep "^C" *.layout | wc
+echo contigs now
+grep "^C" lll | wc
+
+make-consensus -P lll *.bank > cons 2> /dev/null
+amos.consensus_to_fasta cons > fff
+

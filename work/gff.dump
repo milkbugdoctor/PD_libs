@@ -1,0 +1,18 @@
+#!/usr/bin/perl
+
+use GFF;
+
+@ARGV == 1 || die "\nUsage: $0 infile.gff\n\n";
+
+my $gff = GFF::new(ARGV);
+while (my $hash = $gff->next_entry()) {
+    for my $key (qw{ID Parent seqid source type start end score strand phase}, keys %$hash) {
+	if ($hash->{$key}) {
+	    $hash->{$key} =~ s/\n/; /g;
+	    printf "$key\t%s\n", $hash->{$key};
+	    delete $hash->{$key};
+	}
+    }
+    print "\n";
+}
+

@@ -1,0 +1,317 @@
+#!/usr/bin/perl
+
+use strict;
+
+require 'misc.pl';
+
+our $opt_a;
+our $opt_i = 'locus_tag';
+our $opt_u = 'uniq_id';
+our $opt_p = '';
+our $opt_s;
+use Getopt::Std;
+getopts('ai:p:su:');
+
+use GFF;
+
+my $id_key = $opt_i;
+my @print_keys = split(/ /, qq/$opt_u $id_key gene gene_synonym seqid chr source type start end score strand phase db_xref organism protein_id comment/);
+
+print <<FOO;
+# chr - simplified version of seqid (source sequence)
+FOO
+
+my %types = qw{gene 1 misc_feature 2 CDS 3};
+
+@ARGV == 1 || die "\nUsage: $0 [options] infile.gff
+
+    Options:
+	-a		output all GFF fields
+	-i id_field	extract the gene's ID from this field (default: locus_tag)
+	-p label	prefix output columns with label
+	-s		if no genes found, then use \"source\" line
+	-u field	save unique ID in this field (default: uniq_id)
+
+";
+
+my @genes; # final list of gene hashes
+my $genes;
+my %used_keys;
+my $gff = GFF::new(*ARGV);
+my $source;
+my $last_gene;
+my $fix_cds = 0;
+while (my $hash = $gff->next_entry()) {
+    # NCBI changed from "note=" to "Note=" so handle both
+    $hash->{note} = $hash->{note} || $hash->{Note};
+    my @keys; # things to add to the $gene_hash
+    if ($hash->{type} =~ /^(source|region)$/) {
+        $fix_cds = ($hash->{type} eq 'source');
+	$source = $hash if ! defined $source;	# only use first "source" line
+	next;
+    }
+    my %replace;
+    if (0) {
+	# ZZZ FIX - This code doesn't work well with genes.
+	#           We don't want to inherit everything.
+	#           This is only appropriate for files
+	#           that only contain source sequences
+	#           and no real features.
+	#
+	# load values from "source" line
+	while (my ($key, $val) = each %$source) {
+	    if (! defined $hash->{$key}) {
+		$hash->{$key} = $val;
+	    }
+	}
+    }
+    if ($hash->{type} eq 'gene') {
+	@keys = keys %$hash; # add everything to the new $gene_hash
+	unshift(@keys, $id_key);
+    }
+    elsif ($hash->{type} =~ /^(misc_feature|exon|.*RNA)$/) {
+        # update these values in the existing $gene_hash
+	@keys = qw{type product protein_id db_xref note gbkey};
+    }
+    elsif ($hash->{type} =~ /CDS/) {
+	# also update start and end for CDS genes
+	$replace{start} = $replace{end} = 1;
+        # update these values in the existing $gene_hash
+	@keys = qw{start end type product protein_id db_xref note gbkey};
+    }
+    else {
+	next;
+    }
+
+    #
+    # set $id and $gene_hash
+    # try to find the correct $gene_hash to update
+    #
+    my $id = $hash->{$id_key};
+    my $gene_hash = ($id eq '') ? undef : $genes->{$id};
+    if (! defined $gene_hash) {
+	my $parent = $hash->{Parent};
+	if (defined $parent && $last_gene->{ID} eq $parent) {
+            $gene_hash = $last_gene;
+            $id = $gene_hash->{$id_key};
+        }
+	elsif (! defined $parent && $hash->{type} ne 'gene') {
+	    # hack for ncRNA exons
+	    if ($last_gene->{start} == $hash->{start}
+		    && $last_gene->{end} == $hash->{end}) {
+		$gene_hash = $last_gene;
+		$id = $gene_hash->{$id_key};
+	    }
+	}
+    }
+    next if ! defined $id;
+
+    $gene_hash = { } if ! defined $gene_hash;
+
+    # merge $gene_hash with current $hash ?
+    for my $key (key_sort(@keys)) {
+	for my $val (split(/\n/, $hash->{$key})) {
+	    next if $val eq '';
+	    if ($key eq 'type') {
+		my $old = $gene_hash->{$key};
+		if ($old eq '') {
+		    $gene_hash->{$key} = $val;
+		    next;
+		}
+		if ($types{$val} > $types{$old}) {
+		    $gene_hash->{$key} = $val;
+		    for my $rep (keys %replace) {
+			delete $gene_hash->{$rep};
+		    }
+		}
+		next;
+	    }
+	    $gene_hash->{$key} = combine("; ", $gene_hash->{$key}, $val);
+# warn "combined $key = $gene_hash->{$key}\n" if $show;
+	}
+    }
+if (0) { # ZZZ
+my $aaa = print_hash($hash);
+my $bbb = print_hash($gene_hash);
+warn "hash: $aaa\n";
+warn "gene_hash: $bbb\n\n";
+}
+    push(@genes, $id) if ! defined $genes->{$id};
+    # custom stuff
+    $gene_hash->{comment} = combine("; ", $gene_hash->{product}, $gene_hash->{note});
+    $genes->{$id} = $gene_hash;
+    my ($acc, $gene) = split /:/, $hash->{ID};
+    # $gene_hash->{acc} = $acc;
+    $gene_hash->{gene} = combine("; ", $gene_hash->{gene}, $gene);
+    $gene_hash->{chr} = $hash->{seqid};
+    $gene_hash->{chr} =~ s/(\.[0-9]+)$//;
+    $gene_hash->{$opt_u} = $gene_hash->{$id_key};
+    # override type if gbkey tag is defined
+    if (defined (my $val = $hash->{gbkey})) {
+	my $type = $gene_hash->{type};
+	$gene_hash->{final_type} = $val;
+    }
+    # override type if pseudo tag is defined
+    if (defined (my $val = $hash->{pseudo})) {
+        my $type = $gene_hash->{type};
+warn "pseudo applied to [$type]\n" if $type ne 'gene';
+	$gene_hash->{final_type} = "pseudogene";
+    }
+    #
+    while (my ($key, $val) = each %$gene_hash) {
+	$used_keys{$key} = 1 if $val ne '';
+    }
+    $last_gene = $gene_hash if $hash->{type} eq 'gene';
+}
+
+$used_keys{gene} = 1;		# force gene column output
+$used_keys{gene_synonym} = 1;	# force gene column output
+
+if (!@genes && $opt_s && $source) {
+    $source->{gene} = '';
+    $source->{chr} = $source->{seqid};
+    $source->{chr} =~ s/(\.[0-9]+)$//;
+    $source->{$opt_u} = $source->{seqid};
+    $source->{type} = $source->{mol_type} if $source->{mol_type} ne '';
+    for my $key (keys %$source) {
+	$used_keys{$key} = 1;
+    }
+    my $id = $source->{gene};
+    push(@genes, $id);
+    $genes->{$id} = $source;
+}
+
+if (@genes) {
+    my @used_keys;
+    my %printing;
+    $printing{final_type} = 1; # mark it so that we don't add it
+    for my $key (@print_keys) {
+	push(@used_keys, $key) if $used_keys{$key};
+	$printing{$key} = 1;
+    }
+    if ($opt_a) {
+        my @ZZZ = keys %used_keys;
+	for my $key (keys %used_keys) {
+	    push(@used_keys, $key) if ! $printing{$key};
+	    $printing{$key} = 1;
+	}
+    }
+    my @header = @used_keys;
+    for my $col (@header) {
+	$col = $opt_p . $col;
+    }
+    print join("\t", @header) . "\n";
+    for my $id (@genes) {
+	my @row;
+	# override type if final_type tag is defined
+	if ((my $val = $genes->{$id}->{final_type}) ne '') {
+	    $genes->{$id}->{type} = $val;
+	}
+	# fix split genes
+	if ($genes->{$id}->{start} =~ /;/) {
+	    my @starts = split /; */, $genes->{$id}->{start};
+	    my @ends = split /; */, $genes->{$id}->{end};
+	    if (@starts != @ends) {
+		my $err = sprintf "$id: starts/ends mismatch: [%s] vs [%s]",
+			$genes->{$id}->{start}, $genes->{$id}->{end};
+		die $err;
+	    }
+	    if ($genes->{$id}->{strand} eq '-') {
+		@starts = reverse @starts;
+		@ends = reverse @ends;
+	    }
+	    my $change;
+	    do {
+		$change = 0;
+		for my $i (0 .. $#starts - 1) {
+		    # fix genome wrap-around
+		    if ($ends[$i] == $source->{end} && $starts[$i + 1] == 1) {
+warn "ZZZ before: starts [@starts] ends [@ends]\n";
+			$ends[$i] = $ends[$i + 1] + $source->{end};
+			splice(@starts, $i + 1, 1);
+			splice(@ends, $i + 1, 1);
+warn "ZZZ after: starts [@starts] ends [@ends]\n";
+			$change = 1;
+			last;
+		    }
+		    elsif ($ends[$i + 1] == $source->{end} && $starts[$i] == 1) {
+warn "ZZZ before: starts [@starts] ends [@ends]\n";
+			$ends[$i + 1] = $ends[$i] + $source->{end};
+			splice(@starts, $i, 1);
+			splice(@ends, $i, 1);
+warn "ZZZ after: starts [@starts] ends [@ends]\n";
+			$change = 1;
+			last;
+		    }
+		}
+	    } while ($change);
+	    $genes->{$id}->{start} = join("; ", @starts);
+	    $genes->{$id}->{end} = join("; ", @ends);
+	    if (@starts > 1) {
+                $genes->{$id}->{start} = Min(@starts);
+                $genes->{$id}->{end} = Max(@ends);
+                if ($genes->{$id}->{end} - $genes->{$id}->{start} < 20000) {
+                    printf STDERR "WARNING: merging split gene $id [starts %s] vs [ends %s] -> %d-%d\n",
+                            "@starts", "@ends", $genes->{$id}->{start}, $genes->{$id}->{end};
+                }
+                else {
+                    printf STDERR "WARNING: ignoring split gene $id [starts %s] vs [ends %s]\n",
+                            "@starts", "@ends";
+                    next;
+                }
+	    }
+	}
+	# fix CDS range
+	if ($fix_cds && $genes->{$id}->{type} eq 'CDS') {
+	    if ($genes->{$id}->{strand} eq '+') {
+		$genes->{$id}->{end} += 3;
+	    }
+	    else {
+		$genes->{$id}->{start} -= 3;
+	    }
+	}
+	for my $key (@used_keys) {
+	    my $val = $genes->{$id}->{$key};
+	    push(@row, $val);
+	}
+	print join("\t", @row) . "\n";
+    }
+}
+
+sub combine {
+    my ($sep, @list) = @_;
+    my $combination;
+    for my $val (@list) {
+	if ($combination eq '') {
+	    $combination = $val;
+	}
+	elsif (index($combination, $val) < 0) {
+	    $combination .= "$sep$val";
+	}
+	else {
+	    # keep dup start/end numbers
+	    if ($val =~ /^\d+$/) {
+		$combination .= "$sep$val";
+	    }
+	}
+    }
+    return $combination;
+}
+
+sub key_sort {
+    return sort {
+	return -1 if $a eq 'type';
+	return 1 if $b eq 'type';
+	return 0;
+    } @_;
+}
+
+sub print_hash {
+    my $hash = shift;
+    my @str;
+    for my $key (keys %$hash) {
+        my $val = $hash->{$key};
+        push(@str, "$key=$val");
+    }
+    return join(' ', @str);
+}

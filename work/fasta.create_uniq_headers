@@ -1,0 +1,19 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('p:');
+
+@ARGV || die "\nUsage: $0 [-p prefix] files ... > outfile\n\n";
+
+my $count = 1;
+while (<>) {
+    if (/^>/) {
+	s/^>//;
+	s/\s+$//;
+	my $desc = join("|", split /\s+/, $_, 2);
+	print ">$opt_p$count $desc\n";
+	$count++;
+	next;
+    }
+    print;
+}

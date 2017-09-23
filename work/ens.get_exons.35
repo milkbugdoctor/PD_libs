@@ -1,0 +1,23 @@
+#!/bin/bash
+
+db=homo_sapiens_core_27_35
+
+mysql <<FOO
+
+use $db;
+
+select concat('chr', seq_region.name) chr, t.seq_region_strand strand, gsi.stable_id gene,
+    tsi.stable_id trans, t.seq_region_start t_start, t.seq_region_end t_end,
+    rank exon_rank, esi.stable_id exon,
+    exon.seq_region_start e_start, exon.seq_region_end e_end,
+    (exon.seq_region_end - exon.seq_region_start + 1) as e_length
+from gene_stable_id gsi inner join transcript t using (gene_id)
+inner join transcript_stable_id tsi using (transcript_id)
+inner join exon_transcript et using (transcript_id)
+inner join exon using (exon_id)
+inner join exon_stable_id esi using (exon_id)
+inner join seq_region on exon.seq_region_id=seq_region.seq_region_id
+order by gene, trans, exon_rank
+
+FOO
+

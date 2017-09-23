@@ -1,0 +1,16 @@
+#!/usr/bin/perl
+
+require 'misc.pl';
+
+if (@ARGV < 3) {
+	chomp($prog = `basename $0`);
+	print "\nUsage: $prog contig-file 1-based-start length\n\n";
+	exit 1;
+}
+
+($file, $start, $len) = @ARGV;
+
+$seq = get_file_seq_circular($file, $start - 1, $len);
+print "$seq\n";
+
+exit 0;

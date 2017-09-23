@@ -1,0 +1,40 @@
+#!/usr/bin/perl
+
+(($infile) = @ARGV) == 1 || die "\nUsage: $0 aligns.txt > commands
+
+    Outputs graphics commands.  Commands can then be sent to draw_gd or draw_svg.
+
+";
+
+use Cols;
+
+print "background black\n";
+my $cols = Cols::new($infile);
+while (my $row = $cols->get_row()) {
+    my $rs = $row->{rstart} || $row->{tstart};
+    my $re = $row->{rend} || $row->{tend};
+    our $rsize = $row->{rsize} || $row->{tsize};
+    my $qs = $row->{qstart};
+    my $qe = $row->{qend};
+    our $qsize = $row->{qsize};
+    my $xs = $rs / $rsize * 100;
+    my $xe = $re / $rsize * 100;
+    my $ys = $qs / $qsize * 100;
+    my $ye = $qe / $qsize * 100;
+    if ($row->{qstrand} eq '-') {
+	($xs, $xe) = ($xe, $xs);
+    }
+    printf "line %s %s %s %s white 5\n", $xs, $ys, $xe, $ye;
+}
+
+my $index = "128/128/255";
+for (my $i = 0; $i < 1; $i += .10) {
+    my $pos = $i * 100;
+    printf "line %s %s %s %s $index 5\n", $pos, 0, $pos, 100;
+    my $string = sprintf "%.2f", $i * $rsize / 1000000;
+    printf "text %s %s red 60 center center \"$string\"\n", $pos, 0;
+    printf "line %s %s %s %s $index 5\n", 0, $pos, 100, $pos;
+    $string = sprintf "%.2f", $i * $qsize / 1000000;
+    printf "text %s %s red 60 center center \"$string\"\n", 0, $pos;
+}
+

@@ -1,0 +1,24 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ $# -lt 1 ]; then
+    echo -e "\nUsage: $0 short-name\n\n"
+    exit 1
+fi
+
+prefix="$1" ; shift
+reads=*/*.sff
+
+if need $prefix.454reads.fa; then
+    run "amos.dump_sff $prefix.454reads $reads"
+fi
+
+if need $prefix.newbler.fa; then
+    run "ln -f [Aa]ssembly/454AllContigs.fna $prefix.newbler.fa"
+    run "ln -f [Aa]ssembly/454AllContigs.qual $prefix.newbler.qual"
+fi
+
+if need $prefix.PyroBayes.fa; then
+    run "pyrobayes $prefix.PyroBayes $reads"
+fi

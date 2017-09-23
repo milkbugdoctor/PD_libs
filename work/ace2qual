@@ -1,0 +1,50 @@
+#!/usr/bin/perl
+
+if ($ARGV[0] eq '-f') {
+    $do_fasta = shift;
+}
+@ARGV == 2 || die "\nUsage: $0 [-f] infile.ace out-prefix
+
+	-f	output fasta file also
+
+";
+
+my $infile = shift;
+my $prefix = shift;
+
+open(ACE, $infile) or die "can't read file '$infile'";
+open(FASTA, ">$prefix.fa") or die "can't create file '$prefix.fa'" if $do_fasta;
+open(QUAL, ">$prefix.qual") or die "can't create file '$prefix.qual'";
+while (<ACE>) {
+    chomp;
+    if (/^CO (\S+)/) {
+	print FASTA ">$1\n";
+	print QUAL ">$1\n";
+	my ($seq_len, $qual_len);
+	while (<ACE>) {
+	    chomp;
+	    last if /^\s*$/;
+	    s/\*//g;
+	    s/\s//g;
+	    $seq_len += length($_);
+	    print FASTA "$_\n";
+	}
+	my $bq = <ACE>;
+	die "did not find expected BQ line:\n$bq\n" if $bq !~ /^BQ/;
+	my @qual;
+	while (<ACE>) {
+	    chomp;
+	    last if /^\s*$/;
+	    s/^\s+//g;
+	    my @words = split /\s+/;
+	    $qual_len += @words;
+	    push(@qual, @words);
+	    while (@qual >= 17) {
+		my @line = splice(@qual, 0, 17);
+		print QUAL join(" ", @line), "\n";
+	    }
+	}
+	print QUAL (join(" ", @qual), "\n") if @qual;
+	die "$seq_len != $qual_len" if $seq_len != $qual_len;
+    }
+}

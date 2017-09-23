@@ -1,0 +1,28 @@
+#!/usr/bin/perl
+
+$debug = 1;
+
+(@ARGV == 2) || die "\nUsage: $0 column infile\n\n";
+my ($column, $file) = @ARGV;
+
+require 'TMPred.pl';
+require 'columns.pl';
+require 'misc.pl';
+
+open(INPUT, $file) || die "huh?";
+$" = "\t";
+my @header = get_header(INPUT);
+add_col(\@header, 'TMPred');
+print_header(STDOUT, @header);
+
+while (my @row = get_row(INPUT)) {
+    my $seq = get_col(\@header, \@row, $column);
+    print STDERR "." if $debug;
+    my $pred = get_pred($seq);
+    die "huh?" if $pred eq '';
+    set_col(\@header, \@row, 'TMPred', $pred);
+    print "@row\n";
+}
+print STDERR "\n" if $debug;
+
+

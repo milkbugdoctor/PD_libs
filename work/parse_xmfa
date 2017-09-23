@@ -1,0 +1,182 @@
+#!/usr/bin/perl
+
+use Fasta;
+use XMFA;
+use strict vars;
+
+my $debug = 1;
+
+require 'fasta.pl';
+
+@ARGV >= 3 || die "\nUsage: $0 output-prefix base-fasta xmfa-files
+
+    Output files:
+        output-prefix.txt
+        output-prefix.fasta
+
+";
+
+my $ref_seq;
+my $prefix = shift;
+my $fasta_file = shift;
+my $fasta = new Fasta($fasta_file);
+while ((my ($key, $desc, $header, $seq) = $fasta->next_entry()) == 4) {
+    if (defined $ref_seq) {
+        die "$fasta_file contains more than one entry\n";
+    }
+    $ref_seq = $seq;
+}
+
+my %hash;
+
+for my $file (@ARGV) {
+    warn "\nDoing file $file\n";
+    my $xmfa = new XMFA($file);
+    my ($last_num, $last_start, $last_end, $last_strand, $last_seq, $last_len);
+    my ($seq_name, $finished_seq);
+    $finished_seq = '-' x length($ref_seq);
+    while ((my @entry = $xmfa->next_entry()) == 6) {
+        my ($num, $start, $end, $strand, $desc, $seq) = @entry;
+        my $len = length($seq);
+        warn "Doing >$num:$start-$end $strand [$desc] length $len\n" if $debug;
+        if ($num > 2) {
+            die "bad alignment number $num";
+        }
+        if ($num == 2) {
+            $seq_name = $desc;
+            if ($last_num != 1 || $len != $last_len) {
+                printf STDERR ">$num:$start-$end $strand : skipping orphan\n";
+                next;
+            }
+        }
+        my $ref_dir = 1;
+        my $ref_pos = $start;
+        my $base_seq;
+        my $base_dir = 1;
+        my $base_pos = 1;
+        my $query_dir = 1;
+        my $query_pos = 1;
+        my $match = 0;
+        my $mismatch = 0;
+        if ($num == 1) {
+            # Just compare ref/base to query.
+            # Make sure they are identical.
+            $base_seq = $ref_seq;
+            $base_pos = $start;
+            if ($strand eq '-') {
+                $query_pos = $len;
+                $query_dir = -1;
+            }
+        }
+        else {
+            die "coding error: \$num == $num && \$last_num == $last_num" if $last_num != 1;
+            $base_seq = $last_seq;
+            $ref_pos = $last_start;
+            if ($last_strand eq '-') {
+                $ref_pos = $last_end;
+                $ref_dir = -1;
+            }
+        }
+        while ($query_pos >= 1 && $query_pos <= length($seq)) {
+            my $r = lc(substr($ref_seq,  $ref_pos   - 1, 1));
+            my $b = lc(substr($base_seq, $base_pos  - 1, 1));
+            my $a = lc(substr($seq,      $query_pos - 1, 1));
+            if ($query_dir < 0 && $num == 1) {
+                $a = Fasta::rc($a);
+                die "ref $ref_pos:[$r] base $base_pos:[$b] query $query_pos:[$a] in $desc"
+                    if ($a ne $b || $b ne $r) && $a ne '-';
+            }
+            if ($ref_dir < 0) { # only happens when $num == 2
+                if ($num == 2) {
+                    $b = Fasta::rc($b);
+                    $a = Fasta::rc($a);
+                }
+                else {
+                    die "coding or input error";
+                }
+            }
+            if ($b eq '' || $a eq '') {
+                die "null: 1 $base_pos-1 [$b] 2 $query_pos-$start [$a]\n";
+                last;
+            }
+            if ($num == 2 && $b ne '-') {
+                if ($r ne $b) {
+                    die "r $r b $b mismatch";
+                }
+                substr($finished_seq, $ref_pos - 1, 1) = $a;
+            }
+            $query_pos += $query_dir;
+            if ($b eq '-') { # only happens when $num == 2
+                die "found [-] when num != 2" if $num != 2;
+                $base_pos += $base_dir;
+                next;
+            }
+            if ($a eq '-' && $num == 1) {
+                next;
+            }
+#warn "ref $ref_pos:[$r] base $base_pos:[$b] query $query_pos:[$a] in $desc";
+            if ($b ne '-' && $a ne '-') {
+                if ($a eq $b) {
+                    $match++;
+                }
+                else {
+                    $mismatch++;
+                }
+            }
+            if ($num == 1 && $mismatch) {
+                warn "\nmismatch at ref $ref_pos:[$r] base $base_pos:[$b] query $query_pos:[$a] in $desc";
+printf STDERR "ref %d-%d : %s\n", $ref_pos-10, $ref_pos+10, substr($ref_seq, $ref_pos - 10, 21);
+exit 1;
+
+            }
+            $base_pos += $base_dir;
+            $ref_pos += $ref_dir;
+        }
+        my $perc_mismatch = 0;
+        if ($match + $mismatch > 0) {
+            $perc_mismatch = $mismatch * 100.0 / ($mismatch + $match);
+        }
+        else {
+            die "what happened?";
+        }
+        printf STDERR ">$num:$start-$end $strand mismatch = %.2f%%\n", $perc_mismatch;
+        if ($num == 1 && $mismatch > 0) {
+            die "\nfound mismatches in ref sequence!\n\n";
+        }
+        $last_start = $start;
+        $last_end = $end;
+        $last_num = $num;
+        $last_strand = $strand;
+        $last_seq = $seq;
+        $last_len = $len;
+    }
+    $seq_name =~ s/\..*//;
+    $hash{$seq_name} = $finished_seq;
+}
+
+open(OUT, ">$prefix.fasta") || die "can't create $prefix.fasta";
+my @cols = sort keys %hash;
+for my $name (@cols) {
+    printf OUT ">%s\n", $name;
+    print_wrapped(OUT, $hash{$name});
+}
+close OUT;
+
+open(OUT, ">$prefix.txt") || die "can't create $prefix.txt";
+my @cols = sort keys %hash;
+unshift(@cols, 'Ref');
+printf OUT "Pos\t%s\n", join("\t", @cols);
+for my $pos (1 .. length($ref_seq)) {
+    print OUT "$pos\t";
+    my @row;
+    for my $name (@cols) {
+        if ($name eq 'Ref') {
+            push(@row, lc(substr($ref_seq, $pos - 1, 1)));
+        }
+        else {
+            push(@row, lc(substr($hash{$name}, $pos - 1, 1)));
+        }
+    }
+    printf OUT "%s\n", join("\t", @row);
+}
+close OUT;

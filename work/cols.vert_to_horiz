@@ -1,0 +1,51 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 infile\n\n";
+
+require 'file_stuff.pl';
+
+my $infile = shift;
+
+my $fd;
+open($fd, $infile) || die "can't open file '$infile'";
+$fd = get_seekable($fd);
+my (%columns, @columns);
+while (<$fd>) {
+    next if /^#/;
+    next if /^$/;
+    chomp;
+    my ($key, $val) = split /\t/, $_, 2;
+    die "bad key '$key'" if $key =~ /^\s*$/;
+    $columns{$key} = 1;
+}
+
+for my $key (qw{seqid source type start end score strand phase ID Parent}, keys %columns) {
+    if ($columns{$key}) {
+	push(@columns, $key);
+	delete $columns{$key};
+    }
+}
+
+print join("\t", @columns), "\n";
+seek($fd, 0, 0);
+my %hash;
+while (1) {
+    $_ = <$fd>;
+    my $eof = ! defined $_;
+    chomp;
+    next if /^#/;
+    if (/^$/ || $eof) {
+	last if scalar %hash == 0;
+	my @row;
+	for my $col (@columns) {
+	    push(@row, $hash{$col});
+	}
+	print join("\t", @row), "\n";
+	%hash = ();
+	last if $eof;
+	next;
+    }
+    my ($key, $val) = split /\t/, $_, 2;
+    die "got bad key [$key] in line [$_]" if $key =~ /^\s*$/;
+    $hash{$key} = $val;
+}

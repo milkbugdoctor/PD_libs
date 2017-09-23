@@ -1,0 +1,39 @@
+#!/usr/bin/perl
+
+require 'primers.pl';
+require 'melting.pl';
+
+(@ARGV >= 1) || die "\nUsage: $0 files ...
+
+	First column in each file must be the nucleotide sequence.
+
+";
+
+start_tm_server();
+
+$| = 1;
+
+my $total_tm;
+my $num_tm;
+while (<>) {
+    chomp;
+    my ($seq) = split /\t/;
+    my $line = $_;
+
+    my $tm = get_tm($seq);
+    if ($tm <= 20) {
+	next;
+    }
+    $total_tm += $tm;
+    $num_tm++;
+    if ($num_tm % 10000 == 0) {
+	printf STDERR "avg_tm: %f = %f / %f\n", $total_tm / $num_tm, $total_tm, $num_tm;
+    }
+}
+
+kill_tm_server();
+
+printf STDERR "avg_tm: %f = %f / %f\n", $total_tm / $num_tm, $total_tm, $num_tm;
+printf "%f\n", $total_tm / $num_tm;
+
+exit 0;

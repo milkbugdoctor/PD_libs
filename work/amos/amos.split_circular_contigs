@@ -1,0 +1,81 @@
+#!/usr/bin/perl
+
+use Cols;
+require 'misc.pl';
+require 'fasta.pl';
+
+$0 =~ s|.*/||;
+@ARGV == 2 || die "\nUsage: $0 reference.fa contigs.fa > fixed-contigs.fa
+
+    Use nucmer and delta-filter to get the best hit for each contig
+    in reference.  See if there is contig that is split (wraps around
+    at the ends of reference).  For split contigs, output both pieces
+    separately as piece .1 and piece .2.
+
+";
+
+my $ref = shift;
+my $contigs = shift;
+
+$tmp = "/tmp/$0.$$";
+warn "nucmer --maxmatch $ref $contigs -p $tmp 2> $tmp.nucmer.err\n";
+shell("nucmer --maxmatch $ref $contigs -p $tmp 2> $tmp.nucmer.err") || die "nucmer: $!";
+my $delta = "$tmp.delta";
+shell("delta-filter -q $delta > $delta.q") || die "delta-filter: $!";
+open(PIPE, "delta.list $delta.q |") or die "delta.list $delta.q: $!";
+my $cols = Cols::new(PIPE);
+my (%ref_size, %reads);
+while (my $r = $cols->get_row()) {
+    my $ref = $r->{rname};
+    my $qname = $r->{qname};
+    $ref_size{$ref} = $r->{rsize};
+    push(@{$lines{$ref}}, $r);
+}
+
+for my $ref (keys %lines) {
+    warn "doing ref $ref\n";
+    # rstart is always <= rend in delta.list output
+    # get right-most end
+    my $left = (sort {
+	max($b->{rstart}, $b->{rend}) <=> max($a->{rstart}, $a->{rend});
+    } @{$lines{$ref}})[0];
+    # get left-most end
+    my $right = (sort {
+	min($a->{rstart}, $a->{rend}) <=> min($b->{rstart}, $b->{rend});
+    } @{$lines{$ref}})[0];
+    # make sure it's the same contig
+    next if $left->{qname} ne $right->{qname};
+    my $qname = $left->{qname};
+    # make sure orientation is the same
+    next if $left->{qstrand} ne $right->{qstrand};
+    # make sure that it is split correctly
+    next if $left->{qstrand} eq '+' and $left->{qstart} > $right->{qend};
+    next if $left->{qstrand} eq '-' and $right->{qstart} > $left->{qend};
+    # get the point in contig where the split occurs
+    if ($right->{qstrand} eq '-') {
+	$split{$qname} = $right->{qend};
+    }
+    else {
+	$split{$qname} = $right->{qstart} - 1;
+    }
+}
+
+
+open(CONTIGS, $contigs) || die "$contigs: $!";
+while ((my ($header, $seq) = read_fasta(CONTIGS)) == 2) {
+    $header =~ /^>(\S+)(.*)/;
+    my $qname = $1;
+    my $rest = $2;
+    if (my $split = $split{$qname}) {
+	print ">$qname.1$rest\n";
+	print_wrapped(STDOUT, substr($seq, 0, $split - 1));
+	print ">$qname.2$rest\n";
+	print_wrapped(STDOUT, substr($seq, $split - 1));
+    }
+    else {
+	print "$header\n";
+	print_wrapped(STDOUT, $seq);
+    }
+}
+
+shell("rm -rf $tmp*");

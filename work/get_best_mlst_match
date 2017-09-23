@@ -1,0 +1,59 @@
+#!/usr/bin/perl
+
+my @sequences = qw{aroC dnaN hemD hisD purE sucA thrA};
+
+use Cols;
+
+@ARGV == 2 || die "\nUsage: $0 best_hits.txt all_ST.txt
+
+    Get best MLST match from list.
+
+";
+
+my $hits_file = shift;
+my $ST_file = shift;
+
+my %hash;
+my $cols = Cols::new($hits_file);
+while (my $row = $cols->get_row()) {
+    $hash{$row->{qname}} = $row->{score};
+}
+
+my $cols = Cols::new($ST_file);
+my %best;
+my @scores;
+for my $key (qw{aroC dnaN hemD hisD purE sucA thrA}) {
+    $cols->add_col("${key}_score");
+}
+$cols->add_col('avg_score');
+$cols->print_header(STDOUT);
+while (my $row = $cols->get_row()) {
+    my ($num, $sum);
+    for my $key (qw{aroC dnaN hemD hisD purE sucA thrA}) {
+	my $val = $row->{$key};
+	my $score = $hash{"\U${key}$val"};
+	$num++;
+	$sum += $score;
+	$row->{"${key}_score"} = sprintf "%.3f", $score;
+    }
+    my $avg = $sum / $num;
+    if ($sum > $best{sum}) {
+	$best{sum} = $sum;
+	$best{sum_row} = $row;
+	# printf "best sum: num $num sum $sum avg $avg ST %s source %s refstrain %s\n", 
+	#     $row->{ST}, $row->{SOURCE}, $row->{STRAIN};
+    }
+    if ($avg > $best{avg}) {
+	$best{avg} = $avg;
+	$best{avg_row} = $row;
+	# printf "best avg: num $num sum $sum avg $avg ST %s source %s refstrain %s\n", 
+	#     $row->{ST}, $row->{SOURCE}, $row->{STRAIN};
+    }
+    $row->{avg_score} = sprintf "%.3f", $avg;
+    push(@rows, $row);
+}
+
+@rows = sort { $a->{score} <=> $b->{score} } @rows;
+for my $row (@rows) {
+    $cols->print_row(STDOUT, $row);
+}

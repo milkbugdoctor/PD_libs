@@ -1,0 +1,79 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('denpr');
+
+$partial = $opt_p;
+$numeric = $opt_n;
+
+@ARGV == 2 || die "\nUsage: $0 [options] matches infile.fa > outfile.fa
+
+    matches should contain fasta header keys, or it can be a regular
+    expression if -e is used.
+
+    Options:
+	-d           allow partial string match in the description
+	-e           use regular expression, not stdin
+	-n           numeric (first entry is 1)
+	-p           allow partial matches (remove .x from ACCESSION.x)
+	-r           reverse: get unmatching
+
+";
+
+my $match_expr = shift;
+
+my %keys;
+if (! $opt_e) {
+    open(KEYS, $match_expr) || die "cannot open $match_expr";
+    for my $key (<KEYS>) {
+	$key =~ s/^\s+//;
+	$key =~ s/\s[\s\S]*//;
+	$key =~ s/\..*// if $partial;
+	$keys{$key} = 1;
+    }
+}
+
+require 'fasta.pl';
+
+my $counter;
+while ((my ($header, $seq) = read_fasta(ARGV, 2)) == 2) {
+    $counter++;
+    my $head = $header;
+    $head =~ s/^>//;
+    $head =~ s/\s[\s\S]*// unless $opt_d;
+    if ($numeric) {
+	if ($opt_r) {
+	    next if $keys{$counter};
+	}
+	else {
+	    next if ! $keys{$counter};
+	}
+    }
+    else {
+	my $match;
+	if ($opt_e) {
+	    $match = ($head =~ /$match_expr/);
+	}
+	else {
+	    if ($opt_d) {
+		for my $key (keys %keys) {
+		    if (index($head, $key) >= 0) {
+			$match = 1;
+			last;
+		    }
+		}
+	    }
+	    else {
+		$match = $keys{$head};
+	    }
+	}
+	if ($opt_r) {
+	    next if $match;
+	}
+	else {
+	    next if ! $match;
+	}
+    }
+    print "$header\n";
+    print $seq;
+}

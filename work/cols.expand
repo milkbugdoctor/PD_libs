@@ -1,0 +1,88 @@
+#!/usr/bin/perl
+
+use IO::Handle;
+
+require 'misc.pl';
+require 'file_stuff.pl';
+
+our $opt_b = 1;
+our $opt_t = 8;
+our $opt_h;
+
+use Getopt::Std;
+getopts('b:ht:');
+
+use Cols;
+
+my $filename;
+if (@ARGV == 1 && open(STDIN, $ARGV[0])) {
+    $filename = shift;
+}
+
+(@ARGV == 0 && $opt_h eq '') || die "\nUsage: $0 [options] < input_file > output_file
+
+    Replace tabs with spaces.
+
+    Options:
+	-b num       Best fit with minimum of <num> spaces between columns
+	-t num       Use <num> spaces between tabs in header
+
+    The default option is \"-b 1\".
+
+";
+
+if ($opt_b > 0) {
+    my (@col_length, $fd, $filename);
+    if (!is_seekable(STDIN)) {
+	($fd, $filename) = get_tempfile();
+    }
+    while (<STDIN>) {
+	print $fd $_ if defined $fd;
+	next if /^#/;
+	chomp;
+	my @row = split /\t/;
+	for my $i (0 .. $#row) {
+	    $col_length[$i] = max($col_length[$i], length($row[$i]));
+	}
+    }
+    $fd->flush() if defined $fd;
+    $fd = \*STDIN if ! defined $fd;
+    seek($fd, 0, 0) || die "can't seek to top of '$filename'";
+    while (<$fd>) {
+	chomp;
+	if (/^#/) {
+	    print_expanded($_);
+	}
+	else {
+	    my @row = split /\t/;
+	    for my $i (0 .. $#row - 1) {
+		$row[$i] .= ' ' x ($col_length[$i] - length($row[$i]));
+	    }
+	    print join(' ' x $opt_b, @row) . "\n";
+	}
+    }
+    exit 0;
+}
+else {
+    while (<STDIN>) {
+	chomp;
+	print_expanded($_);
+    }
+    exit 0;
+}
+
+sub print_expanded {
+    my ($line) = @_;
+    my $pos = 0;
+    for $s (split /\t/, $line) {
+	print "$s ";
+	$pos += length($s) + 1;
+	while (($pos % $opt_t) != 0) {
+	    print " ";
+	    $pos++;
+	}
+    }
+    print "\n";
+}
+
+exit 0;

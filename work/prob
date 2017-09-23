@@ -1,0 +1,11 @@
+#!/usr/bin/perl
+
+@ARGV == 2 || die "\nUsage: $0 len dist\n\n";
+
+my $len = shift;
+my $dist = shift;
+
+my $not = 1 - 1.0/(4 ** $len);
+my $total = $not ** $dist;
+
+printf "prob %.8f\n", 1 - $total;

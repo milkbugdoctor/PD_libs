@@ -1,0 +1,9 @@
+#!/usr/bin/perl
+
+require 'primer.pl';
+
+(($mer, $num) = @ARGV) == 2 || die "\nUsage: $0 mer-size num-primers\n\n";
+
+for ($i = 0; $i < $num; $i++) {
+	print random_primer($mer), "\n";
+}

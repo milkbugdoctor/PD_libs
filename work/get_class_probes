@@ -1,0 +1,89 @@
+#!/usr/bin/perl
+
+require 'filter_probes.pl';
+require 'columns.pl';
+require 'misc.pl';
+
+#
+#	Get certain number of probes for each sequence class
+#
+
+if ($ARGV[0] eq "-r") {
+    $restart = 1;
+    shift;
+}
+
+(@ARGV >= 5) || die "\nUsage: $0 [-r] class class-col min-probes-per-class out-dir sequences.txt ...
+
+	-r	restart: don't delete output directory
+
+";
+
+my $class_name = shift;
+my $class_col = shift;
+my $need_per_class = shift;
+my $output_dir = shift;
+
+our $tmpdir = "tmp.$$";
+
+system "rm -rf $output_dir; mkdir $output_dir" if ! $restart;
+system "mkdir $tmpdir";
+
+&cleanup_setup('system("rm -rf $tmpdir") if $tmpdir and (-d $tmpdir); undef $tmpdir;');
+
+$" = "\t";
+
+for my $file (@ARGV) {
+	open(FOO, $file) || die "can't open $file";
+	my @header = get_header(*FOO);
+	while (my @row = get_row(*FOO)) {
+		my $class = get_col(\@header, \@row, $class_col);
+		die "can't get class column '$class'" if $class eq '';
+		next if $class_col eq 'chr' and $class =~ /_random/;
+		next if $good{$class} > $need_per_class;
+		my $marker_id = get_col(\@header, \@row, "marker_id");
+		die "can't get marker_id" if $marker_id eq '';
+		$file =~ m|^(.*?)([^/]+)$|;
+		my ($dir, $filename) = ($1, $2);
+		my $outfile = "/tmp/$class.$marker_id.seq";
+		my $outfile2 = "$output_dir/$class.$marker_id.seq";
+		my $probes = "/tmp/$class.$marker_id.probes";
+		my $probes2 = "$output_dir/$class.$marker_id.probes";
+
+		if (-s $outfile2 and -s $probes2) {
+		    print "Skipping because $outfile2 and $probes2 already exist\n";
+		    next;
+		}
+
+		print "Doing $outfile and $probes\n";
+		open($fd{$class}, ">$outfile") || die "can't create $outfile";
+		print { $fd{$class} } "@header\n";
+		print { $fd{$class} } "@row\n";
+		close $fd{$class};
+
+		$stat = do_one_sequence($class_name, $outfile, $probes);
+		if ($stat) {
+			$good{$class}++;
+			print "\n    $outfile is good\n\n";
+			command("mv $outfile $output_dir");
+			command("mv $probes $output_dir");
+		}
+		else {
+			unlink($outfile);
+			unlink($probes);
+		}
+	}
+	close FOO;
+}
+
+exit 0;
+
+sub do_one_sequence {
+    my ($class, $outfile, $probefile) = @_;
+
+    die "nothing in '$outfile'" if ! -s $outfile;
+
+    command("make_nimblegen_probes -c $class '$outfile' > '$probefile'");
+
+    filter_probes($class, $probefile);
+}

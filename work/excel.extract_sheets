@@ -1,0 +1,44 @@
+#!/usr/bin/perl -w
+
+die "\nUsage: $0 file.xls\n\n" unless @ARGV;
+
+use strict;
+use Spreadsheet::ParseExcel;
+
+my $oExcel = new Spreadsheet::ParseExcel;
+
+for my $file (@ARGV) {
+	print "parsing file $file\n";
+	my $oBook = $oExcel->Parse($file);
+	my($iR, $iC, $oWkS, $oWkC);
+	print "FILE  :", $oBook->{File} , "\n";
+	print "COUNT :", $oBook->{SheetCount} , "\n";
+
+	print "AUTHOR:", $oBook->{Author} , "\n"
+	    if defined $oBook->{Author};
+
+	for(my $iSheet=0; $iSheet < $oBook->{SheetCount} ; $iSheet++) {
+	    $oWkS = $oBook->{Worksheet}[$iSheet];
+	    my $filename = $file;
+	    $filename =~ s/\.xls//i;
+	    $filename .= $oWkS->{Name}.".txt";
+	    open(FOO, ">$filename") || die "creating $filename";
+	    print "--------- SHEET:", $oWkS->{Name}, "\n";
+	    for(my $iR = $oWkS->{MinRow} ; defined $oWkS->{MaxRow} && $iR <= $oWkS->{MaxRow} ; $iR++) {
+		my @line;
+		undef @line;
+		for(my $iC = $oWkS->{MinCol} ; defined $oWkS->{MaxCol} && $iC <= $oWkS->{MaxCol} ; $iC++) {
+			$oWkC = $oWkS->{Cells}[$iR][$iC];
+			# print "( $iR , $iC ) =>", $oWkC->Value, "\n" if($oWkC);
+			# print FOO $oWkC->Value if($oWkC);
+			# print FOO "\t";
+			push(@line, $oWkC ? $oWkC->Value : "");
+		}
+		my $line = join("\t", @line);
+		chomp($line);
+		@line = split(/\t/, $line);
+		print FOO join("\t", @line), "\n";
+	    }
+	    close(FOO);
+	}
+}

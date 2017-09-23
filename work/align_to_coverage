@@ -1,0 +1,31 @@
+#!/usr/bin/perl
+
+use Cols;
+require 'misc.pl';
+
+@ARGV == 2 || die "\nUsage: $0 read-hits.txt what > coverage.txt
+
+    read-hits.txt must have been created by amos.get_read_hits
+
+";
+
+my $infile = shift;
+my $what = shift;
+
+open(FILE, $infile) or die "huh?: $!";
+my $cols = Cols::new(FILE);
+print_tabbed(STDOUT, "scaff what start end len name rstart rend rsize rdir\n");
+while (my $row = $cols->get_row()) {
+    print $row->{tname}, "\t";
+    print "$what\t";
+    print $row->{tstart}, "\t";
+    print $row->{tend}, "\t";
+    print $row->{tlen}, "\t";
+    print $row->{qname}, "\t";
+    print $row->{qstart}, "\t";
+    print $row->{qend}, "\t";
+    print $row->{qsize}, "\t";
+    my $rdir = ($row->{qstrand} eq '-') ? '-1' : 1;
+    print "$rdir\n";
+}
+

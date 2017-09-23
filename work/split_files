@@ -1,0 +1,155 @@
+#!/usr/bin/env activeperl
+
+use Cwd qw(cwd getcwd abs_path);
+
+while ($ARGV[0] =~ /^[-+]/) {
+    if ($ARGV[0] eq '-h') {
+	$remove_header = $read_header = 1;
+	shift;
+    }
+    elsif ($ARGV[0] eq '+h') {
+	$copy_header = $read_header = 1;
+	shift;
+    }
+    elsif ($ARGV[0] eq '-k') {
+	shift;
+	$key_col = shift;
+	die "invalid key '$key'" if $key_col eq '';
+	$read_header = 1;
+    }
+    elsif ($ARGV[0] eq '-d') {
+	$debug = shift;
+    }
+    elsif ($ARGV[0] eq '-v') {
+	$virtual = shift;
+    }
+    else {
+	die "unknown option '$ARGV[0]'";
+    }
+}
+
+@ARGV || die "\nUsage: $0 [options] num-lines output-directory input-files ...
+
+	-d	debug
+	-h	remove header from files
+	+h	copy first file's header to all output files
+	-k col	don't split this key column (file must be sorted by key)
+	-v	virtual: split files contain file pointers
+
+";
+
+use Columns;
+
+my $lines = shift;
+my $dir = shift;
+
+die "$lines is not a valid line count" if $lines <= 0;
+warn "mkdir -p $dir\n" if $debug;
+system "mkdir -p $dir";
+die "could not find directory '$dir'" if ! -d $dir;
+
+if (!@ARGV) {
+    @ARGV = ("-");
+}
+
+$" = "\t";
+my $file_num = 0;
+my @filenames;
+my $cur_line = 0;
+my $cols;
+
+my ($header, $header_len);
+for my $file (@ARGV) {
+    warn "opening $file\n" if $debug;
+    open(INFILE, $file) || die "can't open file '$file'";
+    my $size = (-s $file);
+    die "can't get size for file '$file'" if ! defined $size and $virtual;
+    my $file = abs_path($file);
+    if ($read_header) {
+	$cols = Columns::new(INFILE);
+	$h = $cols->get_header();
+	$header_len = length($cols->get_header_block());
+	if ($header and "@$header" ne "@$h") {
+	    $" = ' ';
+	    die "headers don't match! [@$header] vs [@$h]";
+	}
+	@$header = @$h;
+    }
+    &new_file;
+    my $last_key;
+    if ($key_col) {   #ZZZ
+	my $start_pos = my $pos = $header_len;
+	if ($virtual) {
+	    $start_pos = my $pos = $header_len;
+	    print OUTFILE "-> <$file> $pos";
+	}
+	while ($row = $cols->get_row()) {
+	    my $key = $cols->get_col($row, $key_col);
+	    if ($cur_line >= $lines) {
+		if ($key eq '' or $key ne $last_key) {
+		    print OUTFILE " $pos\n" if $virtual;
+		    &new_file;
+		    print OUTFILE "-> <$file> $pos" if $virtual;
+		    $start_pos = $pos;
+		}
+	    }
+	    $cur_line++;
+	    $pos += length($cols->get_row_string()) if $virtual;
+	    print OUTFILE "@$row\n" if ! $virtual;
+	    $last_key = $key;
+	}
+	print OUTFILE " $pos\n" if $virtual;
+    }
+    else {
+	if ($virtual) {
+	    my $start_pos = my $pos = $header_len;
+	    print OUTFILE "-> <$file> $pos";
+	    while (<INFILE>) {
+		if ($cur_line >= $lines) {
+		    print OUTFILE " $pos\n";
+		    &new_file;
+		    print OUTFILE "-> <$file> $pos";
+		    $start_pos = $pos;
+		}
+		$pos += length($_);
+		$cur_line++;
+	    }
+	    print OUTFILE " $pos\n";
+	}
+	else {
+	    while (<INFILE>) {
+		&new_file if $cur_line >= $lines;
+		$cur_line++;
+		print OUTFILE "$_";
+	    }
+	}
+    }
+    close OUTFILE;
+}
+
+my $template = "x";
+my $covered = 3;
+my $num_files = scalar @filenames;
+while ($num_files > $covered) {
+    $template .= "a";
+    $covered *= 26;
+}
+for my $filename (@filenames) {
+    my $old = "$dir/$filename";
+    my $new = "$dir/$template";
+    rename($old, $new) || die "couldn't rename $old to $new";
+    $template++;
+}
+
+sub new_file {
+    close OUTFILE;
+    $cur_line = 0;
+    my $filename = sprintf "file.%05d", $file_num;
+    $file_num++;
+    push(@filenames, $filename);
+    warn "creating $dir/$filename\n" if $debug;
+    open(OUTFILE, ">$dir/$filename") || die "can't create $dir/$filename: $!";
+    if (defined($header) and $copy_header) {
+	$cols->print_header(OUTFILE);
+    } 
+}

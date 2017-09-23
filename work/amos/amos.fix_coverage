@@ -1,0 +1,17 @@
+#!/usr/bin/perl
+
+use Cols;
+require 'misc.pl';
+
+my $cols = Cols::new(ARGV);
+$cols->print_header(STDOUT);
+while (my $row = $cols->get_row()) {
+    if ($row->{what} eq 'genome') {
+	$cols->print_row(STDOUT, $row);
+	$map{$row->{name}} = $row->{scaff};
+	next;
+    }
+    $row->{scaff} = $map{$row->{scaff}} if $map{$row->{scaff}};
+    $cols->print_row(STDOUT, $row);
+}
+

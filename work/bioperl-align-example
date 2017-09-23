@@ -1,0 +1,64 @@
+#!/usr/bin/env activeperl-5.8
+
+require 'align_string.pl';
+require 'bioperl_align.pl';
+require 'sestoft2caf.pl';
+
+our $opt_e = 2;
+our $opt_g = 12;
+
+use Getopt::Std;
+getopts('e:g:m:pr');
+
+@ARGV >= 2 || die "\nUsage: $0 [options] seq1 seq2
+
+    Options:
+	-g gap		gap open penalty (default 12)
+	-e ext		extend penalty (default 2)
+	-m matrix	use matrix file (doesn't work)
+	-p		compare protein sequences instead of DNA
+	-r		also compare reverse complement (DNA only)
+
+";
+
+my ($seq1, $seq2) = @ARGV;
+
+for my $type ('local', 'global', 'endsfree', 'pSW') {
+
+    print "\nlocal:\n\n" if $type eq 'local';
+    print "\nglobal:\n\n" if $type eq 'global';
+    print "\nends-free:\n\n" if $type eq 'endsfree';
+    print "\npSW:\n\n" if $type eq 'pSW';
+
+    my @opts;
+    if ($opt_p) {
+	push(@opts, (-alphabet => 'protein'));
+    }
+    else {
+	push(@opts, (-match => 3, -mismatch => -3, -alphabet => 'dna'));
+    }
+
+    if ($opt_m) {
+	my $parser = Bio::Matrix::IO->new(-format => 'scoring', -file => $opt_m);
+	my $matrix = $parser->next_matrix;
+	push(@opts, (-matrix => $matrix));
+    }
+
+    my $out = bioperl_align($type, $opt_g, $opt_e, $seq1, $seq2, @opts);
+    my $caf = bioperl2caf($out, $seq1, $seq2, $type eq 'endsfree');
+    print caf2verbose_alignment($caf);
+    printf "      bioperl score:  %s\n", $out->score;
+
+}
+
+print "\nsestoft local:\n";
+my ($seq1, $seq2) = @ARGV;
+my $matrix = ($opt_p) ? $matrix{blosum45} : create_simple_matrix(3, -3, "ATCG");
+my $result = sestoft_align('local', 12, 2, $matrix, $seq1, $seq2);
+my $caf = sestoft2caf($result, $seq1, $seq2);
+print caf2verbose_alignment($caf);
+
+print "\nsestoft global:\n";
+my $result = sestoft_align('global', 12, 2, $matrix, $seq1, $seq2);
+my $caf = sestoft2caf($result, $seq1, $seq2);
+print caf2verbose_alignment($caf);

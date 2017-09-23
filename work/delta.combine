@@ -1,0 +1,54 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 prefix infile1 ...
+
+    Concatenates delta files, renaming contigs to be unique, and creates
+    new FASTA files.
+
+    Creates prefix.fa and prefix.delta.
+
+    Parameters:
+	prefix		output file prefix
+
+";
+
+my $prefix = shift;
+
+die "prefix $prefix already exists\n" if -e $prefix;
+
+my $query;
+open(FASTA, ">$prefix.fa") || die "can't create $prefix.fa";
+open(DELTA, ">$prefix.delta") || die "can't create $prefix.delta";
+for my $file (@ARGV) {
+    open(FILE, $file) || die "can't open $file";
+    chomp(my $one = <FILE>);
+    my $two = <FILE>;
+    my ($first, $second) = split /\t/, $one;
+    die "bad delta file" if $first eq '' || $second eq '' || $two eq '';
+    open(TMP, $first) || die "can't open $first";
+    if ($query eq '') {
+	$query = $second;
+	print DELTA "$prefix.fa\t$query\n";
+	print DELTA $two;
+    }
+    die "query $second != previous query $query" if $second ne $query;
+    $first =~ m|(.*/)?(.*)|;
+    my $base = $2;
+    $base =~ s/(\.fa|\.fna)$//;
+    while (<FILE>) {
+	if (/^>(.*)/) {
+	    print DELTA ">$base.$1\n";
+	}
+	else {
+	    print DELTA $_;
+	}
+    }
+    while (<TMP>) {
+	if (/^>(.*)/) {
+	    print FASTA ">$base.$1\n";
+	}
+	else {
+	    print FASTA $_;
+	}
+    }
+}

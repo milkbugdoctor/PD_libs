@@ -1,0 +1,67 @@
+#!/bin/bash
+
+def_pattern='\d+'
+
+. subs.sh
+
+if [ $# -lt 1 ]; then
+    echo -e "\nUsage: $0 phrap-file-prefix [contig-name-pattern]
+
+    Pattern must be complete because it is anchored by ^ and \$.
+
+    Default pattern is '$def_pattern'.
+"
+    exit 1
+fi
+
+prefix="$1" ; shift
+pattern="$1" ; shift
+
+if [ "$pattern" = '' ]; then
+    pattern=$def_pattern
+    echo -e "using pattern '$pattern'";
+fi
+
+fix="sed -e 's/^>.*Contig/>Contig/' -e 's/^>1\./>/'"
+
+tmp=`mktemp /tmp/tmp.XXXXXXXXXX`
+if need $prefix.ace $prefix.merged-contigs.txt; then
+    run "get_ace_reads $prefix.ace | cols.select '{id} =~ /^$pattern\$/' \
+	| cols.change_header start qstart end qend len qlen > $tmp.contigs.txt"
+    run "fasta.get_headers $prefix.fa > $tmp.headers"
+    run "join_files -add len $tmp.contigs.txt $tmp.headers id \
+	| cols.select '{qlen} >= .9 * {len}' | ncols -h contig | sort -u > $prefix.merged-contigs.txt"
+fi
+if need $prefix.singlets $tmp.our-singlets; then
+    run "fasta.get_headers $prefix.singlets | ncols id \
+	| cols.select '{id} =~ /^$pattern\$/' | tail +2 > $tmp.our-singlets"
+fi
+if need $prefix.contigs $prefix.merged-contigs.txt $prefix.our-contigs.merged.fa; then
+    run "fasta.remove_descriptions $prefix.contigs | $fix > $tmp.contigs"
+    run "cat $prefix.merged-contigs.txt | fasta.get_matching $tmp.contigs \
+	> $prefix.our-contigs.merged.fa"
+fi
+if need $prefix.contigs $prefix.merged-contigs.txt $prefix.our-contigs.merged.qual; then
+    run "fasta.remove_descriptions $prefix.contigs.qual | $fix > $tmp.contigs"
+    run "cat $prefix.merged-contigs.txt | fasta.get_matching $tmp.contigs \
+	> $prefix.our-contigs.merged.qual"
+fi
+if need $prefix.singlets $tmp.our-singlets $prefix.our-contigs.singlets.fa; then
+    run "cat $tmp.our-singlets | fasta.get_matching $prefix.singlets \
+    | fasta.remove_descriptions | $fix > $prefix.our-contigs.singlets.fa"
+fi
+if need $prefix.singlets $tmp.our-singlets $prefix.our-contigs.singlets.qual; then
+    run "cat $tmp.our-singlets | fasta.get_matching $prefix.qual \
+    | fasta.remove_descriptions | $fix > $prefix.our-contigs.singlets.qual"
+fi
+rm -f $tmp.our-singlets
+if need $prefix.our-contigs.merged.fa $prefix.our-contigs.singlets.fa $prefix.our-contigs.fa; then
+    run "cat $prefix.our-contigs.merged.fa $prefix.our-contigs.singlets.fa > $prefix.our-contigs.fa"
+fi
+if need $prefix.our-contigs.merged.qual $prefix.our-contigs.singlets.qual $prefix.our-contigs.qual; then
+    run "cat $prefix.our-contigs.merged.qual $prefix.our-contigs.singlets.qual > $prefix.our-contigs.qual"
+fi
+# echo not removing $tmp.*
+rm -f $tmp.*
+
+

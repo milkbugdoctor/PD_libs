@@ -1,0 +1,43 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('f');
+
+@ARGV >= 1 or die "\nUsage: $0 [options] fasta-file ...
+
+    Options:
+	-f	fast: don't print sequence length
+
+";
+
+require 'fasta.pl';
+
+if ($opt_f) {
+    my @cols = qw{id desc};
+    print join("\t", @cols), "\n";
+    for my $fasta_file (@ARGV) {
+	open(FASTA, $fasta_file) or die "can't open file '$fasta_file'";
+	while (<FASTA>) {
+	    if (/^>(\S+)\s*(.*)/) {
+		print "$1\t$2\n";
+	    }
+	}
+    }
+}
+else {
+    my @cols = qw{id desc len};
+    print join("\t", @cols), "\n";
+    while ((my ($header, $seq) = read_fasta(ARGV, $keep_spaces)) == 2) {
+	my $len = length($seq);
+	if (is_qual($seq)) {
+	    $seq =~ s/^\s+//;
+	    $len = split /\s+/, $seq;
+	}
+	my @header = split(/\s+/, $header, 2);
+	$header[0] =~ s/^>//;
+	my ($id, $desc) = @header;
+	$desc =~ s/\t+/ /g;	# can't handle extra tabs in tab-delimited output
+	@cols = ();
+	print join("\t", $id, $desc, $len), "\n";
+    }
+}

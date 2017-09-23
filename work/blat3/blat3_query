@@ -1,0 +1,16 @@
+#!/usr/local/bin/perl
+
+@ARGV >= 2 || die "\nUsage: $0 sequence match [options]
+
+	match	        e.g.: 20, 20c, 60%, 60%c
+
+";
+
+require 'blat3.pl';
+
+my $seq = shift;
+my $match = shift;
+my $options = "@ARGV";
+
+my $tmp = blat::make_fasta($seq, 'query');
+blat_fasta_query($tmp, $options, $match, 1);

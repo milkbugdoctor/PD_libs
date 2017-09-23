@@ -1,0 +1,72 @@
+#!/usr/bin/perl
+
+use strict vars;
+
+my $debug = 0;
+
+(@ARGV == 0) || die "\nUsage: $0 < infile > outfile
+
+    Keep rows if primers don't significantly match in product.
+
+    Throw product out if 5 bp 3' match, and 3 of 5 before that.
+
+";
+
+use Columns;
+require 'primers.pl';
+require 'sequences.pl';
+
+my $columns = Columns::new(ARGV);
+$columns->must_col("primer1_start");
+$columns->must_col("primer2_start");
+$columns->must_col("primer1_len");
+$columns->must_col("primer2_len");
+$columns->must_col("primer1_seq");
+$columns->must_col("primer2_seq");
+$columns->must_col("prod_seq");
+
+$columns->print_header(STDOUT);
+
+while (my $row = $columns->get_row()) {
+    my $left_start = $columns->get_col($row, 'primer1_start');
+    my $left_len = $columns->get_col($row, 'primer1_len');
+    my $right_start = $columns->get_col($row, 'primer2_start');
+    my $right_len = $columns->get_col($row, 'primer2_len');
+    my $left_seq = $columns->get_col($row, 'primer1_seq');
+    my $right_seq = $columns->get_col($row, 'primer2_seq');
+    my $product = $columns->get_col($row, 'prod_seq');
+    my $first = $left_start + $left_len - 1;	# 0-based offset
+    my $last = $right_start - 1;
+    my $len = $last - $first + 1;
+    my $seq = substr($product, $first, $len);
+
+    if (primer_conflict($seq, $left_seq, $right_seq)) {
+	print STDERR "." if $debug;
+	next;
+    }
+
+    $columns->print_row(STDOUT, $row);
+}
+
+sub primer_conflict {
+    my ($seq, @primers) = @_;
+    my $rc = rc($seq);
+    for my $primer (@primers) {
+	return 1 if seq_conflict($seq, $primer);
+	return 1 if seq_conflict($rc, $primer);
+    }
+    return 0;
+}
+
+sub seq_conflict {
+    my ($seq, $primer) = @_;
+    my $last5 = substr($primer, -5);
+    while ($seq =~ /$last5/ig) {
+	my $seq_prev5 = substr($`, -5);
+	my $primer_prev5 = substr($primer, -10, 5);
+	if (num_matches($seq_prev5, $primer_prev5) >= 3) {
+	    return 1;
+	}
+    }
+    return 0;
+}

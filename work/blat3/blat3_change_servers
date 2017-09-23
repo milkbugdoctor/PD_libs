@@ -1,0 +1,20 @@
+#!/usr/bin/perl
+
+(($dir) = @ARGV) || die "\nUsage: $0 chromosome-dir\n\n";
+
+$blat3_work = $ENV{'blat3_work'} || die "\$blat3_work not set in environment";
+
+$dir =~ s|/$||; # remove trailing / if necessary
+
+die "directory $dir does not exist" if ! -d $dir;
+
+chomp(my $last_dir = `blat3_chr_dir`);
+chomp(my $new_dir = `cd $dir; pwd`);
+
+if ($last_dir ne $new_dir) {
+    print STDERR "stopping servers for $last_dir\n";
+    system "blat3_stop > /dev/null";
+}
+print STDERR "starting servers for $new_dir\n";
+print STDERR "blat3_start -w @ARGV\n";
+exit system("blat3_start -w @ARGV > /dev/null") >> 8;

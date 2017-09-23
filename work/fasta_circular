@@ -1,0 +1,17 @@
+#!/usr/bin/perl
+
+@ARGV >= 1 || die "\nUsage: $0 bases infile.fa > outfile.fa
+
+	Adds bases from beginning of sequence to the end
+
+";
+
+my $bases = shift;
+
+require 'fasta.pl';
+
+while ((my ($header, $seq) = read_fasta(ARGV)) == 2) {
+    $seq .= substr($seq, 0, $bases);
+    print "$header\n";
+    print_wrapped(STDOUT, $seq);
+}

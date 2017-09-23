@@ -1,0 +1,157 @@
+#!/usr/bin/env python
+'''
+bindcols - Bind selected columns together from different files.
+	This is the extension version of "selcols", which select columns from one file.
+
+	Use "mergefiles" if you want to merge files by columns (like cbind in R) with rows aligned by specific columns.
+	Use "bindrows" if you want to merge files by rows (like rbind in R) with columns aligned by their names.
+	Use "rbind" if you want to simple cat some file together, but only the title from the first file will be retained.
+	
+Usage: 
+	python bindCols.py -h | --help
+	python bindCols.py [--by-index] [--skip-head] [-o out_file] -i input_file_1 col1 col2 ... -i input_file_n col1 col2 ...
+'''
+
+import os, sys
+
+def addCols(output=sys.stdout, inputs=[], cols=[], by_index=False, sep='\t'):
+	n = len(inputs)
+	rng = range(n)
+	#heads = map(lambda a:a.readline().replace('\n','').replace('\r','').split(sep), inputs)
+	heads_raw = map(lambda a:a.readline(), inputs)
+	heads = map(lambda a:a.replace('\n','').replace('\r','').split(sep), heads_raw)
+	if by_index: indice = map(lambda i:(not cols[i]) and range(len(heads[i])) or [int(cln)-1 for cln in cols[i]], rng)
+	else: indice = map(lambda i:(not cols[i]) and range(len(heads[i])) or [heads[i].index(cln) for cln in cols[i] if cln in heads[i]], rng)
+	blanks = map(lambda a:sep*(len(a)-1), indice)
+
+	if not indice: return
+	#map(lambda a:a.seek(0,0), inputs)
+	map(lambda a:a[0].seek(-len(a[1]),1), zip(inputs, heads_raw))
+	has_data = [True] *n 
+	
+	while 1:
+		line = []
+		for i in rng:
+			if has_data[i]:
+				ln = inputs[i].readline()
+				if not ln: has_data[i] = False
+				ln = ln.replace('\n','').replace('\r','')
+				if not ln: ln = blanks[i]
+				else:
+					ln = ln.split(sep)
+					ln = sep.join([ln[j] for j in indice[i]])
+			else: ln = blanks[i]
+			line.append(ln)
+		if not filter(None, has_data): break
+		print >> output, sep.join(line)
+			
+def exitUsage(parser=None):
+	if parser: parser.print_help()
+	else: print __doc__
+	sys.exit(0)
+
+def addColsMain_pool(sep='\t'):
+	output = fn = None
+	inputs = []
+	inputs_dict = {}
+	args = sys.argv[1:]
+	n = len(args)
+	used = [False]*n
+	by_index = False
+	for i in range(n):
+		if used[i]: continue
+		used[i] = True
+		arg = args[i]
+		head = arg[:2]
+		if not output and head == '-o':
+			output = arg[2:]
+			if not output:
+				output = args[i+1]
+				used[i+1] = True
+		elif head == '-i':
+			fn = arg[2:]
+			if not fn:
+				fn = args[i+1]
+				used[i+1] = True
+			if not inputs_dict.has_key(fn):
+				inputs.append(fn)
+				inputs_dict[fn] = []
+		elif head == '--by-index':
+			by_index = True
+		else:
+			if fn:
+				inputs_dict[fn].append(arg)
+			
+	if not inputs: exitUsage()
+	finputs = map(lambda a:file(a,'r'), inputs)
+	foutput = output and file(output,'w') or sys.stdout
+	cols = map(lambda a:inputs_dict[a], inputs)
+			
+	addCols(output=foutput, inputs=finputs, cols=cols, by_index=by_index, sep=sep)
+	
+	map(lambda a:a.close(), finputs)
+	foutput.close()
+		
+
+def addColsMain(args=None, sep='\t'):
+	output = fn = None
+	inputs = []
+	inputs_col = []
+	if args is None: args = sys.argv[1:]
+	n = len(args)
+	used = [False]*n
+	skip_head = False
+	by_index = False
+	if '-h' in args or '--help' in args:
+		exitUsage()
+	for i in range(n):
+		if used[i]: continue
+		used[i] = True
+		arg = args[i]
+		head = arg[:2]
+		if arg == '--skip-head':
+			skip_head = True
+		elif arg == '--by-index':
+			by_index = True
+		elif not output and head == '-o':
+			output = arg[2:]
+			if not output:
+				output = args[i+1]
+				used[i+1] = True
+		elif head == '-i':
+			fn = arg[2:]
+			if not fn:
+				fn = args[i+1]
+				used[i+1] = True
+			#if not inputs_dict.has_key(fn):
+			inputs.append(fn)
+			inputs_col.append([])
+		else:
+			if fn:
+				inputs_col[-1].append(arg)
+			
+	if not inputs: exitUsage()
+	finputs = map(lambda a:file(a,'r'), inputs)
+	if skip_head: # skip annotation lines
+		for fp in finputs:
+			while True:
+				line = fp.readline()
+				if not line: break
+				if not line.strip(): continue
+				if line.startswith('#'): continue
+				fp.seek(-len(line), 1)
+				break
+			
+	foutput = output and file(output,'w') or sys.stdout
+	cols = inputs_col #map(lambda a:inputs_dict[a], inputs)
+			
+	addCols(output=foutput, inputs=finputs, cols=cols, by_index=by_index, sep=sep)
+	
+	#map(lambda a:a.close(), finputs)
+	#foutput.close()
+		
+
+
+if __name__ == '__main__': 
+	addColsMain()
+

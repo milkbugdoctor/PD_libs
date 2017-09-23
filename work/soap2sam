@@ -1,0 +1,42 @@
+#!/bin/bash
+
+. subs.sh
+
+opts=
+while getopts pU foo ; do
+    if [ "$foo" = 'p' ]; then
+	opts="$opts -p"
+    elif [ "$foo" = 'U' ]; then
+	opts="$opts -U"
+    fi
+done
+shift $((OPTIND-1))
+
+
+if [ $# -ne 2 ]; then
+    echo -e "\nUsage: $0 [options] reference.fa soapfile > samfile
+    
+    Options:
+	-p	the soapfile contains paired reads
+	-U	mark mates as being unmapped
+"
+    exit 1
+fi
+
+ref="$1" ; shift
+soap="$1" ; shift
+
+if [ "$soap" = "-" ]; then
+    soap=
+fi
+
+tmp=/tmp/sam.$$
+
+if need $ref $ref.fixed; then
+    run "fasta.fix $ref > $ref.fixed"
+fi
+if need $ref.fixed $ref.fixed.fai; then
+    run "samtools faidx $ref.fixed"
+fi
+
+soap2sam.pl $opts $soap | samtools view -S - -t $ref.fixed.fai -h

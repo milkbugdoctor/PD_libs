@@ -1,0 +1,46 @@
+#!/usr/bin/perl
+
+$0 =~ s|.*/||;
+@ARGV == 5 || die "\nUsage: $0 genome-dir chr_col strand_col exon_col new_seq_col < infile > outfile
+
+    genome-dir	directory containing chr1.txt, etc.
+
+    infile should be sorted by chr, because entire chr is loaded into mem.
+
+\n";
+
+my $genome_dir = shift;
+my $chr_col = shift;
+my $strand_col = shift;
+my $exon_col = shift;
+my $seq_col = shift;
+
+use Cols;
+require 'misc.pl';
+require 'primers.pl';
+
+my $cols = Cols::new(STDIN);
+$cols->add_col($seq_col);
+$cols->print_header(STDOUT);
+
+my $last_chr;
+my $chr_seq;
+while (my $row = $cols->get_row()) {
+    my ($chr, $strand, $exons) = $cols->get_col($row, $chr_col, $strand_col, $exon_col);
+    my @real_exons = split /,/, $exons;
+    my $file = "$genome_dir/$chr.txt";
+    my $mrna_seq = "";
+    if ($last_chr ne $chr) {
+	warn "loading $file\n";
+	$chr_seq = `cat $file`;
+	$last_chr = $chr;
+    }
+    for (my $i = 0; $i <= $#real_exons; $i++) {
+	my ($s, $l) = split /:/, $real_exons[$i];
+	$mrna_seq .= substr($chr_seq, $s - 1, $l);
+    }
+    my $final_seq = ($strand eq '-') ?  rc($mrna_seq) : $mrna_seq;
+    $cols->set_col($row, $seq_col, $final_seq);
+    $cols->print_row(STDOUT, $row);
+}
+

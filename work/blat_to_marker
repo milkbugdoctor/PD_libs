@@ -1,0 +1,65 @@
+#!/usr/bin/perl
+
+my $overlap = 10;
+
+#
+#   Join blat hits with covering markers
+#
+#   Expects: chr, strand, probe_start, probe_seq
+#
+
+$0 =~ s|.*/||;
+(@ARGV >= 4) || die "\nUsage: $0 marker.infile prefix id-col blat.psl > blat.annotated
+
+Join blat hits with covering markers
+
+";
+
+my $marker_infile = shift;
+my $prefix = shift;
+my $id_col = shift;
+my $blat_outfile = shift;
+
+use Columns;
+require 'marker_reader.pl';
+require 'markers.pl';
+
+my $markers = markers::new();
+
+my $reader = marker_reader::new($marker_infile,
+	"id $id_col chr strand start end len", $prefix, '');
+
+while (my $marker = $reader->read_marker) {
+    my ($id, $name, $chr, $strand, $start, $end, $len) = @$marker;
+    $markers->add_marker($chr, $strand, $start, $end, $id, $name, $len);
+}
+warn "done adding markers to hash\n";
+
+my $col = Columns::new($blat_outfile);
+$col->add_col('marker_hits');
+$col->print_header(STDOUT);
+while (my $row = $col->get_row) {
+    my ($qname, $chr, $strand, $blocksizes, $tstarts)
+	= $col->get_col($row, 'qname', 'tname', 'strand', 'blocksizes', 'tstarts');
+
+    my @blocksizes = split /,/, $blocksizes;
+    my @tstarts = split /,/, $tstarts;
+    my @all_hits;
+    for my $block (0 .. $#blocksizes) {
+	my $start = $tstarts[$block];
+	my $end = $tstarts[$block] + $blocksizes[$block] - 1;
+	my @block_hits;
+	my @hits = $markers->get_covering_markers($overlap, $chr, $strand, $start, $end);
+	for my $hit (@hits) {
+	    my ($hchr, $hstrand, $hstart, $hend, $hid, $hname, $hlen) = split /\t/, $hit;
+	    push(@block_hits, $hname);
+	}
+	my $block_hits = join(',', @block_hits);
+	push(@all_hits, $block_hits);
+    }
+    my $hits = join(';', @all_hits);
+    $col->set_col($row, 'marker_hits', $hits);
+    $col->print_row(STDOUT, $row);
+}
+
+exit 0;

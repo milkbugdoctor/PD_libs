@@ -1,0 +1,22 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ $# -lt 1 ]; then
+    echo -e "\nUsage: $0 file.bam [Picard options]
+
+    Sorts file.bam by query and outputs to file.qsorted.bam
+"
+    exit 1
+fi
+
+bam="$1" ; shift
+
+base=`strip_last_extension $bam`
+out="$base.qsorted.bam"
+
+if need $bam $out; then
+    run "java net.sf.picard.sam.SortSam I=\"$bam\" O=\"$out\" SO=queryname \
+	VALIDATION_STRINGENCY=SILENT \
+	MAX_RECORDS_IN_RAM=4000000 CREATE_INDEX=true $*"
+fi

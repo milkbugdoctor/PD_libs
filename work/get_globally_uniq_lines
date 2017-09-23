@@ -1,0 +1,45 @@
+#!/bin/bash
+
+ext=only_me
+
+if [ $# -lt 1 ]; then
+    echo -e "\nUsage: $0 files...
+
+    Copy lines that have unique lines into filename.only-mine.
+
+    Unique lines must not occur in any other file listed.
+
+"
+    exit 1
+fi
+
+for i in $*
+do
+    base=`basename $i`
+    file=/tmp/$base.all.$$
+    sort -u $i > $file
+done
+
+for i in $*
+do
+    base=`basename $i`
+    file=$base.$ext
+    tmp=/tmp/$base.all.$$
+    cp $tmp $file
+    for j in $*
+    do
+	if [ "$i" != "$j" ]; then
+	    base2=`basename $j`
+	    file2=/tmp/$base2.all.$$
+	    comm -23 $file $file2 > /tmp/$ext.$$
+	    mv /tmp/$ext.$$ $file
+	fi
+    done
+done
+
+for i in $*
+do
+    base=`basename $i`
+    file=/tmp/$base.all.$$
+    rm -f $file
+done

@@ -1,0 +1,14 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 infile.fa > outfile.pir\n\n";
+
+require 'fasta.pl';
+
+while ((my ($header, $seq) = read_fasta(ARGV)) == 2) {
+    $header =~ s/^>//;
+    my @words = split /\s+/, $header;
+    my $id = shift @words;
+    print ">DL; $id\n@words\n";
+    $seq .= "*";
+    print_wrapped(STDOUT, $seq);
+}

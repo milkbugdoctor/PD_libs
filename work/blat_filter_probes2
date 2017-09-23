@@ -1,0 +1,101 @@
+#!/usr/bin/perl
+
+my $debug = 1;
+
+use Getopt::Std;
+getopts('e:');
+
+$0 =~ s|.*/||;
+@ARGV >= 5 || die "\nUsage: $0 [options] probefile blat-outfile min exact id_col
+
+    Parameters:
+        min     	min bp match, e.g. \"30\", \"60%\", -1 to disable
+	exact		max exact hits, -1 to disable
+	id_col		id column
+    Options:
+	-e num		amount of mismatch to still be considered \"exact\"
+
+";
+
+use JoinFiles;
+require 'misc.pl';
+require 'columns.pl';
+
+my ($seqfile, $blat_outfile, $min_ident, $max_exact, $id_col) = @ARGV;
+
+my $out = STDOUT;
+my $join = JoinFiles::new('left', 1, $seqfile, $blat_outfile, "$id_col/qname");
+
+my @header = $join->get_header('left');
+my @blat_header = $join->get_header('right');
+$" = "\t";
+add_col(\@header, "exact_hits");
+print $out "@header\n";
+my (%lost, %kept);
+while (my ($left, $right) = $join->get_match) {
+    last if $left eq '';
+    # warn "duplicate lines:\n" . join("\n", @$left) . "\n" if @$left > 1;
+    for my $l (@$left) {
+	if (good_probe($right, $l)) {
+	    print $out "$l\n";
+	}
+    }
+}
+$join->cleanup;
+printf STDERR "lost: %s\n", join(' ', %lost) if $debug;
+printf STDERR "kept: %s\n", join(' ', %kept) if $debug;
+exit 0;
+
+sub good_probe {
+    my ($hits, $line) = @_;
+
+    my @row = split /\t/, $line;
+    my $probe_name = get_col(\@header, \@row, $id_col);
+
+    warn "\nin good_probe: $probe_name\n" if $debug >= 2;
+    #
+    #   look for primary hit
+    #
+    my $found_main = 0;
+    my $found_bad = 0;
+    my $found_exact = 0;
+    @$hits = hash_unique(@$hits); # why? -fjel
+    for my $hit (@$hits) {
+	my @row = split /\t/, $hit;
+	my ($match, $tstrand, $qname, $qlen, $tchr, $tstart, $tend)
+	    = get_cols(\@blat_header, \@row, 'match', 'strand', 'qname',
+		'qsize', 'tname', 'tstart', 'tend');
+	$qstart++; $tstart++;
+	my $len = $qlen;
+
+        warn "hit $match $qname on $tchr $tstrand ($tstart-$tend)\n" if $debug >= 3;
+
+	if ($min_ident >= 0) {
+	    my $min_match = $min_ident;
+	    if ($min_ident =~ /%/) {
+		$min_match = $min_ident / 100 * $qlen;
+	    }
+	    if ($match >= $min_match and $match < $len - $opt_e) {
+		$lost{'extraneous_hit'}++;
+		warn "HIT\t$qname\t$match/$qlen at $chr:$tstart-$tend\n" if $debug >= 2;
+		return 0;
+	    }
+	}
+	if ($match >= $len - $opt_e) {
+	    warn "EXACT\t$match >= $len, $qname\t$match/$qlen at $chr:$tstart-$tend\n" if $debug >= 2;
+	    $found_exact++;
+	}
+    }
+    if ($max_exact != -1 and $found_exact > $max_exact) {
+	warn "too many exact matches for $probe_name\n" if $debug >= 2;
+	$lost{'too_many_exact'}++;
+	return 0;
+    }
+    if ($found_exact) {
+	$kept{"${found_exact}_exact_hits"}++;
+	$kept{"${found_main}_main_hits"}++;
+    }
+    set_col(\@header, \@row, "exact_hits", $found_exact);
+    $_[1] = join("\t", @row);
+    return 1;
+}

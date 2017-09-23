@@ -1,0 +1,28 @@
+#!/usr/bin/perl
+
+#
+#	goldenpath start positions are 0-based, but ends are 1-based
+#
+
+$table = "gp_nov8.wgRna";
+
+(($mirna_file) = @ARGV) == 1 ||
+	die "\nUsage: $0 mirna-file\n\n";
+
+open(MIRNA, ">$mirna_file") || die "couldn't create $mirna_file";
+
+require 'mysql.pl';
+require 'misc.pl';
+
+$fd = mysql_output("select distinct name, type, chrom, strand, chromStart, chromEnd from $table");
+print_tabbed(MIRNA, "mirna_id mirna_type mirna_chr mirna_strand mirna_start mirna_end mirna_len\n");
+while (<$fd>) {
+	chomp;
+	($name, $type, $chrom, $strand, $start, $end) = split /\t/;
+	$chr = $chrom;
+	$start++; # add one to start position
+	my $len = $end - $start + 1;
+	print_tabbed(MIRNA, "$name $type $chr $strand $start $end $len\n");
+}
+close(MIRNA);
+

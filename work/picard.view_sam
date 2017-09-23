@@ -1,0 +1,4 @@
+
+CLASSPATH=/home/flong/java/packages/picard-2011-08-29:$CLASSPATH
+java net.sf.picard.sam.ViewSam "$@"
+# java -jar ~/java/packages/picard-tools-1.51/ViewSam.jar "$@"

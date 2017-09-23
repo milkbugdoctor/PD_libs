@@ -1,0 +1,11 @@
+#!/usr/bin/perl
+
+require 'perl_tm.pl';
+
+while (<>) {
+    chomp;
+    my $tm = PerlTm::approx_tm($_);
+    my $tm2 = PerlTm::exact_tm($_);
+    print "$_\t$tm\t$tm2\n";
+}
+

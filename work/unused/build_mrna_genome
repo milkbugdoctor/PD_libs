@@ -1,0 +1,58 @@
+#!/usr/bin/perl
+
+$mrna_table = "gp_hg17_ncbi35.all_mrna";
+
+(($genome_dir, $mrna_dir) = @ARGV) == 2 || die "\nUsage: $0 genome-dir mrna-output-directory
+
+	genome-dir	directory containing chr1.txt, etc.
+
+";
+
+require 'mysql.pl';
+require 'misc.pl';
+require 'fasta.pl';
+require 'primers.pl';
+
+open(POS, ">$mrna_dir/virtual_markers.txt") || die "couldn't create $mrna_dir/virtual_markers.txt";
+print_tabbed(POS, "marker_id chr strand marker_start marker_len\n");
+
+open(FASTA, ">$mrna_dir/mrna.fa") || die "couldn't create $mrna_dir/mrna.fa";
+
+$query = "select strand, qName, tName, blockCount, blockSizes, tStarts from $mrna_table order by tName";
+
+my $fd = mysql_output($query);
+my $last_chr;
+my $pos = 1;
+while (<$fd>) {
+	chomp;
+	my ($strand, $mrna, $chr, $count, $sizes, $starts) = split /\t/;
+	@starts = split(/,/, $starts);	# 0-based starting positions
+	@sizes = split(/,/, $sizes);
+	my $start = ($starts[0] + 1);
+	my $end = ($starts[-1] + 1) + $sizes[-1] - 1;
+	my $file = "$genome_dir/$chr.txt";
+	my $mrna_seq = "";
+	for (my $i = 0; $i <= $#starts; $i++) {
+		$mrna_seq .= get_file_seq($file, $starts[$i], $sizes[$i]);
+	}
+	$mrna_seq = rc($mrna_seq) if $strand eq '-';
+	printf FASTA ">$mrna $chr strand $strand $start-$end mrna_len %d\n",
+		length($mrna_seq);
+	if ($last_chr ne $chr) {
+		close(FOO);
+		open(FOO, ">$mrna_dir/$chr.fa") || die "can't create $mrna_dir/$chr.fa";
+		print FOO ">$chr virtual mRNA chromosome\n";
+		$pos = 1;
+		$last_chr = $chr;
+	}
+	print_wrapped(FASTA, $mrna_seq);
+	my $len = length($mrna_seq);
+	print_tabbed(POS, "$mrna $chr $strand $pos $len\n");
+	$mrna_seq .= "N" x 1000;
+	$len = length($mrna_seq);
+	print_wrapped(FOO, $mrna_seq);
+	$pos += $len;
+}
+close(FOO);
+close(POS);
+

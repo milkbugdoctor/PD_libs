@@ -1,0 +1,164 @@
+#!/usr/bin/perl
+
+my $gene_key = "gene";
+my @fields = my @default_fields = qw{locus_tag gene note product comments};
+
+my $debug = 0;
+
+use Getopt::Std;
+getopts('k:f:s');
+
+$gene_key = $opt_k if $opt_k ne '';
+@fields = split(/\s+/, $opt_f) if $opt_f ne '';
+
+require 'sequences.pl';
+
+@ARGV || die "\nUsage: $0 [options] infile.gb > outfile.txt
+
+    Options:
+
+	-k key		gene key (e.g., \"gene\" or \"locus_tag\")
+	-f \"fields\"	fields to add to output (default: @default_fields)
+	-s		get sequence also
+
+    Note: the \"comments\" field is produced from the \"note\" and \"product\" fields.
+
+";
+
+my $filename = shift;
+
+my @extra = ('gene_seq') if $opt_s;
+
+my $seq;
+
+my ($whole_name, $gi, $acc);
+my (@lines, %done);
+print join("\t", "acc", "acc_def", "gene_type", "gene_symbol",
+    "gene_start", "gene_end", "gene_strand", @fields, @extra), "\n";
+open(INPUT, $filename) or die "$filename: $!";
+while (<INPUT>) {
+    if (/^VERSION\s+(\S+)\s+(\S+)/) {
+        ($whole_name, $gi) = ($1, $2);
+	$acc = $whole_name;
+	$acc =~ s/\..*?$//;
+	$gi =~ s/GI://;
+	warn "got acc $acc gi $gi\n" if $debug;
+    }
+    if (/^DEFINITION\s+(.*)/) {
+	$def = $1;
+	warn "got def $def\n" if $debug;
+    }
+    if (m|^FEATURES|) {
+	while (<INPUT>) {
+	    chomp;
+	    last if /^\S/;
+	    if (/^     (\S+.*)/) {
+		flush_it();
+		@lines = ($1);
+		next;
+	    }
+	    if (/^ {21}(.*)/) {
+		my $line = $1;
+		if ($line =~ m|^/|) {
+		    push(@lines, $line);
+		}
+		else {
+		    my $num = $#lines;
+		    die "huh? at $line" if $num < 0;
+		    $lines[$num] .= " $line";
+		}
+	    }
+	}
+	flush_it();
+    }
+    if ($opt_s && /^ORIGIN/) {
+	$seq = '';
+	while (<INPUT>) {
+	    chomp;
+	    if (/^\s*\d+\s+([A-Za-z\s]+)\s*$/) {
+		my $tmp = $1;
+		$tmp =~ s/\s+//g;
+		$seq .= $tmp;
+	    }
+	    if (m|//|) {
+		&print_it;
+		last;
+	    }
+	}
+    }
+    if (m|^//|) {
+	&print_it;
+    }
+}
+
+&print_it;
+
+sub print_it {
+    for my $key (sort keys %best) {
+	my $line = $best{$key};
+	print $line;
+	if ($opt_s) {
+	    my ($acc, $def, $what, $key, $start, $end, $strand) = split /\t/, $line;
+	    my $s = substr($seq, $start - 1, $end - $start + 1);
+	    $s = rc($s) if $strand eq '-';
+	    $s = uc($s);
+	    print "\t$s";
+	}
+	print "\n";
+    }
+    undef %best;
+    undef @lines;
+    undef %done;
+}
+
+sub flush_it {
+    return if @lines == 0;
+    my ($locus, $strand, $start, $end, %hash);
+    $lines[0] =~ /(\S+)\s+(.*)/;
+    my ($what, $rest) = ($1, $2);
+    return if $what =~ /^(-|prot|RBS)/;
+    if ($rest =~ /^(complement\()?<?(\d+)..>?(\d+)/) {
+	($start, $end) = ($2, $3);
+	$strand = '+';
+	$strand = '-' if $1;
+    }
+    while (my $line = pop @lines) {
+	$line =~ /\/(\w+)(.*)/;
+	my ($key, $rest) = ($1, $2);
+	if ($rest =~ /="(.*)"/) {
+	    $rest = $1;
+	}
+	$hash{$key} = $rest;
+    }
+    return if ! $hash{$gene_key};
+    my $key = $hash{$gene_key};
+    return if $done{$key};
+
+    if (defined $hash{pseudo}) {
+	$what = 'pseudogene';
+	$done{$key} = 1;
+    }
+    if ($what =~ /^(CDS|misc_|.?RNA)/) {
+	$done{$key} = 1;
+    }
+    $hash{comments} = combine("; ", $hash{product}, $hash{note});
+    my @vals;
+    for my $f (@fields) {
+	push(@vals, $hash{$f});
+    }
+    $best{$key} = join("\t", $acc, $def, $what, $key, $start, $end, $strand, @vals);
+}
+
+sub combine {
+    my ($sep, @list) = @_;
+    my $combination;
+    for my $val (@list) {
+        if ($combination eq '') {
+            $combination = $val;
+        }
+        elsif (index($combination, $val) < 0) {
+            $combination .= "$sep$val";
+        }
+    }
+    return $combination;
+}

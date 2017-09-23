@@ -1,0 +1,71 @@
+#!/usr/bin/perl
+#
+#   Get promoter regions for Known Genes.
+#
+#   Goldenpath start positions are 0-based, but ends are 1-based.
+#
+
+$debug = 0;
+
+@ARGV >= 5 || die "\nUsage: $0 gp-track genome-dir upstream-bp downstream-bp promoters.out\n\n";
+my ($gp_track, $chr_dir, $upstream_bp, $downstream_bp, $marker_file) = @ARGV;
+
+open(MARKERS, ">$marker_file") || die "can't create '$marker_file'";
+
+require 'golden_path.pl';
+require 'misc.pl';
+require 'primers.pl';	# rc()
+
+my %chr_length = get_chr_lengths();
+
+my @markers = qw{id type name chr strand start end len};
+grep(s/^/gp_/, @markers);
+my @cols = (@markers, qw{region_id region_chr region_strand region_start
+	region_end region_len region_up});
+print MARKERS <<FOO;
+# $0 @ARGV
+#
+# region_up - how much of the region is upstream
+#
+FOO
+print MARKERS join("\t", @cols), "\n";
+
+my @kg = get_gp_track($gp_track);
+
+for my $kg (@kg) {
+    my ($id, $name, $chr, $strand, $start, $end, $len) = split /\t/, $kg;
+    my $file = sprintf "%s/%s.txt", $chr_dir, $chr;
+
+    $id = "$gp_track.$id";
+    print_tabbed(MARKERS, "$id $gp_track $name $chr $strand $start $end $len ");
+    if ($strand =~ /^-/) {
+	$first = $end - $downstream_bp + 1;
+	$first = $start if $first < $start;
+	$last = $end + $upstream_bp;
+    }
+    else {
+	$first = $start - $upstream_bp;
+	$last = $start + $downstream_bp - 1;
+	$last = $end if $last > $end;
+    }
+    if ($first < 1) {
+	warn "id $id: first < 1\n";
+	$first = 1;
+    }
+    if ($last > $chr_length{$chr}) {
+	warn "$last is beyond chr $chr, fixing\n";
+        $last = $chr_length{$chr};
+    }
+    my $rlen = $last - $first + 1;
+    warn "$name $chr $strand $first $start $end $last len $rlen\n" if $debug;
+    my $up;
+    if ($strand =~ /^-/) {
+	$up = $last - $end;
+    }
+    else {
+	$up = $start - $first;
+    }
+    print_tabbed(MARKERS, "$id $chr $strand $first $last $rlen $up\n");
+}
+
+exit 0;

@@ -1,0 +1,98 @@
+#!/usr/bin/perl
+
+$debug = 0;
+
+$opt_o = 1;
+
+use Getopt::Std;
+getopts('o:');
+
+@ARGV >= 5 || die "
+Usage: $0 [options] id_col chr_col strand_col start_col end_col marker-file > outfile
+
+    Merge overlapping hits (transcripts?) for same id.  Not sure why this was useful.
+
+    -o overlap		amount of overlap needed; default 1	
+
+";
+
+use Cols;
+require 'misc.pl';
+
+my $id_col = shift;
+my $chr_col = shift;
+my $strand_col = shift;
+my $start_col = shift;
+my $end_col = shift;
+
+my $cols = Cols::new(ARGV);
+while (my $row = $cols->get_row()) {
+    my $id = $row->{$id_col};
+    my $chr = $row->{$chr_col};
+    my $strand = $row->{$strand_col};
+    my $start = $row->{$start_col};
+    my $end = $row->{$end_col};
+    push(@{$genes{$strand}{"$chr$;$id"}}, "$start $end");
+}
+
+while (1) {
+    my $did_something = 0;
+    for my $strand (keys %genes) {
+        for my $chr (keys %{$genes{$strand}}) {
+            $did_something += &merge_transcripts($genes{$strand}{$chr});
+        }
+    }
+    last if ! $did_something;
+}
+
+my @big_cols = grep($_, $id_col, $chr_col, $strand_col, $start_col, $end_col, 'len');
+print join("\t", @big_cols), "\n";
+for my $strand (keys %genes) {
+    for my $chr (keys %{$genes{$strand}}) {
+        for my $gene (@{$genes{$strand}{$chr}}) {
+            my ($start, $end) = split / /, $gene;
+            my $len = $end - $start + 1;
+	    my $ref = $chr;
+	    ($ref, $id) = split /$;/, $chr;
+	    my @cols;
+	    push(@cols, $id) if $id_col;
+	    push(@cols, $chr) if $chr_col;
+	    push(@cols, $strand) if $strand_col;
+	    push(@cols, $start) if $start_col;
+	    push(@cols, $end) if $end_col;
+	    push(@cols, $len);
+	    print join("\t", @cols), "\n";
+        }
+    }
+}
+
+
+exit 0;
+
+#########################################################################
+
+sub merge_transcripts {
+    my ($array) = @_;
+    my $did_something = 0;
+    @$array = sort {
+	my ($a_start, $a_end) = split /\s+/, $a;
+	my ($b_start, $b_end) = split /\s+/, $b;
+	return $a_start <=> $b_start or $a_end <=> $b_end;
+    } @$array;
+    for (my $i = 0; $i < $#{$array}; $i++) {
+	my ($a_start, $a_end, @a_trans) = split /\s+/, $array->[$i];
+	my ($b_start, $b_end, @b_trans) = split /\s+/, $array->[$i + 1];
+	my $s = max($a_start, $b_start);
+	my $e = min($a_end, $b_end);
+	if ($e - $s + 1 >= $opt_o) {
+	    my $s = min($a_start, $b_start);
+	    my $e = max($a_end, $b_end);
+# warn "$a_start - $a_end [@a_trans] + $b_start - $b_end [@b_trans] -> $s $e @a_trans @b_trans\n";
+	    $array->[$i] = "$s $e @a_trans @b_trans";	# merge 
+	    splice(@{$array}, $i + 1, 1);		# remove 2nd
+	    $did_something = 1;
+	}
+    }
+    return $did_something;
+}
+

@@ -1,0 +1,61 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+require 'misc.pl';
+require 'primers.pl';
+
+use Getopt::Std;
+getopts('s');
+
+@ARGV || die "\nUsage: $0 [-s] infile.ace > outfile.txt
+
+    -s		get sequences too
+
+";
+
+print "# \"orient\" is relative to contig\n";
+print_tabbed(STDOUT, "id contig orient start end len seq\n");
+my $contig_name;
+my @reads, %reads;
+while (<>) {
+    chomp;
+    if (/^CO (\w+)/) {
+	$contig_name = $1;
+	warn "got contig $contig_name\n" if $debug;
+    }
+    if (/^AF (\S+) (\S+) (\S+)/) {
+        my $strand = ($2 eq "U") ? "+" : "-";
+	push(@reads, $1);
+	$count1++;
+	$reads{$count1}{'orient'} = $strand;
+	$reads{$count1}{'pos'} = $3;
+	$reads{$count1}{'id'} = $1;
+	warn "got AF $1 pos $3 orient $strand\n" if $debug;
+    }
+    if (/^RD (\S+) (\d+) (\d+) (\d+)/) {
+	my ($name, $len, $hmm1, $hmm2) = ($1, $2, $3, $4);
+	$count2++;
+	die "AF/RD id mismatch on RD $count2" if $reads{$count2}{id} ne $name;
+	if ($opt_s) {
+	    while (<>) {
+		last if /^\s+$/;
+		$reads{$count2}{'seq'} .= $_;
+	    }
+	    $reads{$count2}{'seq'} =~ s/[\s\n]//gm;
+	}
+	$reads{$count2}{'len'} = $len;
+
+	my $orient = $reads{$count2}{'orient'};
+	my $pos = $reads{$count2}{'pos'};
+	die "pos eq '' for $name" if $pos eq '';
+	my $len = $reads{$count2}{'len'};
+	my ($start, $end) = ($pos, $pos + $len - 1);
+	my $seq = $reads{$count2}{'seq'};
+	$seq =~ s/\*/ /g;
+	$seq = rc($seq) if $orient eq '-';
+	print "$name\t$contig_name\t$orient\t$start\t$end\t$len\t$seq\n";
+	delete $reads{$count2};
+    }
+}
+

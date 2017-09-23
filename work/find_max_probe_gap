@@ -1,0 +1,37 @@
+#!/usr/bin/perl
+
+use Cols;
+require 'misc.pl';
+
+@ARGV == 1 || die "\nUsage: $0 probe_file
+
+    Probe file needs to be sorted by probe_start.
+
+";
+
+my $file = shift;
+
+my $cols = new Cols $file;
+
+my ($first, $last, $max_gap);
+while (my $row = $cols->get_row()) {
+    my $start = $row->{probe_start};
+    my $end = $row->{probe_end};
+    if (defined $last) {
+	if ($start - $last > $max_gap) {
+	    $max_gap = $start - $last;
+	    print "max gap: $max_gap at $last - $start\n";
+	}
+    }
+    if (defined $first) {
+	if ($first - $end > $max_gap) {
+	    $max_gap = $first - $end;
+	    print "max gap: $max_gap at $first - $end\n";
+	}
+	$first = min($start, $first);
+    }
+    else {
+	$first = $start;
+    }
+    $last = max($end, $last);
+}

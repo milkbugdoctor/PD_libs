@@ -1,0 +1,5 @@
+# java fred.prog.SAMViewer "$@"
+# java -Dsamjdk.use_async_io=true fred.prog.SAMViewer "$@"
+# java -Dsamjdk.num_bgzf_threads=10 fred.prog.SAMViewer "$@"
+CLASSPATH=/home/flong/java/packages/picard-test2-2012-03-28:$CLASSPATH
+java -Dsamjdk.compression_level=5 fred.prog.SAMViewer "$@"

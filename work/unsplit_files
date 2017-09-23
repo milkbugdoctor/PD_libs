@@ -1,0 +1,62 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+while ($ARGV[0] =~ /^[-+]/) {
+    if ($ARGV[0] eq '-h') {
+	shift;
+	chomp(my $tmp = shift);
+	print "$tmp\n";
+    }
+    elsif ($ARGV[0] eq '+h') {
+	$copy_header = 1;
+	shift;
+    }
+    elsif ($ARGV[0] eq '-i') {
+	$ignore_mismatch = 1;
+	shift;
+    }
+}
+
+@ARGV || die "\nUsage: $0 [options] input-files ... > output-file
+
+	These options revserse split_files -h and +h:
+
+	-h 'header'	add header 'header'
+	+h		only keep first file's header
+	-i		ignore header mismatches
+
+";
+
+my $header;
+for my $file (@ARGV) {
+    my $input;
+    open($input, $file) or die "can't open $file";
+    if ($copy_header) { 
+	warn "reading header\n" if $debug;
+	my $tmp;
+	while (<$input>) {
+	    next if /^#/;
+	    $tmp .= $_;
+	    last;
+	}
+	if (!defined($header)) {	# header of first file
+	    $header = $tmp;
+	    print $header;
+	}
+	else {
+	    if ($tmp ne $header) {
+		my $h = $header;
+		chomp($tmp);
+		chomp($h);
+		warn "\nExpected header\n'$h'\n    but got\n'$tmp'\n    in file [$file]\n\n";
+		exit 1 if ! $ignore_mismatch;
+	    }
+	}
+    }
+    while (<$input>) {
+	print $_;
+    }
+}
+
+exit 0;

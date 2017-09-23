@@ -1,0 +1,91 @@
+#!/bin/bash
+
+. newsubs.sh
+
+prefix=mapped
+blat_options="-minMatch=4 -tileSize=18"
+options=
+
+while getopts g:l:n:o:p:rsv foo ; do
+    if [ "$foo" = 'o' ]; then
+        blat_options="$OPTARG"
+    elif [ "$foo" = 'g' ]; then
+        psl_options="-g '$OPTARG'"
+    elif [ "$foo" = 'n' ]; then
+        options="-n '$OPTARG'"
+    elif [ "$foo" = 's' ]; then
+        options="-s"
+    elif [ "$foo" = 'l' ]; then
+        link="-l '$OPTARG'"
+    elif [ "$foo" = 'p' ]; then
+        prefix="$OPTARG"
+    elif [ "$foo" = 'r' ]; then
+        repeats="-r"
+    elif [ "$foo" = 'v' ]; then
+        vertical="-v"
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -lt 2 ]; then
+    echo -e "\nUsage: $0 [options] reference.fa contigs.fa ...
+
+    Options:
+	-g max_gap      maximum gap in alignments
+	-o 'options'	BLAT options
+	-l pattern	link split contigs matching pattern
+	-n pattern	printable portion of contig name
+	-p prefix
+        -r              draw repeats if reference.fa.repeats exists
+	-s              draw longest contigs first
+"
+    exit 1
+fi
+
+ref="$1" ; shift
+
+if [ ! -s "$ref" ]; then
+    echo -e "$ref does not exist or is empty" 1>&2 ; exit 1
+fi
+
+contigs=$prefix.contigs.fa
+cat "$@" > /tmp/contigs.$$
+if ! cmp /tmp/contigs.$$ $contigs 2> /dev/null; then
+    cat "$@" > $contigs
+fi
+rm -f /tmp/contigs.$$
+
+if need "$ref" "$contigs" $prefix.blat; then
+    Run -t $prefix.blat \
+	"blat.filtered $blat_options -out=pslx $ref $contigs $prefix.blat"
+fi
+if need $prefix.blat $prefix.blat.aligns; then
+    Run -t $prefix.blat.aligns \
+	"psl2align $psl_options $prefix.blat \
+	    | get_best_hit qname score - > $prefix.blat.aligns"
+fi
+
+if need "$ref" $prefix.genome-coverage; then
+    if need "$ref" "$ref.headers"; then
+        Run -r fasta.get_headers '$ref' \> '$ref.headers'
+    fi
+    Run -r amos.get_genome_coverage '$ref' \> $prefix.genome-coverage
+fi
+
+if need $prefix.blat.aligns $prefix.contig-coverage; then
+    Run -t $prefix.contig-coverage \
+	"align_to_coverage $prefix.blat.aligns contig > $prefix.contig-coverage"
+fi
+
+if [ "$repeats" ]; then
+    # ZZZ FIX for BLAT
+    if need "$ref" "$ref.repeats"; then
+        Run -r amos.get_repeats '$ref' \> '$ref.repeats'
+    fi
+    repeats="-r '$ref.repeats'"
+else
+    repeats=
+fi
+
+Run "draw_coverage -p $prefix $repeats $vertical $options $link $prefix.genome-coverage $prefix.contig-coverage"
+

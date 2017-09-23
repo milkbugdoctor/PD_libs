@@ -1,0 +1,107 @@
+#!/usr/bin/perl
+
+use Digest::MD5 qw(md5_base64);
+
+while ($ARGV[0] =~ /^[-+]/) {
+    if ($ARGV[0] =~ /^-up/) {
+	shift;
+	$upstream = shift;
+    }
+    if ($ARGV[0] =~ /^-d/) {
+	shift;
+	$downstream = shift;
+    }
+    elsif ($ARGV[0] =~ /^\+c/) {
+	$add_crc = shift;
+    }
+    elsif ($ARGV[0] =~ /^-s/) {
+	$no_seq = shift;
+    }
+    else {
+	die "unknown option '$ARGV[0]'";
+    }
+}
+
+$0 =~ s|.*/||;
+@ARGV == 2 || die "\nUsage: $0 [options] input-file prefix
+
+    Uses amp_server to retrieve sequences.
+
+	prefix - look for columns prefix_chr, prefix_strand, etc.
+
+    Options:
+
+	+crc	    add CRC
+	-seq	    don't add sequence (used with +crc)
+	-up num	    number of upstream bases to include (upstream column)
+	-dn num	    number of downstream bases to include (downstream column)
+
+";
+
+my ($infile, $prefix) = @ARGV;
+
+require 'marker_reader.pl';
+require 'misc.pl';
+require 'new_amps.pl';
+
+my $markers = marker_reader::new($infile,
+	"id chr strand start end", $prefix);
+
+my $columns = $markers->get_Columns;
+$columns->add_col("${prefix}_top_crc") if $add_crc;
+$columns->add_col("${prefix}_strand_crc") if $add_crc;
+$columns->add_col("${prefix}_top_seq") if !$no_seq;
+if ($upstream) {
+    print "# ${prefix}_upstream - sense strand upstream sequence\n";
+    $columns->add_col("${prefix}_upstream");
+}
+$columns->add_col("${prefix}_strand_seq") if !$no_seq;
+if ($downstream) {
+    print "# ${prefix}_downstream - sense strand downstream sequence\n";
+    $columns->add_col("${prefix}_downstream");
+}
+$columns->print_header(STDOUT);
+
+while (my $mark = $markers->read_marker) {
+    my ($id, $chr, $strand, $start, $end) = @$mark;
+    $len = ($end - $start + 1);
+    $rev = ($strand =~ /^-/);
+    my $left_len = $rev ? $downstream : $upstream;
+    my $right_len = $rev ? $upstream : $downstream;
+    my ($left_seq, $right_seq, $downstream_seq, $upstream_seq);
+    if ($left_len) {
+	$left_seq = get_seq($chr, $start - $left_len, $left_len);
+    }
+    if ($right_len) {
+	$right_seq = get_seq($chr, $end + 1, $right_len);
+    }
+    my $seq = get_seq($chr, $start, $len);
+    my $real_len = length($seq);
+    if ($real_len != $len) {
+	warn "query: get_seq($chr, $start, $len)\n";
+	warn "actual sequence length ($real_len) != specified ($len) on line:\n";
+	die "$0 failed";
+    }
+    my $top_seq = $seq;
+    my $row = $markers->get_row();
+    if ($rev) {
+	$seq = rc($seq);
+	($downstream_seq, $upstream_seq) = (rc($left_seq), rc($right_seq));
+    }
+    else {
+	($upstream_seq, $downstream_seq) = ($left_seq, $right_seq);
+    }
+    if (!$no_seq) {
+	$columns->set_col($row, "${prefix}_top_seq", $top_seq);
+	$columns->set_col($row, "${prefix}_upstream", $upstream_seq) if $upstream;
+	$columns->set_col($row, "${prefix}_strand_seq", $seq);
+	$columns->set_col($row, "${prefix}_downstream", $downstream_seq) if $downstream;
+    }
+    if ($add_crc) {
+	$columns->set_col($row, "${prefix}_top_crc", md5_base64("\U$top_seq"));
+	$columns->set_col($row, "${prefix}_strand_crc", md5_base64("\U$seq"));
+    }
+    $columns->print_row(STDOUT, $row);
+}
+close(INPUT);
+

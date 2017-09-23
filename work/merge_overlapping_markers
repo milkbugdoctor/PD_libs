@@ -1,0 +1,92 @@
+#!/usr/bin/perl
+
+$debug = 0;
+
+@ARGV >= 4 || die "
+Usage: $0 markers.in big-markers.out map.out big-prefix [marker-prefix]
+
+    Merge overlapping markers into \"big\" markers.
+
+";
+
+require 'misc.pl';
+require 'markers.pl';
+require 'marker_reader.pl';
+
+my ($infile, $gene_file, $map_file, $big_prefix, @prefixes) = @ARGV;
+open(GENES, ">$gene_file") || die "can't create '$gene_file'";
+open(MAP, ">$map_file") || die "can't create '$map_file'";
+
+my $reader = marker_reader::new($infile,
+	'id chr strand start end len', @prefixes);
+
+#
+#   Load markers
+#
+while (my $row = $reader->read_marker) {
+    ($id, $chr, $strand, $s, $e, $len) = @$row;
+    push(@{$genes{$strand}{$chr}}, "$s $e $id");
+}
+
+while (1) {
+    my $did_something = 0;
+    for my $strand (keys %genes) {
+	for my $chr (keys %{$genes{$strand}}) {
+	    $did_something += &merge_transcripts($genes{$strand}{$chr});
+	}
+    }
+    last if ! $did_something;
+}
+
+
+my @cols = qw{id chr strand start end len children};
+grep(s/^/${big_prefix}_/, @cols);
+print GENES join("\t", @cols), "\n";
+my $trans_col = $reader->get_col_name("id");
+print MAP "${big_prefix}_id\t$trans_col\n";
+
+my $gene_id = 0;
+for my $strand (keys %genes) {
+    for my $chr (keys %{$genes{$strand}}) {
+	for my $gene (@{$genes{$strand}{$chr}}) {
+	    my ($s, $e, @trans) = split /\s+/, $gene;
+	    my $len = $e - $s + 1;
+	    my $trans = join(',', @trans);
+	    for my $t (@trans) {
+		print MAP "$gene_id\t$t\n";
+	    }
+	    print GENES join("\t", $gene_id, $chr, $strand, $s, $e, $len, $trans), "\n";
+	    $gene_id++;
+	}
+    }
+}
+
+exit 0;
+
+#########################################################################
+
+sub merge_transcripts {
+    my ($array) = @_;
+    my $did_something = 0;
+    @$array = sort {
+	my ($a_start, $a_end) = split /\s+/, $a;
+	my ($b_start, $b_end) = split /\s+/, $b;
+	return $a_start <=> $b_start or $a_end <=> $b_end;
+    } @$array;
+    for (my $i = 0; $i < $#{$array}; $i++) {
+	my ($a_start, $a_end, @a_trans) = split /\s+/, $array->[$i];
+	my ($b_start, $b_end, @b_trans) = split /\s+/, $array->[$i + 1];
+	my $s = max($a_start, $b_start);
+	my $e = min($a_end, $b_end);
+	if ($s <= $e) {
+	    my $s = min($a_start, $b_start);
+	    my $e = max($a_end, $b_end);
+# warn "$a_start - $a_end [@a_trans] + $b_start - $b_end [@b_trans] -> $s $e @a_trans @b_trans\n";
+	    $array->[$i] = "$s $e @a_trans @b_trans";	# merge 
+	    splice(@{$array}, $i + 1, 1);		# remove 2nd
+	    $did_something = 1;
+	}
+    }
+    return $did_something;
+}
+

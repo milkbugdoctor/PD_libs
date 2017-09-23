@@ -1,0 +1,34 @@
+#!/usr/bin/perl
+
+require 'fasta.pl';
+require 'misc.pl';
+
+@ARGV >= 2 || die "\nUsage: $0 1.fa 2.fa ... > result.fa
+
+    Replaces entries in 1.fa with later matching entries.
+
+";
+
+my $file = shift;
+
+my (%hash, @order);
+open(FASTA, $file) or die "can't open '$file'";
+while ((my ($key, $desc, $seq) = read_fasta3(FASTA)) == 3) {
+    $hash{$key} = "$desc\n$seq";
+    push(@order, $key);
+}
+
+for my $file (@ARGV) {
+    open(FASTA, $file) or die "can't open '$file'";
+    while ((my ($key, $desc, $seq) = read_fasta3(FASTA)) == 3) {
+	$hash{$key} = "$desc\n$seq";
+    }
+}
+
+for my $key (@order) {
+    my ($desc, $seq) = split /\n/, $hash{$key};
+    print ">$key";
+    print " $desc" if $desc ne '';
+    print "\n";
+    print_wrapped(STDOUT, $seq);
+}

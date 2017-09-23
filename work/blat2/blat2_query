@@ -1,0 +1,14 @@
+#!/usr/local/bin/perl
+
+@ARGV >= 2 || die "\nUsage: $0 sequence match [verbose]
+
+	match	        e.g.: 20, 20c, 60%, 60%c
+	verbose		show real blat output
+
+";
+
+require 'blat2.pl';
+
+my $tmp = blat::make_fasta($ARGV[0], 'query');
+blat_fasta_query($tmp, '', $ARGV[1], $ARGV[2]);
+

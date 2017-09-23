@@ -1,0 +1,42 @@
+#!/usr/bin/perl
+
+# use Getopt::Std;
+# getopts('q');
+
+$0 =~ s|.*/||;
+@ARGV >= 3 || die "\nUsage: $0 real-protein-col mapped-protein-col new-status-col < infile > outfile
+
+    Tries to determine if mapped protein is a pseudogene of the real gene.
+
+    Adds \"len\" attribute to status column if ratio of lengths < .9.
+    Adds \"term\" attribute if \"*\" is found in middle of protein.
+    Sets status column to \"no\" otherwise.
+
+";
+
+my $prot1_col = shift;
+my $prot2_col = shift;
+my $status_col = shift;
+
+use Cols;
+require 'translate.pl';
+require 'misc.pl';
+
+my $columns = Cols::new(STDIN);
+$columns->add_col($status_col);
+$columns->print_header(STDOUT);
+
+while (my $row = $columns->get_row()) {
+    my ($prot1, $prot2) = ($row->{$prot1_col}, $row->{$prot2_col});
+    my @status;
+    my $shorter = min(length($prot1), length($prot2));
+    my $longer = max(length($prot1), length($prot2));
+    my $ratio = $shorter / $longer;
+    push(@status, "len") if $ratio < .9;
+    push(@status, "term") if $prot2 =~ /\*[A-Z]/;
+    @status = ("no") if @status == 0;
+    $row->{$status_col} = join(",", @status);
+    $columns->print_row(STDOUT, $row);
+}
+close(STDIN);
+

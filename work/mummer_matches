@@ -1,0 +1,38 @@
+#!/usr/bin/perl
+
+@ARGV == 3 || die "\nUsage: $0 reference.fa query.fa wordsize\n\n";
+
+my $ref_fa = shift;
+my $query_fa = shift;
+my $word_size = shift;
+
+open(MUMMER, "mummer -maxmatch -l $word_size -c -b -F -L '$query_fa' '$ref_fa' |") || die "$!";
+
+print join("\t", qw{rname rstart rend rlen qname qstart qend qlen qstrand}), "\n";
+my ($rname, $rstart, $rend, $rlen, $rstrand);
+my ($qname, $qstart, $qend, $qlen, $qstrand);
+while (<MUMMER>) {
+    chomp;
+    if (/^> (\S+) (Reverse)?/) {
+	($rname, $rstrand) = ($1, $2);
+    }
+    elsif (/^\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/) {
+	($qname, $qstart, $rstart, $qlen) = ($1, $2, $3, $4);
+	$rlen = $qlen;
+	$qend = $qstart + $qlen - 1;
+	if ($rstrand) {
+	    $rend = $rstart;
+	    $rstart = $rstart - $rlen + 1;
+	    $qstrand = '-';
+	}
+	else {
+	    $rend = $rstart + $rlen - 1;
+	    $qstrand = '+';
+	}
+	print join("\t", $rname, $rstart, $rend, $rlen, $qname, $qstart, $qend, $qlen, $qstrand), "\n";
+    }
+    else {
+	die "bad line: [$_]";
+    }
+}
+

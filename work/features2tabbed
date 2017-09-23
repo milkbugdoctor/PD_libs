@@ -1,0 +1,22 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 features.gb > outfile.txt
+
+";
+
+my ($whole_name, $gi, $acc);
+my (@lines, %done);
+print join("\t", "id", "type", "start", "end", "strand"), "\n";
+while (<>) {
+    chomp;
+    if (/^FT\s+(\S+)\s+(.*?)(\d+)..(\d+)/) {
+	$type = $1;
+	$start = $3;
+	$end = $4;
+	$strand = ($2 =~ /compl/) ? "-" : "+";
+    }
+    if (/^FT\s+\/systematic_id|gene="(\S+)"/) {
+	$id = $1;
+	print "$id\t$type\t$start\t$end\t$strand\n";
+    }
+}

@@ -1,0 +1,78 @@
+#!/usr/bin/perl
+
+#
+#	Get nearest RefSeq.  Put CpG stuff in a different file.
+#
+#	(Goldenpath start positions are 0-based, but ends are 1-based)
+#
+
+$refseq = "gp_nov8.refFlat";
+
+(($input_file, $output_file) = @ARGV) == 2 || die "\nUsage: $0 sequence-file outfile-file\n\n";
+
+require 'mysql.pl';
+require 'misc.pl';
+require 'columns.pl';
+
+&get_refseqs;
+
+$" = "\t";
+
+open(IN, $input_file) || die "couldn't read $input_file";
+open(OUT, ">$output_file") || die "couldn't create $output_file";
+my @header = get_header(*IN);
+
+my @out_cols = (@header, "refseq", "refseq_gene", "refseq_5'", "refseq_dist"); 
+print OUT join("\t", @out_cols), "\n";
+
+while (my @line = get_row(*IN)) {
+print STDERR ".";
+	print OUT "$_\t";
+	my ($chr, $left_start, $len, $start5) = get_cols(\@header, \@line,
+	    "chr", "left_start", "len", "5'_start");
+	$chr =~ s/^chr//;
+	my $strand = ($left_start == $start5) ? 1 : -1;
+	my @refseq = get_nearest_refseq($chr, $start5);
+	print OUT join("\t", @refseq, ''), "\n";
+	my $mid = $left_start + ($len - 1) / 2;
+}
+close(IN);
+close(OUT);
+
+
+sub get_nearest_refseq {
+    my ($chrom, $pos) = @_;
+    my $start = $refseq_start{$chrom};
+    my ($best_dist, $best_index) = split(/ /, ${$start}[0]);
+    die "huh?" if $best_index eq '';
+    for (my $i = 1; $i <= $#{$start}; $i++) {
+	my ($s, $index) = split(/ /, ${$start}[$i]);
+	my $dist = abs($s - $pos);
+	if ($dist < $best_dist) {
+	    ($best_dist, $best_index) = ($dist, $index);
+	}
+    }
+    return (split(/\t/, $refseq_array[$best_index]))[0, 1, 4], $best_dist;
+}
+
+
+#
+#	Returns
+#		@refseq_array
+#		$refseqs_start{chr} - array references
+#
+sub get_refseqs {
+	@refseq_array = mysql_chomp_noheader(
+	    "select name, geneName, chrom, strand, txStart+1 from $refseq");
+	my (%chr, @chr);
+	for (my $i = 0; $i <= $#refseq_array; $i++) {
+	    my ($name, $gene, $chr, $strand, $start) = split(/\t/, $refseq_array[$i]);
+	    $chr =~ s/^chr//;
+	    $chr{$chr} = 1;
+	    push(@{$refseq_start{$chr}}, "$start $i");	# put pos 1st for easy sorting
+	}
+	@chr = keys %chr;
+	for my $chr (@chr) {
+	    @{$refseq_start{$chr}} = sort { $a <=> $b } @{$refseq_start{$chr}};
+	}
+}

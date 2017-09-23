@@ -1,0 +1,25 @@
+#!/usr/bin/perl
+
+use Fasta;
+
+@ARGV == 2 || die "\nUsage: $0 reads.fa reads.qual > outfile.txt
+
+    Outputs columns id, header, seq, qual
+    
+";
+
+my $fasta_file = shift;
+my $qual_file = shift;
+
+my $fa = Fasta::new($fasta_file);
+my $qual = Fasta::new($qual_file);
+
+print join("\t", "id", "header", "seq", "qual"), "\n";
+while ((my ($id, $desc, $header, $seq) = $fa->next_entry()) == 4) {
+    (my ($id2, $desc2, $header2, $seq2) = $qual->next_entry()) == 4 || die "early end of qual file";
+    die "id mismatch [$id] vs [$id2]" if $id ne $id2;
+    $seq .= '';  # don't want it to be undefined
+    $seq2 .= ''; # don't want it to be undefined
+    print join("\t", $id, $header, $seq, $seq2), "\n";
+}
+

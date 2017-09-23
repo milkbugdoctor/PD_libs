@@ -1,0 +1,26 @@
+#!/usr/bin/perl
+
+$both = shift if $ARGV[0] eq '-r';
+
+(($file) = @ARGV) || die "\nUsage: $0 .output-file\n\n";
+
+require 'primer.pl';
+
+open(FOO, "$file") || die "$!";
+while (<FOO>) {
+	if (/^(    )?([ACGT]+) ([ACGT]+)/) {
+		$map{$2} = 1;
+		$map{$3} = 1;
+		if ($both) {
+		    $map{rc($2)} = 1;
+		    $map{rc($3)} = 1;
+		}
+	}
+}
+close(FOO);
+
+@keys = sort keys %map;
+for $k (@keys) {
+	print "$k\n";
+}
+

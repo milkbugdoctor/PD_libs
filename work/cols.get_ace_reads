@@ -1,0 +1,116 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+require 'misc.pl';
+require 'primers.pl';
+
+use Getopt::Std;
+getopts('s');
+
+@ARGV || die "\nUsage: $0 [options] infile.ace > outfile.txt
+
+    Contigs are always padded with \"*\".
+    Reads are padded with \"*\" in pad_ output columns.
+    Reads are not padded in rd_ output columns.
+
+    Options:
+	-s	Don't output read sequences.
+
+";
+
+print <<FOO;
+# contig:
+#     ctg_strand   how read is oriented in contig
+#     ctg_start    start of read in padded contig
+#     ctg_end      end of read in padded contig
+# padded reads:
+#     pad_id       name of read
+#     pad_enc      encoded name of read (name:start-end:+)
+#     pad_strand   always +
+#     pad_start    start of used portion of read
+#     pad_end      end of used portion of read
+#     pad_len      length of used portion of read
+#     pad_seq      used portion of read sequence
+# unpadded reads:
+#     rd_id        name of read
+#     rd_enc       encoded name of read (name:start-end:+)
+#     rd_strand    always +
+#     rd_start     start of used portion of read
+#     rd_end       end of used portion of read
+#     rd_len       length of used portion of read
+#     rd_seq       used portion of read sequence
+#
+FOO
+print_tabbed(STDOUT, "ctg_id ctg_strand ctg_start ctg_end ctg_len");
+print_tabbed(STDOUT, " pad_id pad_enc pad_strand pad_start pad_end pad_len pad_seq");
+print_tabbed(STDOUT, " rd_id rd_enc rd_strand rd_start rd_end rd_len rd_seq rd_seq\n");
+my $contig_name;
+my @reads, %reads;
+while (<>) {
+    chomp;
+    if (/^CO (\w+)/) {
+	$contig_name = $1;
+	warn "got contig $contig_name\n" if $debug;
+    }
+    if (/^AF (\S+) (\S+) (\S+)/) {
+        my $strand = ($2 eq "U") ? "+" : "-";
+	push(@reads, $1);
+	$count1++;
+	$reads{$count1}{'orient'} = $strand;
+	$reads{$count1}{'pos'} = $3;
+	$reads{$count1}{'id'} = $1;
+	warn "got AF $1 pos $3 orient $strand\n" if $debug;
+    }
+    if (/^RD (\S+) (\d+) (\d+) (\d+)/) {
+	my ($name, $len, $hmm1, $hmm2) = ($1, $2, $3, $4);
+	$count2++;
+	die "AF/RD id mismatch on RD $count2" if $reads{$count2}{id} ne $name;
+	my $seq;
+	while (<>) {
+	    last if /^\s+$/;
+	    $seq .= $_;
+	}
+	$seq =~ s/[\s\n]//gm;
+	$reads{$count2}{'len'} = $len;
+	my ($tmp1, $tmp2, $rd_start, $rd_end);
+	while (<>) {
+	    next if /^\s+$/;
+	    if (/^QA (\d+) (\d+) (\d+) (\d+)/) {
+		($tmp1, $tmp2, $rd_start, $rd_end) = ($1, $2, $3, $4);
+		last;
+	    }
+	    die "QA line not found after RD line";
+	}
+	my $left_trim = $rd_start - 1;
+	my $right_trim = $len - $rd_end;
+	my $whole_seq = $seq;
+	$seq = substr($seq, $rd_start - 1, $rd_end - $rd_start + 1);
+
+	my $orient = $reads{$count2}{'orient'};
+	my $pos = $reads{$count2}{'pos'};
+	die "pos eq '' for $name" if $pos eq '';
+	my $len = length($seq);
+	my ($start, $end) = ($pos + $left_trim, $pos + $left_trim + $len - 1);
+	$seq = rc($seq) if $orient eq '-';
+	my $name2 = "$name:$rd_start-$rd_end";
+	my $seq_out = $opt_s ? '' : $seq;
+	print join("\t", $contig_name, $orient, $start, $end, $len, $name, $name2, '+', $rd_start, $rd_end, $len, $seq_out);
+	my $un_start = $rd_start;
+	my $un_end = $rd_end;
+	for my $i (1 .. length($whole_seq)) {
+	    my $char = substr($whole_seq, $i - 1, 1);
+	    if ($char eq '*') {
+		$un_start-- if $i < $rd_start;
+		$un_end-- if $i < $rd_end;
+	    }
+	}
+	$seq =~ s/\*//g;
+	my $len = length($seq);
+	my $seq_out = $opt_s ? '' : $seq;
+	my $name2 = "$name:$un_start-$un_end";
+	print join("\t", '', $name, $name2, '+', $un_start, $un_end, $len, $seq_out), "\n";
+	delete $reads{$count2};
+    }
+}
+

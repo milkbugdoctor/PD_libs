@@ -1,0 +1,7 @@
+addLocusTag4Fa.py
+addLocusTag4Rows.py
+basetools.py
+fa2phy.py
+mk_newicks.sh
+raxmlHPC
+splitfile

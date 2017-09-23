@@ -1,0 +1,72 @@
+#!/usr/bin/perl
+
+(@ARGV == 5) || die "\nUsage: $0 infile.fa infile.qual block-size offset prefix
+
+    Create prefix.fa, prefix.qual, and prefix.con
+
+";
+my ($file_seq, $file_qual, $mer_size, $offset, $prefix) = @ARGV;
+
+require 'fasta.pl';
+require 'primers.pl';
+require 'misc.pl';
+
+open(FASTA, $file_seq) || die "can't open $file_seq";
+open(QUAL, $file_qual) || die "can't open $file_qual";
+open(READS_FA, ">$prefix.fa") || die "can't create $prefix.fa";
+open(READS_QUAL, ">$prefix.qual") || die "can't create $prefix.qual";
+open(READS_CON, ">$prefix.con") || die "can't create $prefix.con";
+my $seq_num = 0;
+while ((my ($key, $desc, $seq) = read_fasta3(FASTA)) == 3) {
+    warn "doing $key\n";
+    my $length = length($seq);
+    my ($qual_key, $qual_desc, $qual_scores) = read_fasta3(QUAL);
+    die "key mismatch: [$key] ne [$qual_key]" if $key ne $qual_key;
+    my @scores = split /\s+/, $qual_scores;
+    my $num_score = @scores;
+    die "qual len mismatch: [$length] != [$num_score]" if $length != $num_score;
+    $seq_num++;
+    my $last = -1;
+    my $len;
+    my $read_num = 0;
+    my %reads;
+    my $read_prefix = $prefix;
+    $read_prefix =~ s|.*/||;
+    for (my $i = 0; $i < $length; $i += $offset) {
+	$read_num++;
+	my $seq = substr($seq, $i, $mer_size);
+	my @qual = @scores[$i .. $i + $mer_size - 1];
+	$len = length($seq);
+	last if $i + $len <= $last;
+	$last = $i + $len;
+	my $base = sprintf "%s_%s_%s", $read_prefix, $seq_num, $read_num;
+
+	printf READS_FA ">$base.a1 CHEM: unknown DYE: unknown TEMPLATE: $base\n";
+	print_wrapped(READS_FA, $seq);
+	printf READS_QUAL ">$base.a1 CHEM: unknown DYE: unknown TEMPLATE: $base\n";
+	print_wrapped(READS_QUAL, "@qual");
+
+	$seq = rc($seq);
+	@qual = reverse @qual;
+	printf READS_FA ">$base.c1 CHEM: unknown DYE: unknown TEMPLATE: $base\n";
+	print_wrapped(READS_FA, $seq);
+	printf READS_QUAL ">$base.c1 CHEM: unknown DYE: unknown TEMPLATE: $base\n";
+	print_wrapped(READS_QUAL, "@qual");
+	$reads{fwd}{"$base.a1"} = [ $i, $len, $base ];
+	$reads{rev}{"$base.c1"} = [ $i, $len, $base ];
+    }
+    while (my ($fwd_key, $fwd_val) = each %{$reads{fwd}}) {
+	my ($fwd_start, $fwd_len, $base) = @$fwd_val;
+	my $num = 0;
+	while (my ($rev_key, $rev_val) = each %{$reads{rev}}) {
+	    my ($rev_start, $rev_len) = @$rev_val;
+	    my $left = min($fwd_start, $rev_start);
+	    my $right = max($fwd_start + $fwd_len, $rev_start + $rev_len);
+	    my $dist = $right - $left;
+	    next if $dist > 4000;
+	    $num++;
+	    printf READS_CON "$fwd_key $rev_key %d %d $base.$num\n",
+		max(0, $dist - $mer_size), $dist + $mer_size;
+	}
+    }
+}

@@ -1,0 +1,45 @@
+#!/usr/bin/env python
+
+
+import os, sys, getopt
+
+#if len(sys.argv) > 1 and sys.argv[1] in ('-h', '--help'):
+def exitUsage():
+	print '''
+	something like the command 'wc', but only counts number of columns of multiple files.
+	usage:
+		cols [(-s | --sep=) 'sep_char'] [-k | --skip= line_number] [--no-name] [--in-row] file1 file2 ...
+	options:
+		--in-row: show result in columns sparated by TAB.
+	'''
+	sys.exit(0)
+
+optlist, args = getopt.getopt(sys.argv[1:], 's:k:h', ['sep=', 'skip=', 'help', 'no-name', 'in-row'])
+optdict = dict(optlist)
+
+if optdict.has_key('-h') or optdict.has_key('--help'): exitUsage()
+	
+sep = optdict.get('-s', optdict.get('--sep', '\t'))
+skip = int(optdict.get('-k', optdict.get('--skip', 0)))
+no_name = '--no-name' in optdict
+in_row = '--in-row' in optdict
+
+nums = []
+if not args:
+	args = ['STDIN']
+	nums.append(str(sys.stdin.readlines()[0].count(sep)+1))
+else:
+	for nm in args:
+		fp = file(nm)
+		if skip>0: fp.readlines(skip) 
+		nums.append(str(fp.readline().count(sep)+1))
+		fp.close()
+if in_row:
+	if not no_name: print '\t'.join(args)
+	print '\t'.join(nums)
+else:
+	if no_name:
+		print '\n'.join(nums)
+	else:
+		rlt = map(lambda a:a[0]+'\t'+a[1], zip(nums, args))
+		print '\n'.join(rlt)

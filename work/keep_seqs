@@ -1,0 +1,48 @@
+#!/usr/bin/perl
+
+#
+#   Keep probes containing certain sequences.
+#
+#   Expects: probe_seq probe_id seq_id left_start strand
+#
+
+use Columns;
+require 'translate.pl';
+
+$0 =~ s|.*/||;
+(@ARGV >= 2) || die "\nUsage: $0 seq-col sequence-expr ...
+
+    E.g., $0 probe_seq RCG CGY
+
+";
+
+my ($seq_col, @sequences) = @ARGV;
+for my $seq (@sequences) {
+    $seq = degenerate_to_regex($seq);
+}
+my $regex = join("|", @sequences);
+warn "$0: using regex $regex\n";
+
+my $cols = Columns::new(STDIN);
+
+my $probe_seq_col = $cols->must_col($seq_col);
+$cols->print_header(STDOUT);
+
+my ($kept, $lost, $total);
+while (my $row = $cols->get_row()) {
+    my $seq = $cols->get_col($row, $seq_col);
+    $total++;
+    if ($seq =~ /$regex/i) {
+	$kept++;
+	$cols->print_row(STDOUT, $row);
+    }
+    else {
+	$lost++;
+    }
+}
+
+printf STDERR "$0: total %d   kept %d (%f%%)   lost %d (%f%%)\n",
+    $total, $kept, $kept/$total*100, $lost, $lost/$total*100;
+
+exit 0;
+

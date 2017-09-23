@@ -1,0 +1,16 @@
+#!/bin/bash
+
+for j in 1 2 3 4 5
+do
+    for i in tmp.$j.aligns.txt tmp.$j.aligns.improved-contigs tmp.$j.aligns.improved.txt tmp.$j.aligns.improved.layout tmp.$j.aligns.layout tmp.$j.get_contigs.err tmp.$j.qual tmp.$j.graceful_exit tmp.$j.fa
+    do
+	if [ -e $i ]; then
+	    sleep 1
+	    echo $i
+	    touch $i
+	else
+	    echo $i does not exist
+	    exit 1
+	fi
+    done
+done

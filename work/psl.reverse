@@ -1,0 +1,27 @@
+#!/usr/bin/perl
+
+use Columns;
+
+my $c = Columns::new(ARGV);
+my @qcols = $c->get_col_num(qw{qgapcount qgapbases qname qsize qstart qend
+    qend qstarts qseqs});
+my @tcols = $c->get_col_num(qw{tgapcount tgapbases tname tsize tstart tend
+    tend tstarts tseqs});
+
+my (@list1, @list2);
+for my $i (0 .. $#qcols) {
+    my ($q, $t) = ($qcols[$i], $tcols[$i]);
+    die "huh?" if ($q != 0) != ($t != 0);
+    next if $q == 0;
+    push(@list1, $q - 1, $t - 1);
+    push(@list2, $t - 1, $q - 1);
+}
+
+$c->print_header(STDOUT);
+while (my $r = $c->get_row()) {
+    my @line = @$r;
+    @line[@list1] = @line[@list2];
+    @$r = @line;
+    $c->print_row(STDOUT, $r);
+}
+

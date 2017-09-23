@@ -1,0 +1,94 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+#
+#	Sort file but keep header intact
+#
+
+$sort = 'sort';
+
+while ($ARGV[0] =~ /^-/) {
+    if ($ARGV[0] =~ /^-u/) {
+	$uniq = shift;
+    }
+    elsif ($ARGV[0] =~ /^-n/) {
+	shift;
+	$numeric = 'n';
+    }
+    elsif ($ARGV[0] =~ /^-r/) {
+	shift;
+	$reverse = 'r';
+    }
+    elsif ($ARGV[0] =~ /^-c/) {
+	shift;
+	$sort = "c_sort";
+    }
+    elsif ($ARGV[0] =~ /^-h/) {
+	$no_header = shift;
+    }
+    elsif ($ARGV[0] =~ /^-oh/) {
+	$no_output_header = shift;
+    }
+    elsif ($ARGV[0] =~ /^--h/) {
+	&usage;
+    }
+    else {
+	print STDERR "\nUnknown option '$ARGV[0]'\n";
+	&usage;
+    }
+}
+
+sub usage {
+    $0 =~ s|.*/||;
+    die "
+Usage: $0 [options] [columns ...] < input-file > output-file
+
+    Options:
+	-c	C ordering
+	-h	no input header
+	-oh	don't output header
+	-n	numeric sort
+	-r	reverse
+	-u	unique
+
+    Column format:	name[/modifiers]
+    Column modifiers:
+			n	numeric sort
+			r	reverse sort
+
+";
+}
+
+require 'columns.pl';
+require 'misc.pl';
+
+my $input_size = (-s *STDIN);
+
+$" = "\t";
+my $header;
+if (! $no_header) {
+    @header = get_header(*STDIN);
+    print_header(STDOUT, @header) if ! $no_output_header;
+}
+
+my $sort_params;
+for my $arg (@ARGV) {
+    my ($col, $mod) = split m|/|, $arg;
+    if ($no_header) {
+	die "column numbers must start at 1" if $col == 0;
+    }
+    else {
+        $col = get_col_num(\@header, $col) if ! $no_header;
+	die "column '$arg' not found in header '@header'" if $col == 0;
+    }
+    $sort_params .= " -k $col$numeric$reverse$mod,$col$numeric$reverse$mod ";
+}
+warn "$sort $uniq -t '\t' $sort_params\n" if $debug;
+open($pipe, "| $sort $uniq -t '\t' $sort_params") || die "can't open pipe to 'sort'";
+while (@row = get_row(STDIN)) {
+	print $pipe "@row\n";
+}
+close $pipe;
+
+exit 0;

@@ -1,0 +1,90 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('fn:s:');
+
+my $name = $opt_s;
+
+@ARGV >= 2 or die "\nUsage: $0 [options] fasta-file range
+
+    Options:
+	-f		output fasta
+	-n name		output name for fasta header
+	-s seqname	use this sequence from the fasta file instead of the first
+
+    Range:
+	start-pos [length]
+	start-pos : length
+	start - end
+
+    start-pos starts at 1, but may be negative to retrieve end of sequence.
+
+";
+
+my $fasta_file = shift;
+my $range = "@ARGV";
+my ($start, $end, $len);
+
+if ($range =~ /^(-?\d+)$/) {	# just a starting position
+    $start = $1;
+}
+elsif ($range =~ /^(-?\d+)(\s+|\s*-\s*|\s*:\s*)(\d+)$/) {
+    $start = $1;
+    my $op = $2;
+    $end = $3;
+    $op =~ s/\s//g;
+    if ($op eq '-') {
+	$len = $end - $start + 1;
+	die "negative length" if ($len < 0);
+	# warn "range: $start-$end:$len\n";
+    }
+    elsif ($op eq ':' || $op eq '') {
+	$len = $end;
+	$end = $start + $len - 1;
+	# warn "range: $start-$end:$len\n";
+    }
+}
+if (! defined $start) {
+    die "unknown range [$range]\n";
+}
+
+die "start position must be >= 1 or < 0\n" if $start == 0;
+
+require 'fasta.pl';
+
+open(FASTA, $fasta_file) or die "can't open file '$fasta_file'";
+while ((my ($header, $seq) = read_fasta(FASTA)) == 2) {
+    my @header = split(/\s+/, $header, 2);
+    $header[0] =~ s/^>//;
+    next if $name ne '' && $name ne $header[0];
+    $found = 1;
+    my $result;
+    my $is_qual = is_qual($seq);
+    $seq = pack_qual($seq) if $is_qual;
+    $start = length($seq) + $start + 1 if $start < 0;
+    if ($len) {
+	$result = substr($seq, $start - 1, $len);
+    }
+    else {
+	$result = substr($seq, $start - 1);
+    }
+    if ($opt_f) {
+	my $len = length($result);
+	if ($opt_n ne '') {
+	    print ">$opt_n\n";
+	}
+	else {
+	    print ">$header[0]:$start-$end:+\n";
+	}
+	$result = unpack_qual($result) if $is_qual;
+	print_wrapped(STDOUT, $result);
+    }
+    else {
+	$result = unpack_qual($result) if $is_qual;
+	print "$result\n";
+    }
+    exit 0;
+}
+
+die "sequence '$name' not found\n" if $name ne '' and ! $found;
+

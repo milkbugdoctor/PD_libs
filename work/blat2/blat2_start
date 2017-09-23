@@ -1,0 +1,45 @@
+#!/usr/bin/perl
+
+$wait = shift if $ARGV[0] eq "-w";
+
+@ARGV || die "\nUsage: $0 [-w] chr-dir
+
+	chr-dir		chromosome directory containing blat_list
+	-w		wait for servers to become ready
+
+";
+
+my $dir = shift;
+
+die "directory $dir does not exist" if ! -d $dir;
+
+$blat2_work = $ENV{'blat2_work'} || die "\$blat2_work not set in environment";
+system "mkdir $blat2_work/data 2> /dev/null";
+system "cd $dir; pwd > $blat2_work/data/last_dir" || die "huh?";
+
+$dir =~ s|/$||; # remove trailing / if necessary
+chomp($pwd = `pwd`);
+$dir = "$pwd/$dir" if $dir !~ m|^/|;
+
+my $file = "$dir/blat_list";
+open(FOO, "$file") || die "can't open $file";
+while (<FOO>) {
+    chomp;
+    my ($node, $actual, $files) = split /\t/;
+    my @files = split / /, $files;
+    for $chr (@files) {
+	my $file = $chr;
+	$chr =~ s/\..*//;
+	print "blat2_run_one $node $chr $dir/$file\n";
+	exit 1 if system("blat2_run_one $node $chr $dir/$file") / 256;
+    }
+}
+
+sleep 10;
+
+while ($wait) {
+    sleep 5;
+    warn "testing blat servers...\n";
+    print "testing blat servers...\n";
+    exit 0 if system("blat2_test") / 256 == 0;
+}

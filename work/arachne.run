@@ -1,0 +1,60 @@
+. subs.sh
+
+if [ ! "$ARACHNE_DATA_DIR" ]; then
+    export ARACHNE_DATA_DIR=/usr/local/src/assembly/Arachne-Data
+fi
+
+if ! which Assemble &> /dev/null; then
+    echo "Can't find Assemble!" 1>&2
+    exit 1
+fi
+
+if [ "$1" = "-c" ]; then
+    shift
+    con="$1" ; shift
+fi
+if [ $# -lt 3 ]; then
+    echo -e "\nUsage: $0 [-c cf] file.fa file.qual out-directory [Arachne-options]
+
+    -c cf	constraints file
+"
+    exit 1
+fi
+fasta="`abs_path \"$1\"`" ; shift
+qual="`abs_path \"$1\"`" ; shift
+dir="`abs_path \"$1\"`" ; shift
+base="`basename \"$dir\"`"
+
+if [ -L "$ARACHNE_DATA_DIR/$base" ]; then
+    echo "Warning: $ARACHNE_DATA_DIR/$base already exists" 1>&2
+fi
+if [ -d "$dir" ]; then
+    echo "Warning: $dir already exists" 1>&2
+fi
+mkdir -p $dir/traceinfo
+ln -s $dir "$ARACHNE_DATA_DIR/$base" 2> /dev/null
+if need $dir/reads.fasta; then
+    fasta.remove_descriptions "$fasta" > $dir/reads.fasta || exit 1
+fi
+if need $dir/reads.qual; then
+    if [ ! -s "$qual" ]; then
+	fasta.make_qual 40 $dir/reads.fasta > $dir/reads.qual 2> /dev/null || exit 1
+    else
+	fasta.remove_descriptions "$qual" > $dir/reads.qual || exit 1
+    fi
+fi
+
+if need $dir/reads_config.xml; then
+    run "arachne.create_xml $dir $fasta"
+fi
+if need $dir/genome.size; then
+    bases=`fasta.get_headers $fasta | add | tail -1 | cols 3`
+    echo $fasta has $bases bases
+    genome_size=$((bases / 17))
+    echo setting genome size to $genome_size
+    echo $genome_size > $dir/genome.size
+fi
+
+arachne_dir=`dirname \`which Assemble\`` || exit 1
+cd $arachne_dir
+Assemble DATA=$base RUN=run FORCE_VERSION=True $*

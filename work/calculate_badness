@@ -1,0 +1,45 @@
+#!/usr/bin/perl
+
+(@ARGV >= 2) || die "\nUsage: $0 class-col avg-tm [file]
+
+Weight probes based on blat-badness, primer-badness, and Tm.
+
+Add weight column 'badness'.
+
+Input file must be sorted by class-col.
+
+	class-col	which column specifies probe class
+	avg-tm		average probe Tm
+
+";
+
+use Columns;
+require 'probes.pl';
+
+my $class_col = shift;
+my $avg_tm = shift;
+
+my $header = Columns::new("ARGV");
+$header->must_any($class_col);
+$header->must_any("probe_len");
+$header->must_any("probe_tm");
+$header->must_any("blat_badness");
+
+$header->add_col('badness');
+
+$header->print_header(STDOUT);
+
+while (my $row = $header->get_row) {
+    my $class          = $header->get_col($row, $class_col);
+    my $probe_len      = $header->get_col($row, 'probe_len');
+    my $probe_tm       = $header->get_col($row, 'probe_tm');
+    my $blat_badness   = $header->get_col($row, 'blat_badness');
+    my $primer_badness = $header->get_col($row, "3'_match") if $header->has_col("3'_match");
+
+    my $tm_diff = abs($avg_tm - $probe_tm);
+    my $badness = 20 * $blat_badness + 2 * $primer_badness + $tm_diff;
+
+    $header->set_col($row, 'badness', $badness);
+    $header->print_row(STDOUT, $row);
+}
+

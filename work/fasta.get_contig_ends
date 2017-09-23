@@ -1,0 +1,40 @@
+#!/usr/bin/perl
+
+our $opt_n = 5000;
+our $opt_s = 5000;
+
+use Getopt::Std;
+getopts('n:s:');
+
+@ARGV == 1 or die "\nUsage: $0 [options] fasta-file
+
+    Options:
+	-n bases	amount of N's to add (default 5000)
+	-s bases	size of end piece (default 5000)
+
+";
+
+my $fasta_file = shift;
+
+require 'fasta.pl';
+
+open(FASTA, $fasta_file) or die "can't open file '$fasta_file'";
+while ((my ($header, $seq) = read_fasta(FASTA, $keep_spaces)) == 2) {
+    my @header = split(/\s+/, $header, 2);
+    $header[0] =~ s/^>//;
+    my $name = $header[0];
+    my $len = length($seq);
+    if ($len <= ($opt_s + $opt_n) * 2) {
+	print ">$name\n";
+	print_wrapped(STDOUT, $seq);
+    }
+    else {
+	my $start = $len - $opt_s + 1;
+	print ">$name:1-$opt_s,$start-$len\n";
+	my $tmp = substr($seq, 0, $opt_s) . "N" x $opt_n
+	    . substr($seq, $start - 1);
+	print_wrapped(STDOUT, $tmp);
+    }
+}
+
+

@@ -1,0 +1,20 @@
+#!/usr/bin/perl
+
+(($dir) = @ARGV) || die "\nUsage: $0 chromosome-dir\n\n";
+
+$blat2_work = $ENV{'blat2_work'} || die "\$blat2_work not set in environment";
+
+$dir =~ s|/$||; # remove trailing / if necessary
+
+die "directory $dir does not exist" if ! -d $dir;
+
+chomp(my $last_dir = `blat2_chr_dir`);
+chomp(my $new_dir = `cd $dir; pwd`);
+
+if ($last_dir ne $new_dir) {
+    print STDERR "stopping servers for $last_dir\n";
+    system "blat2_stop > /dev/null";
+}
+print STDERR "starting servers for $new_dir\n";
+print STDERR "blat2_start -w @ARGV\n";
+exit system("blat2_start -w @ARGV > /dev/null") >> 8;

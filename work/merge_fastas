@@ -1,0 +1,21 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ $# -lt 1 ]; then
+    echo -e "\nUsage: $0 file1.fa ... > big.fa
+
+    Concatenate fasta files, prepending header with 1., 2., etc.
+
+"
+    exit 1
+fi
+
+num=0
+while [ -f "$1" ]
+do
+    num=$((num+1))
+    sed "s/^>/>$num./" "$1"
+    shift
+done
+

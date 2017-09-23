@@ -1,0 +1,40 @@
+#!/usr/bin/perl
+
+my $block_size = 20000;
+
+require 'primers.pl';
+require 'misc.pl';
+
+(@ARGV >= 1) || die "\nUsage: $0 files ...\n\n";
+
+mkdir("tmp.$$", 0777) || die "can't mkdir tmp.$$";
+my $count = 0;
+my $last_count;
+while (<>) {
+    if ($count % $block_size == 0) {
+	if ($count) {
+	    close FOO;
+	    print STDERR "Adding job\n";
+	    cmd("job.add2 'get_avg_tm tmp.$$/in.$last_count > tmp.$$/out.$last_count 2> /dev/null'");
+	}
+	open(FOO, ">tmp.$$/in.$count") || die "can't create file";
+	$last_count = $count;
+    }
+    s/[\r\n]+$//;
+    chomp;
+    my ($seq) = split /\t/;
+    print FOO "$seq\n";
+    $count++;
+}
+cmd("job.wait get_avg_tm");
+
+my $sum = 0;
+@tm = `cat tmp.$$/out.*`;
+for my $tm (@tm) {
+    $sum += $tm;
+}
+
+printf "%f\n", $sum / scalar(@tm);
+cmd("rm -rf tmp.$$");
+
+exit 0;

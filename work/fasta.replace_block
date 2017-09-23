@@ -1,0 +1,59 @@
+#!/usr/bin/perl
+
+require 'fasta.pl';
+require 'primers.pl';
+require 'misc.pl';
+
+use Getopt::Std;
+getopts('r');
+
+@ARGV == 8 or die "\nUsage: $0 [-r] dest-file seqname start end src-file seqname start end > newfile.fa
+
+    Start/end pairs determine relative sequence orientations.  Use -r to reverse computed orientation.
+
+";
+
+my $dst_file = shift;
+my $dst_seq = shift;
+my $dst_start = shift;
+my $dst_end = shift;
+my $src_file = shift;
+my $src_seq = shift;
+my $src_start = shift;
+my $src_end = shift;
+
+my $src_len = abs($src_end - $src_start) + 1;
+my $dst_len = abs($dst_end - $dst_start) + 1;
+my $orientation = ($src_start > $src_end == $dst_start > $dst_end) ? 1 : -1;
+$orientation *= -1 if $opt_r;
+
+($dst_start, $dst_end) = (min($dst_start, $dst_end), max($dst_start, $dst_end));
+($src_start, $src_end) = (min($src_start, $src_end), max($src_start, $src_end));
+
+die "minimum start position is 1\n" if $src_start < 1 or $dst_start < 1;
+
+chomp(my $new_seq = `fasta.get_block -s '$src_seq' '$src_file' $src_start $src_len`);
+exit 1 if $?;
+die "couldn't get sequence of length $src_len" if $src_len != length($new_seq);
+$new_seq = rc($new_seq) if $orientation < 0;
+
+open(FASTA, $dst_file) or die "can't open file '$dst_file'";
+while ((my ($header, $seq) = read_fasta(FASTA)) == 2) {
+    my @header = split(/\s+/, $header, 2);
+    $header[0] =~ s/^>//;
+    if ($dst_seq ne '' && $dst_seq ne $header[0]) {
+warn "keeping $header the same\n";
+	print "$header\n";
+	print_wrapped(STDOUT, $seq);
+	next;
+    }
+    $found = 1;
+printf STDERR "replacing $dst_start - $dst_end ($dst_len) of $dst_file, seq $header[0] with new seq len %d\n", length($new_seq);
+    substr($seq, $dst_start - 1, $dst_len) = $new_seq;
+    print "$header\n";
+    print_wrapped(STDOUT, $seq);
+}
+
+die "sequence '$dst_seq' not found\n" if $dst_seq ne '' and ! $found;
+
+exit 0;

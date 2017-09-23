@@ -1,0 +1,90 @@
+#!/usr/bin/perl
+
+use POSIX;
+use Cols;
+require 'misc.pl';
+
+(@ARGV == 3) || die "\nUsage: $0 wavelength avg-tm sorted-file
+
+    Pick probe closest to middle of box if Tm within 2 of average,
+    otherwise pick probe closest to average.
+
+    Need to handle probe_chr!!!
+
+";
+
+my $box_size = (shift) / 2;
+my $avg_tm = shift;
+my $infile = shift;
+
+my $cols = Cols::new($infile);
+$cols->add_col('box');
+$cols->print_header(STDOUT);
+
+my $max_box;
+while (my $row = $cols->get_row()) {
+    my $pseq = $row->{probe_seq};
+    my $pname = $row->{probe_id};
+    my $strand = $row->{probe_strand};
+    my $pstart = $row->{probe_start};
+    my $tm = $row->{probe_tm};
+    my ($box, $mid) = get_box($strand, $pstart, length($pseq));
+    next if $box eq '';
+    $max_box = max($max_box, $box);
+    my ($best_row, $best_tm) = @{$best_tm{$box}};
+    if (abs($tm - $avg_tm) < abs($best_tm - $avg_tm)) {
+	$best_tm{$box} = [ $row, $tm ];
+    }
+    my $box_mid = box_mid($box);
+    if (abs($tm - $avg_tm) <= 2 && abs($mid - $box_mid) <= 1) {
+	my $update = 0;
+	my $tm_diff = abs($tm - $avg_tm);
+	my ($best_row, $best_tm, $best_mid) = @{$best_mid{$box}};
+	if ($best_mid eq '') {
+	    $best_mid{$box} = [ $row, $tm, $mid ];
+	    warn "box $box box_mid $box_mid best $mid tm $tm_diff\n" if $debug;
+	}
+	elsif (abs($mid - $box_mid) < abs($best_mid - $box_mid)) {
+	    $best_mid{$box} = [ $row, $tm, $mid ];
+	    warn "box $box box_mid $box_mid best $mid tm $tm_diff\n" if $debug;
+	}
+	elsif (abs($mid - $box_mid) == abs($best_mid - $box_mid)) {
+	    if (abs($tm - $avg_tm) < abs($best_tm - $avg_tm)) {
+		$best_mid{$box} = [ $row, $tm, $mid ];
+		warn "box $box box_mid $box_mid best $mid tm $tm_diff\n" if $debug;
+	    }
+	}
+    }
+}
+
+for my $box (1 .. $max_box) {
+    my $array = $best_mid{$box} || $best_tm{$box};
+    if ($array eq $best_mid{$box} && $best_mid{$box} ne $best_tm{$box}) {
+    warn "using [@$array] instead of [@{$best_tm{$box}}]\n" if $debug;
+    }
+    if (defined $array) {
+	my $row = $array->[0];
+	$row->{box} = $box;
+	$cols->print_row(STDOUT, $row);
+    }
+    else {
+	warn "no probes for box $box\n";
+    }
+}
+
+sub get_box {
+    my ($strand, $pos, $len) = @_;
+    my $mid = $pos + ($len - 1) / 2;
+    my $box = int($mid / $box_size);
+    $box = '' if $strand eq '+' and ($box % 2) == 1;	# + strand boxes are even
+    $box = '' if $strand eq '-' and ($box % 2) == 0;	# - strand boxes are odd
+    return ($box, $mid);
+}
+
+sub box_mid {
+    my ($box) = @_;
+    my $min = ceil($box * $box_size);
+    my $max = ceil(($box + 1) * $box_size) - 1;
+    my $mid = ($min + $max) / 2;
+    return $mid;
+}

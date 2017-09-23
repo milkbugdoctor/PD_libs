@@ -1,0 +1,68 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('b:');
+
+$opt_b = 500 if $opt_b == 0;
+
+my $debug = 0;
+
+require 'misc.pl';
+require 'primers.pl';
+
+@ARGV || die "\nUsage: $0 [-b bases] infile.ace > outfile.txt\n\n";
+
+print "# \"orient\" is relative to contig\n";
+print_tabbed(STDOUT, "id contig orient start end len\n");
+my $contig_name;
+my $contig_size;
+my @reads, %reads;
+while (<>) {
+    chomp;
+    if (/^CO (\w+) (\d+)/) {
+	$contig_name = $1;
+	$contig_size = $2;
+	warn "got contig $contig_name\n" if $debug;
+    }
+    if (/^AF (\S+) (\S+) (\S+)/) {
+        my $strand = ($2 eq "U") ? "+" : "-";
+	push(@reads, $1);
+	$count1++;
+	$reads{$1}{'orient'} = $strand;
+	$reads{$1}{'pos'} = $3;
+	warn "got AF $1 pos $3 orient $strand\n" if $debug;
+    }
+    if (/^RD (\S+) (\d+) (\d+) (\d+)/) {
+	my ($name, $len, $hmm1, $hmm2) = ($1, $2, $3, $4);
+	$count2++;
+	while (<>) {
+	    last if /^\s+$/;
+	    $reads{$name}{'seq'} .= $_;
+	}
+	$reads{$name}{'seq'} =~ s/[\s\n]//gm;
+	$reads{$name}{'len'} = $len;
+
+	my $orient = $reads{$name}{'orient'};
+	my $pos = $reads{$name}{'pos'};
+	my $len = $reads{$name}{'len'};
+	my ($start, $end) = ($pos, $pos + $len - 1);
+	my $seq = $reads{$name}{'seq'};
+	$seq =~ s/\*/ /g;
+	$seq = rc($seq) if $orient eq '-';
+	next if ! overlap($start, $end, $contig_size, $opt_b);
+	print "$name\t$contig_name\t$orient\t$start\t$end\t$len\n";
+	die "start eq ''" if $start eq '';
+	delete $reads{$name};
+    }
+}
+
+sub overlap {
+    my ($s, $e, $contig_size, $bases) = @_;
+    my @positions = (1, $bases, $contig_size - $bases + 1, $contig_size);
+    while (my ($ss, $ee) = splice(@positions, 0, 2)) {
+	my $left = max($s, $ss);
+	my $right = min($e, $ee);
+	return 1 if $left <= $right;
+    }
+    return 0;
+}

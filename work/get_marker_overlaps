@@ -1,0 +1,135 @@
+#!/usr/bin/perl
+
+#
+#	This file has dependencies, so don't change it.
+#	Copy to new file, or use cols.get_overlapping_markers instead.
+#
+
+my $debug = 0;
+
+#
+#   Expects: chr, strand, probe_start, probe_seq
+#
+
+while ($ARGV[0] =~ /^-/) {
+    if ($ARGV[0] =~ /^-inl/) {
+	shift;
+	$inline = shift;
+    }
+    elsif ($ARGV[0] =~ /^-es/) {
+	$either_strand = shift;
+    }
+}
+
+$0 =~ s|.*/||;
+(@ARGV >= 5) || die "
+Usage: $0 [options] <markers> <me> covered [marker-cols [me-cols]] > overlaps
+
+Loads marker1 into memory, then finds overlaps with marker2.
+
+	<marker>:	\"prefixes\" file
+	<me>:		\"prefixes\" file
+	prefixes:	used to find {prefix}_id, {prefix}_chr, {prefix}_strand, etc.
+	covered:	'all_me' | 'all_marker' | 'any'
+	marker-cols:	'all' | marker columns to output (default is id)
+	me-cols:	'all' | my columns to output (default is id)
+
+	options:
+	    -inline new-col	add new-col to me-file, roll up marker-col
+	    -es			match on either strand
+
+";
+
+require 'marker_reader.pl';
+require 'markers.pl';
+
+$| = 1;
+
+my ($prefix1, $file1, $prefix2, $file2, $cover, $marker_cols, $me_cols) = @ARGV;
+
+my (@me_cols, @marker_cols);
+if ($me_cols eq 'all') {
+    @me_cols = get_header($file2);
+}
+else {
+    @me_cols = split /\s+/, $me_cols;
+    @me_cols = ('id') if ! @me_cols;
+}
+
+if ($marker_cols eq 'all') {
+    @marker_cols = get_header($file1);
+}
+else {
+    @marker_cols = split /\s+/, $marker_cols;
+    @marker_cols = ('id') if ! @marker_cols;
+}
+
+my @prefixes1 = split /\s+/, $prefix1;
+my @prefixes2 = split /\s+/, $prefix2;
+my $marker_reader = marker_reader::new($file1,
+	"id chr strand start end @marker_cols", @prefixes1, '');
+my $me_reader = marker_reader::new($file2,
+	"id chr strand start end @me_cols", @prefixes2, '');
+@marker_cols = $marker_reader->get_col_name(@marker_cols);
+@me_cols = $me_reader->get_col_name(@me_cols);
+
+die "unknown cover type '$cover'" if $cover !~ /^any|all_me|all_marker$/;
+
+my $me_columns = $me_reader->get_Columns;
+if ($inline) {
+    $me_columns->add_col($inline);
+    $me_columns->print_header(STDOUT);
+}
+else {
+    my @output_cols = (@me_cols, @marker_cols);
+    $" = "\t";
+    print "@output_cols\n";
+}
+
+my $count = 0;
+my $markers1 = new markers;
+while (my $mark = $marker_reader->read_marker) {
+    my ($id, $chr, $strand, $s, $e, @m_cols) = @$mark;
+    die "need id for marker!" if $id eq '';
+    $markers1->add_marker($chr, $strand, $s, $e, $id, @m_cols);
+    warn "loaded $count $prefix1 markers\n" if $debug and ++$count % 10000 == 0;
+}
+
+my $count = 0;
+while (my $mark = $me_reader->read_marker) {
+    my ($id, $chr, $strand, $s, $e, @me_cols) = @$mark;
+    die "need id for me!" if $id eq '';
+
+    for my $strand_num (1 .. 2) {
+	if ($strand_num == 2) {
+	    last if ! $either_strand;
+	    $strand =~ s/-/+/ or $strand =~ s/\+/-/;
+	}
+	my @markers = $markers1->get_covering_markers($cover, $chr, $strand, $s, $e);
+
+	my @inline_markers;
+	for my $marker (@markers) {
+	    my ($m_chr, $m_strand, $m_s, $m_e, $m_id, @m_cols) = split /\t/, $marker;
+	    if ($inline) {
+		push(@inline_markers, @m_cols);
+	    }
+	    else {
+		print join("\t", @me_cols, @m_cols), "\n";
+	    }
+	}
+	if ($inline) {
+	    my $row = $me_reader->get_row;
+	    $me_columns->set_col($row, $inline, join(",", @inline_markers));
+	    $me_columns->print_row(STDOUT, $row);
+	}
+    }
+    warn "processed $count '$prefix2' markers\n" if $debug and ++$count % 10000 == 0;
+}
+
+sub get_header {
+    my ($file) = @_;
+    my $c = Columns::new($file);
+    return $c->get_header();
+}
+
+exit 0;

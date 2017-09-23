@@ -1,0 +1,43 @@
+#!/usr/bin/perl
+
+my $def_max_line = 100;
+
+require 'primers.pl';
+require 'fasta.pl';
+
+my $max_line = $def_max_line;
+while ($ARGV[0] =~ /^-/) {
+    if ($ARGV[0] eq '-i') {
+	our $inplace = shift;
+    }
+    if ($ARGV[0] =~ /^-(\d+)/) {
+	$max_line = $1;
+	shift;
+    }
+}
+@ARGV || die "\nUsage: $0 [-i] [-num] infile ...
+
+    Rewrites FASTA file for programs that can't handle long lines.
+
+    -i		in-place fix (overwrites input file)
+    -num	number of columns (default $def_max_line)
+
+";
+
+my $out_fd;
+for my $file (@ARGV) {
+
+    if ($inplace) {
+	($out_fd, $tmp) = open_tmpfile();
+    }
+    else {
+	$out_fd = *STDOUT;
+    }
+    open(FILE, $file) or die "$file: $!";
+
+    while ((my ($head, $seq) = read_fasta(FILE)) == 2) {
+	print $out_fd "$head\n";
+	print_wrapped($out_fd, $seq, $max_line);
+    }
+    system "mv '$tmp' '$file'" if $inplace;
+}

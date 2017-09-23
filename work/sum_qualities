@@ -1,0 +1,8 @@
+#!/usr/bin/perl
+
+while (<>) {
+    my @vals = split /\s+/;
+    my $sum = 0;
+    for my $v (@vals) { $sum += $v; }
+    print 10**(($sum)/-10), "\n";
+}

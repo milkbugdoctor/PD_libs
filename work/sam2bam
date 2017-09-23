@@ -1,0 +1,26 @@
+#!/bin/bash
+
+. subs.sh
+
+tmp=/tmp/sam.$$
+
+if [ $# -lt 1 ]; then
+    echo -e "\nUsage: $0 file.sam [...]
+
+    Converts the SAM file file.sam to a BAM file (file.bam).
+
+    Input SAM file must contain a header.
+"
+    exit 1
+fi
+
+for sam in "$@"
+do
+    base=`strip_last_extension $sam`
+    bam="$base.bam"
+    sorted="$base.sorted"
+
+    if need $sam $bam; then
+	run "samtools view -S $sam -hb > $bam"
+    fi
+done

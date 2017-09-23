@@ -1,0 +1,9 @@
+#!/usr/bin/perl
+
+@ARGV == 1 || die "\nUsage: $0 chrdir\n\n";
+
+my $chrdir = shift;
+
+my $cmd = "./blat2_timing $chrdir empty.fa test.fa hosts.txt > $chrdir/blat-timing.txt";
+print "$cmd\n";
+system $cmd;

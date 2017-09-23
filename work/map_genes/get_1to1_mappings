@@ -1,0 +1,79 @@
+#!/bin/bash
+
+. subs.sh
+
+set_options "p:" "$@"
+set -- "${new_args[@]}"
+
+if [ $# -ne 3 ]; then
+    echo -e "\nUsage: $0 [options] ref.fa query.fa output-aligns.txt
+
+    For each pair of sequences, calculate the 1-to-1 mappings.
+    See get_1to1_mappings.1 for more details.
+
+    prefix - prefix for output files
+
+    Creates:
+	$prefix.ref.fa
+	$prefix.query.fa
+	$prefix.ref.split (directory)
+	$prefix.query.split (directory)
+	$prefix.deltas (directory)
+	$prefix.aligns
+"
+    exit 1
+fi
+
+ref_fa="$1" ; shift
+query_fa="$1" ; shift
+output="$1" ; shift
+prefix=${opt_p:-"/tmp/1to1.$$"}
+
+crc()
+{
+    local a=`sum "$1" 2> /dev/null`
+    local b=`sum "$2" 2> /dev/null`
+    [ "$a" != "$b" ]
+}
+
+if need $ref_fa $prefix.ref.fa || crc $ref_fa $prefix.ref.fa; then
+    run "ln -f $ref_fa $prefix.ref.fa"
+fi
+
+if need $query_fa $prefix.query.fa || crc $query_fa $prefix.query.fa; then
+    run "ln -f $query_fa $prefix.query.fa"
+fi
+
+refdir=$prefix.ref.split
+if need $prefix.ref.fa $refdir; then
+    run "mkdir -p $refdir"
+    run "fasta.split -s 1 -h $refdir $ref_fa"
+fi
+
+querydir=$prefix.query.split
+if need $prefix.query.fa $querydir; then
+    run "mkdir -p $querydir"
+    run "fasta.split -s 1 -h $querydir $query_fa"
+fi
+
+run "mkdir -p $prefix.deltas"
+aligns=
+for i in $refdir/*
+do
+    ref_base=`basename $i .fa`
+    for j in $querydir/*
+    do
+	query_base=`basename $j .fa`
+	delta=$prefix.deltas/$ref_base.$query_base.delta
+	run "echo 'get_1to1_mappings.1 $prefix $i $j' | job.add 1to1.$$"
+	aligns="$aligns $delta.1.aligns"
+    done
+done
+job.wait 1to1.$$
+
+cols.concat_files -a $aligns > /tmp/aligns.$$
+if crc /tmp/aligns.$$ $output; then
+    run "mv /tmp/aligns.$$ $output"
+else
+    rm -f /tmp/aligns.$$
+fi

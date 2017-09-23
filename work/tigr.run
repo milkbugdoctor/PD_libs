@@ -1,0 +1,74 @@
+#!/bin/bash
+
+echo FIX : use fasta.combine_pairs
+######
+exit
+
+. subs.sh
+
+if [ $# -lt 3 ]; then
+    echo -e "\nUsage: $0 [options] outprefix file1.fa file1.qual [file2.fa file2.qual]\n"
+    exit 1
+fi
+
+prefix="$1" ; shift
+
+mkdir -p $prefix
+dir="`abs_path \"$prefix\"`"
+
+input="$dir/$prefix"
+
+if need ${fasta[@]} "$input.fa"; then
+    fasta.tag_and_cat -n "${fasta[@]}" > "$input.fa"
+fi
+
+if need ${qual[@]} "$input.qual"; then
+    i=1
+    while [ "$i" -le "$num" ]
+    do
+	qual $i | sed "s/^>/>$i./" >> "$input.qual"
+	i=$((i+1))
+    done
+fi
+
+cd "$dir"
+
+if need $input.fa $input.asm; then
+    run "run_TA \"-s -q $input.qual $*\" $input.fa"
+fi
+
+if need $input.fasta $input.contigs; then
+    run "sed 's/^>.*_/>/' $input.fasta > $input.contigs"
+fi
+
+if need $input.contigs.headers; then
+    run "fasta.get_headers $input.contigs > $input.contigs.headers"
+fi
+
+if need $input.asm $input.mapping; then
+    run "tigr.get_mapping $input.asm > $input.mapping"
+fi
+
+if need $input.mapping $input.merged-contigs.txt; then
+    run "cols.select '{old} =~ /^ZZZ/' < $input.mapping > $input.merged-contigs.txt"
+fi
+
+if need $input.merged-contigs.txt $input.old-contigs.txt; then
+    run "ncols -h old < $input.merged-contigs.txt | sort -u > $input.old-contigs.txt"
+fi
+
+if need $input.contigs $input.merged-contigs.txt $input.merged-contigs.fa; then
+    run "ncols -h new < $input.merged-contigs.txt | fasta.get_matching $input.contigs > $input.merged-contigs.fa"
+fi
+
+if need $input.old-contigs.txt $input.old-contigs.fa; then
+    run "cat $input.old-contigs.txt | fasta.get_matching $input.fa > $input.old-contigs.fa"
+fi
+
+if need $input.merged-contigs.fa $input.merged-scaffold.fa; then
+    run "(echo '>merged' ; sed '/^>/d' < $input.merged-contigs.fa) > $input.merged-scaffold.fa"
+fi
+
+if need $input.merged-contigs.fa $input.merged-scaffold.fa mapped.png; then
+    run "draw_mapped_contigs $input.merged-scaffold.fa $input.merged-contigs.fa $input.fa"
+fi

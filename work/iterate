@@ -1,0 +1,26 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ $# -lt 2 ]; then
+    echo -e "\nUsage: $0 \"command template\" input-file [more input files] output-file\n"
+    exit 1
+fi
+
+template="$1" ; shift
+args=("$@")
+pop args
+output="$popped"
+set -- "${args[@]}"
+first="$1" ; shift
+
+count=1
+for input in "$@"
+do
+    tmp=/tmp/iterate.$$.$count
+    count=$((count + 1))
+    cmd=`printf "$template" "$first" "$input"`
+    run "$cmd > $tmp"
+    first=$tmp
+done
+run "mv $tmp $output"

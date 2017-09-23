@@ -1,0 +1,3 @@
+#!/bin/bash
+
+cat $blat3_work/data/last_dir 2> /dev/null

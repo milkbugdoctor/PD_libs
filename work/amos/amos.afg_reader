@@ -1,0 +1,39 @@
+#!/usr/bin/perl
+
+require '/usr/local/src/assembly/amos-1.3.1/src/PerlModules/AmosLib.pm';
+
+use AmosLib;
+
+@ARGV || die "\nUsage: $0 infile.afg\n\n";
+
+my $infile = shift;
+
+open(FILE, $infile) || die "can't open [$infile]";
+
+while (my $rec = AMOS::AmosLib::getRecord(\*FILE)) {
+    do_record($rec);
+}
+
+sub do_record {
+    my ($rec, $level) = @_;
+    my ($id, $fields, $recs) = AMOS::AmosLib::parseRecord($rec);
+    my $indent = '    ' x $level;
+    print "\n${indent}[$id]:\n";
+    # Parses a record and returns a triplet consisting of - record type - hash of fields and values - array of sub-records
+    while (my ($key, $val) = each %$fields) {
+#    for my $key (keys %$fields) {
+	chomp $val;
+	print "$indent    [$key] -> [$val]\n";
+    }
+    for my $r (@$recs) {
+	do_record($r, $level + 1);
+    }
+}
+
+
+my($id) = AMOS::AmosLib::getCAId($CAid);
+# Obtains the ID from a "paired" id, that is, converts (10, 1000) into
+# 10. If the Id is not a pair in parantheses, it returns the input.
+# Thus, getCAId('(10, 1000)') returns 10 while getCAId("abba") returns
+# "abba".
+

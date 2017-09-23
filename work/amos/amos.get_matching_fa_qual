@@ -1,0 +1,44 @@
+#!/usr/bin/perl
+
+require 'fasta.pl';
+
+@ARGV == 3 || die "\nUsage: $0 all-reads.fa all-reads.qual prefix < read-names
+
+    Outputs prefix.fa and prefix.qual
+    
+";
+
+my $fasta_file = shift;
+my $qual_file = shift;
+my $prefix = shift;
+
+warn "reading names\n";
+while (<STDIN>) {
+    chomp;
+    $id{$_} = 1;
+}
+warn "done reading names\n";
+
+warn "copying $fasta_file to $prefix.fa\n";
+open(FA, $fasta_file) or die "$fasta_file: $!";
+open(FA_OUT, ">$prefix.fa") or die "$prefix.fa: $!";
+while ((my ($header, $seq) = read_fasta(FA)) == 2) {
+    $header =~ s/\s.*//;
+    $header =~ />(.*)/;
+    my $id = $1;
+    next if ! $id{$id};
+    print FA_OUT "$header\n";
+    print_wrapped(FA_OUT, $seq);
+}
+
+warn "copying $qual_file to $prefix.qual\n";
+open(FA, $qual_file) or die "$qual_file: $!";
+open(FA_OUT, ">$prefix.qual") or die "$prefix.qual: $!";
+while ((my ($header, $seq) = read_fasta(FA, 1)) == 2) {
+    $header =~ s/\s.*//;
+    $header =~ />(.*)/;
+    my $id = $1;
+    next if ! $id{$id};
+    print FA_OUT "$header\n";
+    print_wrapped(FA_OUT, $seq);
+}

@@ -1,0 +1,15 @@
+#!/bin/bash
+
+if [ $# -lt 2 ]; then
+    echo -e "\nUsage: $0 infile.fa \"options\" db-files
+
+    Runs blat.filtered on all the db files.\n" 1>&2
+    exit 1
+fi
+
+infile="$1"; shift
+options="$1"; shift
+
+echo do_fast.files "blat.filtered %s '$infile' stdout $options" ... 1>&2
+files=`ls -S "$@"`
+do_fast.files "blat.filtered %s '$infile' stdout $options" $files

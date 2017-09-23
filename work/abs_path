@@ -1,0 +1,32 @@
+#!/usr/bin/perl
+
+require 'abs_path.pl';
+
+use Getopt::Std;
+getopts('01fn');
+
+my $links;
+$links = 0 if $opt_0;
+$links = 1 if $opt_1;
+$links = n if $opt_n;
+
+@ARGV || die "\nUsage: $0 [options] filename
+
+    Print absolute path.  Expand symbolic links by default.
+
+    Options:
+
+	-f	don't complain if file does not exist
+	-n	don't expand any symbolic links
+	-0	don't expand symbolic links for last term
+	-1	only expand first symbolic link for last term
+
+";
+
+my $paths;
+for my $file (@ARGV) {
+    my $path = abs_path($file, $links, $opt_f);
+    die "abs_path: file does not exist: [$file]\n" if $path eq '';
+    $paths .= "$path\n";
+}
+print $paths;

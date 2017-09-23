@@ -1,0 +1,17 @@
+#!/usr/bin/perl
+
+while (<>) {
+    chomp;
+    if (/^acc:(\S+)/) {
+	print ">$1\n";
+    }
+    if (/^cns:/) {
+	while (<>) {
+	    chomp;
+	    last if /^\./;
+	    s/-//g;
+	    print "$_\n";
+	}
+    }
+}
+

@@ -1,0 +1,14 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 prefix\n\n";
+
+my $prefix = shift;
+
+open(FILE, "$prefix.coverage.txt") or die "$prefix.coverage.txt: $!";
+while (<FILE>) {
+    my ($genome, $what, $start, $end, $len) = split /\s+/;
+    if ($what eq "genome") {
+	print "$genome\t$len\n";
+    }
+}
+

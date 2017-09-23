@@ -1,0 +1,93 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('k:p');
+
+my $get_protein = $opt_p;
+@ARGV || die "\nUsage: $0 [options] infile.gb > outfile.fa
+
+    Options:
+	-k file	    only get sequences matching keys found in file
+	-p          get protein sequences instead of nucleotide
+
+";
+
+my %keys;
+if ($opt_k) {
+    open(FILE, $opt_k) || die "can't open $opt_k";
+    while (<FILE>) {
+	chomp;
+	$keys{$_} = 1;
+    }
+}
+
+my $next_line;
+while () {
+    if ($next_line ne '') {
+	$_ = $next_line;
+	undef $next_line;
+    }
+    else {
+	$_ = <>;
+	last if $_ eq '';
+    }
+
+    if (/^VERSION\s+(\S+)\s+(\S+)/) {
+        ($gene, $gene_gi) = ($1, $2);
+	$gene_gi =~ s/GI://;
+    }
+    if (/^DEFINITION\s+(.*)/) {
+	$def = $1;
+	while ($next_line = <>) {
+	    if ($next_line =~ /^[ ]{12}(.*)/) {
+		$def .= " $1";
+		next;
+	    }
+	    last;
+	}
+	next;
+    }
+    if ($get_protein) {
+	if (m|/protein_id="(.*)"|) {
+	    $protein_id = $1;
+	}
+	if (m|/db_xref="(GI:.*)"|) {
+	    $db_xref = $1;
+	}
+	if (m|/translation="(\S+)|) {
+	    $translation = $1;
+	    if ($translation =~ /(.*)"/) {
+		$translation = $1;
+	    }
+	    else {
+		while (<>) {
+		    if (/(\S+)/) {
+			$translation .= $1;
+			if ($translation =~ /(.*)"/) {
+			    $translation = $1;
+			    last;
+			}
+		    }
+		}
+	    }
+	    print ">prot|$protein_id|$db_xref|gene|$gene|$gene_gi| $def\n";
+	    print "$translation\n";
+	}
+    }
+    else {
+	my $seq;
+	if (m|^ORIGIN|) {
+warn "got ORIGIN for $gene $def\n" if $debug;
+	    while (<>) {
+		last if m|^//|;
+		s/^\s*\d+\s+//;
+		$seq .= $_;
+	    }
+	    my $acc = $gene;
+	    $acc =~ s/\..*?$//;
+	    next if $opt_k && ! $keys{$acc};
+	    print ">$acc gi|$gene_gi|gb|$gene $def\n";
+	    print "$seq\n";
+	}
+    }
+}

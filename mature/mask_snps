@@ -1,0 +1,48 @@
+#!/usr/bin/perl
+
+use Fasta;
+use strict;
+
+require 'fasta.pl';
+
+@ARGV == 2 || die "\nUsage: $0 NUM INPUT.FASTA > OUTPUT.FASTA
+
+    Convert middle SNP to '?' if it is flanked by SNPs on both sides
+    within NUM bases.
+
+";
+
+my $num = shift;
+my $fasta_file = shift;
+my $window = 21;
+
+my $n = $num - 1;
+my $fasta = new Fasta($fasta_file);
+my $ref_seq;
+while ((my ($key, $desc, $header, $seq) = $fasta->next_entry()) == 4) {
+    if (!defined $ref_seq) {
+        $ref_seq = lc($seq);
+        print "$header\n";
+        print_wrapped(*STDOUT, $ref_seq);
+        next;
+    }
+    warn "\ndoing $key\n";
+    die "length mismatch" if length($ref_seq) != length($seq);
+    # convert characters besides [-ACGT] to "?"
+    $seq =~ s/[^-ACGT]/?/ig;
+    $seq = lc($seq);
+    # convert SNPs to uppercase
+    for my $i (1 .. length($ref_seq)) {
+        my $r = lc(substr($ref_seq, $i - 1, 1));
+        my $q = lc(substr($seq,     $i - 1, 1));
+        if ($r ne $q && $q =~ /[acgt]/) {
+            substr($seq, $i - 1, 1) = uc($q);
+        }
+    }
+    while ($seq =~ s/([-=A-Z].{0,$n})([-A-Z])(.{0,$n}[-=A-Z])/\1=\3/g) {
+print STDERR ".";
+    }
+    $seq =~ s/=/?/g;
+    print "$header\n";
+    print_wrapped(*STDOUT, $seq);
+}

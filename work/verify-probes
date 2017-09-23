@@ -1,0 +1,14 @@
+#!/usr/bin/perl
+
+require 'NimbleGen.pl';
+
+$" = "\t";
+$_ = <>;
+print $_;
+while (<>) {
+	s/\s+$//;
+	my ($probe, @rest) = split /\t/;
+	if (NimbleGen::good_probe($probe)) {
+		print "$probe\t@rest\n";
+	}
+}

@@ -1,0 +1,56 @@
+#!/usr/bin/perl
+
+#
+#    1. Keep all of the parent's probes if there are <= $min_probes
+#    2. Else try tiling the probes $tile_distance apart
+#    3. Try to reduce distance until we get 3
+#
+
+(@ARGV >= 3) || die "\nUsage: $0 max-distance class-col min-probes [file]\n\n";
+
+require 'columns.pl';
+require 'probes.pl';
+
+my $max_tile_distance = shift;
+my $class_col = shift;
+my $min_probes = shift;
+
+my @header = get_header("ARGV");
+my $pos_col = has_col(\@header, "POSITION", "probe_start") || die "can't find probe position column";
+my $pos_col_num = get_col_num(\@header, $pos_col);
+die "can't find class column '$class_col'" if ! has_col(\@header, $class_col);
+
+$" = "\t";
+print "@header\n";
+
+while (my @row = get_row("ARGV")) {
+    my $class = get_col(\@header, \@row, $class_col);
+    my $pos = get_col(\@header, \@row, $pos_col);
+
+    if ($class ne $last_class and $last_class ne '') {
+	&do_probes($last_class, $min_probes, \@lines);
+    }
+    $last_class = $class;
+    push(@lines, \@row);
+}
+&do_probes($last_class, $min_probes, \@lines);
+
+sub do_probes {
+    my ($class, $min_probes, $lines_ref) = @_;
+
+    my ($last_pos, @good_lines);
+    if (scalar @${lines_ref} <= $min_probes) {
+	@good_lines = @${lines_ref};
+    }
+    else {
+	@good_lines = tile_probes($lines_ref, $max_tile_dist, $pos_col_num);
+	if (@good_lines < $min_probes) {
+	    @good_lines = @${lines_ref};
+	}
+    }
+    for my $row (@good_lines) {
+	print "@$row\n";
+    }
+    @{$lines_ref} = ();
+}
+

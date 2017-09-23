@@ -1,0 +1,79 @@
+#!/usr/bin/perl
+
+require 'misc.pl';
+require 'columns.pl';
+
+# $debug = 1;
+
+my @header = ("seq_id", "seq_prod_id", "primer1_seq", "primer2_seq",
+	"primer1_tm", "primer2_tm", "primer1_start", "primer2_start",
+	"primer1_len", "primer2_len", "prod_size", "prod_seq", "target_start", "target_len");
+
+print <<FOO;
+# The following starting positions are 1-based, on the top strand:
+#     primer1_start, primer2_start, target_start
+FOO
+print_header(STDOUT, @header);
+my ($seq_id, $sequence, %hash, $prod_id);
+while (my $line = <>) {
+    if ($line =~ /^=/) {
+	for my $pair_id (sort { $a <=> $b } keys %hash) {
+	    my $h = $hash{$pair_id};
+	    next if $h->{primer1_seq} eq '' or $h->{primer2_seq} eq '';
+	    print join("\t", $seq_id, $pair_id, $h->{primer1_seq}, $h->{primer2_seq},
+		$h->{primer1_tm}, $h->{primer2_tm}, $h->{primer1_start}, $h->{primer2_start}, $h->{primer1_len},
+		$h->{primer2_len}, $h->{prod_size}, substr($sequence, $h->{primer1_start} - 1,
+		$h->{prod_size}), $target_start, $target_len), "\n";
+	}
+	%hash = ();
+	next;
+    }
+    $line =~ /^(.*)=(.*)/;
+    my ($key, $val) = ($1, $2);
+
+    if ($key =~ /^PRIMER_SEQUENCE_ID/) {
+	$seq_id = $val;
+    }
+    elsif ($key =~ /^SEQUENCE/) {
+	$sequence = $val;
+    }
+    elsif ($key =~ /^TARGET/) {
+	$target = $val;
+	my @tmp = split /,/, $val;
+	$target_start = $tmp[0] + 1;
+	$target_len = $tmp[1];
+    }
+    elsif ($key =~ /^PRIMER_PRODUCT_SIZE(?:_(\d+))?$/) {
+	my $pair_id = $1 + 0;
+	$hash{$pair_id}{"prod_size"} = $val;
+    }
+    elsif ($key =~ /^PRIMER_LEFT_(?:(\d+)_)?SEQUENCE/) {
+	my $pair_id = $1 + 0;
+	$hash{$pair_id}{"primer1_seq"} = $val;
+    }
+    elsif ($key =~ /^PRIMER_RIGHT_(?:(\d+)_)?SEQUENCE/) {
+	my $pair_id = $1 + 0;
+	$hash{$pair_id}{"primer2_seq"} = $val;
+    }
+    elsif ($key =~ /^PRIMER_LEFT_(?:(\d+)_)?TM/) {
+	my $pair_id = $1 + 0;
+	$hash{$pair_id}{"primer1_tm"} = $val;
+    }
+    elsif ($key =~ /^PRIMER_RIGHT_(?:(\d+)_)?TM/) {
+	my $pair_id = $1 + 0;
+	$hash{$pair_id}{"primer2_tm"} = $val;
+    }
+    elsif ($key =~ /^PRIMER_LEFT(?:_(\d+))?$/) {
+	my $pair_id = $1 + 0;
+	my @tmp = split /,/, $val;
+	$hash{$pair_id}{"primer1_start"} = $tmp[0] + 1;
+	$hash{$pair_id}{"primer1_len"} = $tmp[1];
+    }
+    elsif ($key =~ /^PRIMER_RIGHT(?:_(\d+))?$/) {
+	my $pair_id = $1 + 0;
+	my @tmp = split /,/, $val;
+	$hash{$pair_id}{"primer2_start"} = $tmp[0] - $tmp[1] + 2;
+	$hash{$pair_id}{"primer2_len"} = $tmp[1];
+    }
+}
+

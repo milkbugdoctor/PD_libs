@@ -1,0 +1,222 @@
+#!/usr/bin/env python
+
+'''
+mapProbe.py:
+Map probes (in FASTA-format files) to genome/plasmid, according to the BLAST results.
+
+Usage:
+	python mapProbe.py -s sequences.fna  [-o rlt_table.txt | STDOUT] [-g chr_name] [-e mismatch_allowed (2)] [-p percent_match (0.95)] [--genome-file=XXX.fna] [--join=' /// '] [--multi-row] [--no-MMs] [--keep-all] [[-b] BLAST_rlt.txt | STDIN] 
+	python mapProbe.py  [-h | --help]
+
+--multi-row: Put multiple hits into different rows, instead of join them by 
+	'/// '. Don't use this if you need to use mapProbe more than one time on
+	the same output file.
+--keep-all:	Outpu all sequences in the result file, including those not mapping to the genome
+--no-MMs:	suppress outputing n_MM0, n_MM1, ... in the output file
+
+The BLAST command should be like:
+	NCBI/bin/blastall -p blastn -i src_file.fna -m 9 -FF -S 3 -e 2 -d NCBI/data/NC_003197_genes_selection.fna > output.txt
+or BLAT:
+	blat -t=dna -q=dna -out=blast9  genome.fasta  gene_seqs.fna  output.txt
+'''
+
+import os, sys
+from getopt import getopt
+from seqtools import readFnaSeqs as readSeqsFASTA, complementarySeq
+from basetools import exitMsg as exitUsage
+
+if sys.version < '2.3':
+	print 'Need python version >= 2.3.' # need set
+	sys.exit(0)
+elif sys.version.startswith('2.3'):
+	from Sets import Set as set
+
+
+BLAST_cols = ["Query id", "Subject id", "% identity", "alignment length", "mismatches", "gap openings", "q. start", "q. end", "s. start", "s. end", "e-value", "bit score"]
+
+
+def readOutput(fn, sep='\t'):
+	'''
+	Read the output table with columns:
+	seq_id, sequence, chromosome, strand, probe_start, probe_end, n_mismatch, perc_match, n_MM0, n_MM1, n_MM2
+	'''
+	rlt = {} #{'colnms':['seq_id', 'probe_seq', 'chromosome', 'strand', 'probe_start', 'probe_end', 'n_mismatch', 'perc_match', 'n_MM0','n_MM1', 'n_MM2']}
+	fp = open(fn)
+	head = fp.readline().replace('\n','').replace('\r','').split(sep)
+	i_id = head.index('seq_id')
+	rlt['colnms'] = head
+	for line in fp:
+		line = line.replace('\n','').replace('\r','').split(sep)
+		rlt[line[i_id]] = line
+	return rlt
+
+def Main(fseq, fobj, genome, fblast, fgenome=None, MM_allowed=0, perc_match=0.95, blast_head=BLAST_cols, join_str=' ///', multi_row=False, output_MMs=True, keep_all=False, sep='\t'):
+	'''
+	Map sequences to genome by BLAST results.
+	fseq: a FASTA sequence file
+	fobj: a table-like file
+	genome: genome name
+	flast: BLAST result file
+	MM_allowed: mismatch (or gap) allowed in BLAST
+	'''
+	# read seqs
+	seqs = dict(readSeqsFASTA(fseq)) # seqid:seq
+	chrs = fgenome and dict(readSeqsFASTA(fgenome)) or {}
+
+	# prepare result table
+	cols_in_use = ['seq_id', 'probe_seq', 'chromosome', 'strand', 'probe_start', 'probe_end', 'n_mismatch', 'perc_match'] #, 'n_MM0','n_MM1', 'n_MM2']
+	if chrs: cols_in_use.append('genome_seq')
+	cols_MM = output_MMs and map(lambda i:'n_MM'+str(i), range(MM_allowed+1)) or []
+	#cols_in_use.extend(cols_MM)
+	cols_for_append = ['chromosome', 'strand', 'probe_start', 'probe_end']
+	if chrs: cols_for_append.append('genome_seq')
+	if isinstance(fobj, str) and os.path.exists(fobj):
+		rlt = readOutput(fobj, sep=sep)
+		head = rlt['colnms']
+		del rlt['colnms']
+		cols_dif = set(cols_in_use).difference(head)
+		if cols_dif: # extend head and rlt
+			head.extend(list(cols_dif))
+			tail = ['']*len(cols_dif)
+			map(lambda a:a.extend(tail), rlt.values())
+	else:
+		rlt = {}
+		head = cols_in_use + cols_MM
+	n_col = len(head)
+	temprow = [''] * n_col
+	i_cols = dict(map(lambda a:(a, head.index(a)), cols_in_use + cols_MM))
+
+	# read BLAST result
+	i_qry, i_gene, i_perc, i_len, i_MM, i_gap, i_qs, i_qe, i_gs, i_ge = map(blast_head.index, ("Query id", "Subject id", "% identity", "alignment length", "mismatches", 'gap openings', "q. start", "q. end", "s. start", "s. end"))
+	s_blast, s_qry = '# BLASTN ', '# Query: '
+	l_qry = len(s_qry)
+	fp = isinstance(fblast, str) and open(fblast) or fblast # skip first row: BLAST
+	fp.readline() 
+	while True:
+		line = fp.readline().strip()
+		if not line:
+			break
+		qry = line[l_qry:]
+		fp.readline() # skip the Database row
+		fp.readline() # skip the Fields row
+		line = fp.readline().replace('\n','').replace('\r','')
+		if not line.strip(): # file end
+			break
+		elif line.startswith(s_blast): # the next query
+			continue
+		# must startswith qry
+		fields = line.split('\t')
+		row, gene, perc, ln, MM, gap, qs, qe, gs, ge = fields[i_qry], fields[i_gene], float(fields[i_perc]), int(fields[i_len]), int(fields[i_MM]), int(fields[i_gap]), int(fields[i_qs]), int(fields[i_qe]), int(fields[i_gs]), int(fields[i_ge])
+		if row.startswith('Row_'): 
+			row = row[4:]
+		def parseLine():
+			seq = seqs[row]
+			qln = len(seq)
+			# add strand and location, and count number of MM/gaps
+			if gs < ge: # on positive strand
+				strand, loc_s, loc_e = '+', gs - (qs-1), ge + (qln-qe) 
+			else: 
+				strand, loc_s, loc_e = '-', gs + (qs-1), ge - (qln-qe)
+			#n_MM = MM + gap + (qs-1) + (qln-qe) 
+			n_MM = int(round((1-perc/100.0)*ln)) + (qs-1) + (qln-qe) # gap is not reliable since a gap may have multiple bases
+			perc_MM = (qln - n_MM * 1.0) / qln
+			#nMMs = {0:'1', 1:'1', 2:'2'}
+			if n_MM <= MM_allowed and perc_MM >= perc_match: # satisfy the criteria for sucessfule mapping
+				if chrs: 
+					if strand == '+': gns = chrs.get(gene, '')[(loc_s-1):loc_e]
+					else: gns = complementarySeq(chrs.get(gene, '')[(loc_e-1):loc_s])
+				if qry in rlt and rlt[qry][i_cols['n_mismatch']]: # compare with previous match
+					match_qry = rlt[qry]
+					MM_old = int(match_qry[i_cols['n_mismatch']])
+					if n_MM < MM_old: # replace the old
+						vs = [qry, seq, genome or gene, strand, loc_s, loc_e, n_MM, perc_MM]
+						if chrs: vs.append(gns)
+						map(lambda a:match_qry.__setitem__(i_cols[a[0]], str(a[1])), zip(cols_in_use, vs))
+					elif n_MM == MM_old: # append the new match
+						vs = [genome or gene, strand, loc_s, loc_e]
+						if chrs: vs.append(gns)
+						map(lambda a:match_qry.__setitem__(i_cols[a[0]], match_qry[i_cols[a[0]]] + join_str + str(a[1])), zip(cols_for_append, vs))
+				else: # new in rlt
+					rlt[qry] = match_qry = temprow[:]
+					vs = [qry, seq, genome or gene, strand, loc_s, loc_e, n_MM, perc_MM]
+					if chrs: vs.append(gns)
+					map(lambda a:match_qry.__setitem__(i_cols[a[0]], str(a[1])), zip(cols_in_use + cols_MM, vs + ([0]*(MM_allowed+1)) ) )
+				# update n_MMs
+				if output_MMs:
+					cMM = i_cols['n_MM' + str(n_MM)]
+					match_qry[cMM] = str(int(match_qry[cMM])+1)
+		parseLine()
+		while line.startswith(qry): # deal with rest hits and skip the BLAST row
+			line = fp.readline()
+			if line.startswith(qry):
+				line = line.replace('\n','').replace('\r','')
+				fields = line.split('\t')
+				row, gene, perc, ln, MM, gap, qs, qe, gs, ge = fields[i_qry], fields[i_gene], float(fields[i_perc]), int(fields[i_len]), int(fields[i_MM]), int(fields[i_gap]), int(fields[i_qs]), int(fields[i_qe]), int(fields[i_gs]), int(fields[i_ge])
+				if row.startswith('Row_'): 
+					row = row[4:]
+				parseLine()
+	fp = isinstance(fobj, str) and open(fobj, 'w') or fobj
+	fp.write(sep.join(head) + '\n')
+	if keep_all: # add sequences not found on the genome
+		blk_tail =  [''] * (len(head)-2) #(len(rlt[rlt.keys()[0]])-2)
+		for k, v in seqs.items():
+			if k not in rlt:
+				rlt[k] = [k, v] + blk_tail
+	rlt = rlt.items()
+	rlt.sort(key=lambda a:int(a[0]))
+	rng = range(len(cols_for_append))
+	idx = map(lambda a:i_cols[a], cols_for_append)
+	ichr = i_cols['chromosome']
+	for k, v in rlt:
+		if not multi_row or join_str not in v[ichr]:
+			fp.write(sep.join(v) + '\n')
+		else:
+			for vs in apply(zip, map(lambda a:v[a].split(join_str), idx)):
+				map(lambda a:v.__setitem__(idx[a], vs[a]), rng)
+				fp.write(sep.join(v) + '\n')
+	#fp.close()
+
+if __name__ == '__main__':
+	optlist, args = getopt(sys.argv[1:], 's:o:g:b:e:p:h', ['help', 'genome-file=', 'join=', 'multi-row', 'no-MMs', 'keep-all'])
+	optdic = dict(optlist)
+	if '-h' in optdic or '--help' in optdic or len(sys.argv)==1:
+		exitUsage(s=__doc__)
+	errs = []
+	try: fblast = optdic.get('-b', '') or args.pop(0)
+	except: fblast = sys.stdin #errs.append('No BLAST result file!')
+	try: fseq = optdic['-s'] #.get('-s', '') or args.pop(0)
+	except: errs.append('No sequence file!')
+	fobj = optdic.get('-o', sys.stdout) # or args.pop(0)
+	#except: errs.append('No output file!')
+	genome = optdic.get('-g', None) # or args.pop(0)
+	#except: genome = None #errs.append('No genome/chromosome!')
+	try: 
+		if '-e' in optdic:
+			n_MM = int(optdic['-e'])
+		#elif args:
+		#	n_MM = int(args.pop(0))
+		else:
+			n_MM = 2
+	except: errs.append('Invalid number for mismatches/gaps!')
+	try: 
+		if '-p' in optdic:
+			perc = float(optdic['-p'])
+		#elif args:
+		#	perc = float(args.pop(0))
+		else:
+			perc = 0.95
+		if perc > 1:
+			perc = perc / 100.0
+		elif perc <= 0:
+			raise
+	except: errs.append('Invalid number for percentage of match!')
+	fgenome = optdic.get('--genome-file', None)
+	join_str = optdic.get('--join', ' /// ')
+	mrow = '--multi-row' in optdic
+	output_MMs = '--no-MMs' not in optdic
+	keep_all = '--keep-all' in optdic
+	if args:
+		errs.append('Unexpected paramters!')
+	if errs:
+		exitUsage('Error in parameters for command line:\n%s' % ('\n'.join(errs)), out=sys.stderr)
+	Main(fseq, fobj, genome, fblast, fgenome=fgenome, MM_allowed=n_MM, perc_match=perc, join_str=join_str, multi_row=mrow, output_MMs=output_MMs, keep_all=keep_all)

@@ -1,0 +1,7 @@
+-tileSize=11
+-stepSize=11
+-minMatch=2
+-minScore=30
+-minIdentity=90
+-out=psl
+

@@ -1,0 +1,28 @@
+#!/usr/bin/perl
+
+require Columns;
+require 'misc.pl';
+
+@ARGV >= 3 || die "\nUsage: $0 id_col seq_col infile.txt [template.txt]
+
+    Print small Primer3 template for each sequence.
+
+";
+
+my ($id_col, $seq_col, $infile, $template) = @ARGV;
+
+my $cols = Columns::new($infile);
+
+my %ids;
+while (my $row = $cols->get_row) {
+    my $id    = $cols->get_col($row, $id_col);
+    my $mid   = $cols->get_col($row, $seq_col);
+    die "$id already used" if $ids{$id};
+    $ids{$id} = 1;
+    my $seq_len = length($mid);
+    print "PRIMER_SEQUENCE_ID=$id\n";
+    print "SEQUENCE=$mid\n";
+    print `cat '$template'` if -s $template;
+    print "=\n";
+}
+

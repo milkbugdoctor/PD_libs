@@ -1,0 +1,12 @@
+#!/usr/bin/perl
+
+while (<>) {
+    chomp;
+    if (/^>/) {
+	print "$_\n";
+    }
+    else {
+	s/[0-9:. ]//g;
+	print "$_\n";
+    }
+}

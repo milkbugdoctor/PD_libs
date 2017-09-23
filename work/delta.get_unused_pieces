@@ -1,0 +1,180 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+our $opt_r = our $def_r = 10;
+our $opt_m = our $def_m = 50;
+our $opt_o = our $def_o = 200;
+our $opt_b = our $def_b = 30;
+our $opt_h = 0;
+
+use Cols;
+use Getopt::Std;
+getopts('b:h:m:o:r:sx:');
+
+require 'fasta.pl';
+require 'need.pl';
+require 'ranges.pl';
+
+@ARGV == 1 || die "\nUsage: $0 [options] infile.delta > uniq.fa
+
+    Options:
+	-b break	nucmer look-ahead length, controls stringency of alignments ($def_b)
+	-s		self: ref.fa and contigs.fa are the same
+	-r bases	maximum gap allowed in merged unused sequence ($def_r)
+	-m bases	minimum unused sequence size ($def_m);
+	-o bases	minimum combined output sequence size ($def_o);
+	-h bases	pad unused bits on left and right by this amount
+	-x extra	amount of surrounding sequence to include in output
+
+";
+
+my $delta_file = shift;
+open(DELTA, $delta_file) || die "can't open delta file [$delta_file]";
+chomp(my $line = <DELTA>);
+my @line = split /\s+/, $line;
+my $ref = $line[0];
+my $contigs = $line[1];
+
+my %query_hit_range;
+my %remember;
+
+open(HITS, "delta.list $delta_file |") or die "huh?";
+my $cols = Cols::new(HITS);
+while (my $hash = $cols->get_row()) {
+    my $row_string = $cols->get_row_string();
+    my $line_number = $cols->get_line_number();
+    my $id = $hash->{'qname'};
+    my $qsize = $hash->{'qsize'};
+    $remember{$id}{qsize} = $qsize;
+    if (!defined $range{$id}) {
+	$range{$id} = [ 1, $qsize ];
+	$check_range{$id} = [ 1, $qsize ];	# used for $opt_s
+	$query_hit_range{$id} = [ ];
+    }
+    my $ref_id = $hash->{'rname'};
+    my $tsize = $hash->{'rsize'};
+    if (!defined $range{$ref_id}) {
+	$range{$ref_id} = [ 1, $tsize ];
+	$check_range{$ref_id} = [ 1, $tsize ];	# used for $opt_s
+	$ref_hit_range{$ref_id} = [ ];
+    }
+    my $qstart = $hash->{'qstart'};
+    my $qend = $hash->{'qend'};
+    my $tstart = $hash->{'rstart'};
+    my $tend = $hash->{'rend'};
+    my $qlen = $hash->{qlen};
+    my $tlen = $hash->{rlen};
+
+    warn "$ref_id vs $id\n" if $debug;
+#    if ($id eq $ref_id and $qstart == $tstart and $qend == $tend) {	# it hit itself
+#	next;
+#    }
+
+    warn "match $ref_id and $id: len $qlen and $tlen\n" if $debug;
+    if ($opt_s) {	# ZZZ - don't remember why we need this.
+	next if $id eq $ref_id;	# it hit itself
+	my $rem = range_subtract([$qstart, $qend], $check_range{$id});
+	warn "@$rem already used in query[@{$check_range{$id}}]\n" if @$rem && $debug;
+	next if @$rem;	# part of range already used
+
+	$rem = range_subtract([$tstart, $tend], $check_range{$ref_id});
+	warn "@$rem already used in ref[@{$check_range{$ref_id}}]\n" if @$rem && $debug;
+	next if @$rem;	# part of range already used
+
+	next if $qsize - $qlen > $tsize - $tlen;	# remove it from t instead
+    }
+    else {
+	warn "dup id $id found in both files" if $id eq $ref_id;	# it hit itself
+    }
+
+    die "qstart > qend in line $line_number: [$row_string]" if $qstart > $qend;
+    my $len = $qend - $qstart + 1;
+    next if $len < 1;
+    warn "$id/$ref_id: removing repeat len $len ($qstart $qend) from @{$range{$id}}\n" if $debug;
+    # range_add($qstart, $qend, $query_hit_range{$id}, 1);
+    range_sub($qstart, $qend, $range{$id});
+    range_sub($qstart, $qend, $check_range{$id});
+
+    # range_add($tstart, $tend, $ref_hit_range{$ref_id}, 1);
+    range_sub($tstart, $tend, $check_range{$ref_id});
+}
+close HITS;
+system "rm -f $remove*" if $remove;
+exit 1 if $? != 0;
+
+warn "reading $contigs\n";
+open(FILE, $contigs) or die "$contigs: $!";
+while ((my ($id, $desc, $seq) = read_fasta3(FILE)) == 3) {
+    my $seq_len = length($seq);
+    my @range;
+    if ($range{$id}) {	# id was found in delta.q file
+	range_merge(0, \@range);
+	warn "$id unused range: @{$range{$id}}\n" if $debug;
+	# go through every block that matched
+	for (my $i = 0; $i < $#{$range{$id}}; $i += 2) {
+	    my ($s, $e) = ($range{$id}[$i], $range{$id}[$i+1]);
+
+	    if ($opt_h) {
+		my $qsize = $remember{$id}{qsize};
+		warn "$id match before expansion: $s-$e of 1-$qsize\n";
+		$s = max(1, $s - $opt_h) if ($s != 1);
+		$e = min($qsize, $e + $opt_h) if ($e != $qsize);
+		warn "expanded match by $opt_h to $s-$e\n";
+	    }
+
+	    if (($e - $s + 1) < $opt_m) {
+		# warn "$s - $e is < $opt_m\n"; # ZZZ
+		next;
+	    }
+	    push(@range, $s, $e);
+	}
+	if (@range) {
+	    push(@range, 0, 0);
+	    push(@range, $seq_len + 1, $seq_len + 1);
+	    range_merge($opt_r, \@range);
+	    my $new = range_intersect([1, $seq_len], \@range);
+	    @range = @$new;
+	}
+	warn "$id got range @range\n" if $debug;
+    }
+    else {
+	@range = (1, $seq_len);
+warn "got $id whole range: @range\n";
+    }
+    for (my $i = 0; $i < $#range; $i += 2) {
+	my ($s, $e) = ($range[$i], $range[$i+1]);
+	my $len = $e - $s + 1;
+	if ($len >= $opt_o) {
+	    my ($extra, $x_s, $x_len);
+	    if ($opt_x) {
+		$x_s = max(1, $s - $opt_x);
+		my $lpad = $s - $x_s;
+		my $x_e = min($seq_len, $s + $len - 1 + $opt_x);
+		$x_len = $x_e - $x_s + 1;
+		$extra = sprintf " <%d-%d lpad %d rpad %d>", $x_s, $x_e, $lpad, $x_len - $len - $lpad;
+	    }
+	    if ($desc =~ /^\[(\S+) (\d+)-(\d+) size (\d+)\]( <.*>)?(.*)$/) {
+		$s = $2 + $s - 1;
+		$e = $2 + $e - 1;
+		$seq_len = $4;
+		$desc = $6;
+	    }
+	    my $counter = ++$counter{$id};
+	    $extra .= " $desc" if $desc ne '';
+	    if ($s != 1 || $e != $seq_len) {
+		print ">$id.$counter [$id $s-$e of 1-$seq_len]$extra\n";
+	    }
+	    else {
+		print ">$id$extra\n";
+	    }
+
+	    if ($opt_x) {
+		print_wrapped(STDOUT, substr($seq, $x_s - 1, $x_len));
+	    }
+	    else {
+		print_wrapped(STDOUT, substr($seq, $s - 1, $len));
+	    }
+	}
+    }
+}

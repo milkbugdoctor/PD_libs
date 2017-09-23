@@ -1,0 +1,60 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('d');
+
+$debug = $opt_d;
+
+@ARGV || die "\nUsage: $0 [-d] coverage-file ...\n\n";
+
+use Cols;
+require 'misc.pl';
+require 'ranges.pl';
+
+my $cols = Cols::new(ARGV);
+while (my $row = $cols->get_row()) {
+    my $scaff = $row->{'scaff'};
+    my $what = $row->{'what'};
+    my $start = $row->{'start'};
+    my $end = $row->{'end'};
+    if ($what eq 'genome') {
+	$uncovered{$scaff} = [ $start, $end ];
+	$covered{$scaff} = [ ];
+    }
+    elsif ($what eq 'contig') {
+	range_add($start, $end, $covered{$scaff});
+	range_sub($start, $end, $uncovered{$scaff});
+    }
+}
+
+print_tabbed(STDOUT, "scaff cov uncov uncovr\n");
+for my $scaff (sort { $a <=> $b } keys %covered) {
+    printf "$scaff\t%d\t%d", bases($covered{$scaff}), bases($uncovered{$scaff});
+    if ($debug) {
+	printf "\nuncovered ranges: %s\n", ranges($uncovered{$scaff});
+    }
+    else {
+	print "\n";
+    }
+}
+
+sub bases {
+    my ($ranges) = @_;
+    my $bases = 0;
+    for (my $i = 0; $i < @$ranges; $i += 2) {
+	my ($s, $e) = @$ranges[$i, $i + 1];
+	$bases += $e - $s + 1;
+    }
+    return $bases;
+}
+
+sub ranges {
+    my ($ranges) = @_;
+    my @result;
+    for (my $i = 0; $i < @$ranges; $i += 2) {
+	my ($s, $e) = @$ranges[$i, $i + 1];
+	my $len = $e - $s + 1;
+	push(@result, "$s-$e:$len\n");
+    }
+    return join('', sort { $a <=> $b } @result);
+}

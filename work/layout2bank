@@ -1,0 +1,16 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ $# -ne 3 ]; then
+    echo -e "\nUsage: $0 layout src-bank dest-bank\n"
+    exit 1
+fi
+
+rsync -av --delete --exclude="LAY*" --exclude="CTG*" $2/ $3/
+bank-unlock $3 2> /dev/null
+rm -f $3/{LAY,CTG}*
+
+run "make-consensus -P -B $1 $3"
+run "bank2fasta -b $3 > $3.fasta"
+

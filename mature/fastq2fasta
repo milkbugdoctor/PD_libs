@@ -1,0 +1,31 @@
+#!/usr/bin/perl
+
+require 'fasta.pl';
+
+@ARGV || die "\nUsage: $0 infile.fastq
+
+    Simple program that prints out the FASTA portion and ignores the
+    QUAL stuff.  Adds /1 and /2 to names if new Illumina format is detected.
+
+";
+
+while (<>) {
+    chomp;
+    if (/^@(.*)/) {
+        my $h = $1;
+        if ($h =~ /^(\S+) ([12]):[YN]:\d+:[ACGT]+/) {
+            print ">$1/$2\n";
+        }
+        else {
+            print ">$h\n";
+        }
+	my $line = <>;
+	print_wrapped(STDOUT, $line);
+	my $line = <>;
+	die "expected + line" if $line !~ /^\+/;
+	my $line = <>;
+    }
+    else {
+	die "expected @ line" if $line !~ /^\+/;
+    }
+}

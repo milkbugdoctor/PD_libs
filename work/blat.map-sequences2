@@ -1,0 +1,81 @@
+#!/bin/bash
+
+. subs.sh
+
+def_cols="rname qstrand rstart rend score"
+cols=$def_cols
+outer=-outer
+base=/tmp/blat.map-sequences2.$$
+rm_base=$base
+
+while getopts c:jp:u foo ; do
+    if [ "$foo" = 'c' ]; then
+        cols="$OPTARG"
+    elif [ "$foo" = 'p' ]; then
+        base="$OPTARG"
+	rm_base=
+    elif [ "$foo" = 'u' ]; then
+        uniq=1
+    elif [ "$foo" = 'j' ]; then
+        outer=
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -lt 5 ]; then
+    echo -e "\nUsage: $0 id-col seq-col infile min_score db.fa [blat-options] > outfile.txt
+
+    Map sequences using blat2delta and delta.list.  Hit columns are added
+    to \"infile\" by performing a join.
+
+
+    This program has parameters similar to nucmer.map_sequences.
+
+    Parameters:
+	min_score       minimum alignment score
+
+    Options:
+	-j		join: throw away non-matching rows
+	-u              unique (return only best hit for each sequence)
+	-c cols 	what new columns you want added (default: $def_cols)
+	-p prefix	prefix for intermediate files
+" 1>&2
+    exit 1
+fi
+id_col="$1" ; shift
+seq_col="$1" ; shift
+infile="$1" ; shift
+percent="$1" ; shift
+db="$1" ; shift
+
+options="$*"
+
+####################
+
+output=$base
+fasta=$output.fa
+best=$output.$percent%
+
+if need_nonempty $infile $fasta; then
+    run "make_fasta '$id_col' '$seq_col' $infile > $fasta"
+fi
+
+if need_nonempty $fasta $output.delta; then
+    run "blat2delta $db $fasta $options > $output.delta"
+fi
+
+if [ "$uniq" ]; then
+    filter="| cols.get_best_hit qname score"
+else
+    filter=
+fi
+
+if need_nonempty $output.delta $best; then
+    run "delta.list $add_align -x $output.delta | cols.select '{score} >= $percent' $filter > $best"
+fi
+
+run "join_files $outer -add '$cols' $infile $best '$id_col/qname'"
+
+if [ "$rm_base" ]; then
+    rm -rf $rm_base.*
+fi

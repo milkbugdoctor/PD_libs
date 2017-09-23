@@ -1,0 +1,32 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ $# -ne 2 ]; then
+    echo -e "\nUsage: $0 type=acc output-prefix
+
+    Types:
+	5	GenBank
+	10	RefSEq
+"
+    exit 1
+fi
+
+acc="$1" ; shift
+prefix="$1" ; shift
+
+if need $prefix.asn; then
+    run "id1_fetch -flat $acc > $prefix.asn"
+fi
+if need $prefix.gff; then
+    run "id1_fetch -flat $acc | asn2flat -format gff3 > $prefix.gff"
+fi
+if need $prefix.gbk2; then
+    run "id1_fetch -flat $acc -fmt genbank > $prefix.gbk2"
+fi
+if need $prefix.gbk; then
+    run "id1_fetch -flat $acc | asn2flat -format genbank > $prefix.gbk"
+fi
+if need $prefix.fna; then
+    run "id1_fetch -flat $acc -fmt fasta > $prefix.fna"
+fi

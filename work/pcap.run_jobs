@@ -1,0 +1,247 @@
+#!/usr/bin/perl
+
+$LocDiskDirPath = "/tmp";	# This directory is for temporarily keeping overlap files.
+$NoPcapJobs = 2; 		# The number of pcap/pcap.rep jobs has to be at least 2.
+$JobQueue = "pcap.$$";		# Define the job queue for the cluster
+$DataDirPath = ".";		# Define the path of the directory for all input files.
+
+$Prog   = 1;     # program type: 1, PCAP; 0, PCAP.REP
+$Qdiff  = 130;   # stringent qual diff score cutoff
+$Rdep   = 75;    # min depth of coverage for repeats
+$Ascore = 4500;  # adjusted overlap score cutoff
+$Pcent  = 92;    # percent identity cutoff
+$Amem   = 1;     # amount of available memory in GB
+
+use Cwd;
+use Getopt::Long;
+$opstat = &GetOptions("a=s", "c=s", "d=i", "l=i", "m=i", "p=i", "r=s", "s=i", "t=i", "v=i", "y=i");
+if ($opstat == 0) { die "Wrong option flag or argument\n"; }
+
+@ARGV == 1 || die "\nUsage: $0 file [options]
+
+    Parameters:
+	file    PCAP input file (file of filenames)
+
+    Options (default value):
+	-a N    specify directory path for local disk ($LocDiskDirPath)
+	-r N    specify directory path for all input files ($DataDirPath)
+
+	-m N    specify amount of available memory in GB N >= 1 ($Amem)
+	-v N    specify program type: 1 for PCAP; 0 for PCAP.REP ($Prog)
+	-y N    specify number of pcap/pcap.rep jobs N >= 2 ($NoPcapJobs)
+
+	-d N    specify stringent qual diff score cutoff N > 20 ($Qdiff)
+	-l N    specify min depth of coverage for repeats N > 20 ($Rdep)
+	-s N    specify adjusted overlap score cutoff N > 100 ($Ascore)
+	-t N    specify overlap percent identity cutoff N > 75 ($Pcent)
+
+";
+
+$CurPath = cwd();
+
+if ( defined($opt_a) ) { $LocDiskDirPath = $opt_a; }
+if ( defined($opt_d) ) { $Qdiff = $opt_d; }
+if ( defined($opt_l) ) { $Rdep = $opt_l; }
+if ( defined($opt_s) ) { $Ascore = $opt_s; }
+if ( defined($opt_t) ) { $Pcent = $opt_t; }
+if ( defined($opt_v) ) { $Prog = $opt_v; }
+if ( defined($opt_y) ) { $NoPcapJobs = $opt_y; }
+if ( defined($opt_m) ) { $Amem = $opt_m; }
+
+if ( defined($opt_r) )
+ { $DataDirPath = $opt_r; }
+else
+ { $DataDirPath = $CurPath; }
+
+if ( $Qdiff <= 20 )     { die "Argument for stringent qual diff score cutoff must be > 20\n"; }
+if ( $Rdep <= 20 )      { die "Argument for min depth of coverage for repeats must be > 20\n"; }
+if ( $Ascore <= 100 )   { die "Argument for adjusted overlap score cutoff must be > 100\n"; }
+if ( $Pcent <= 75 )     { die "Overlap percent identity cutoff must be > 75\n"; }
+if ( $NoPcapJobs <  2 ) { die "The number of pcap/pcap.rep jobs must be >= 2\n"; }
+if ( $Amem < 1 ) { die "Amount of available memory in GB must be >= 1\n"; }
+
+print "Amount of available memory in GB:       -m $Amem\n";
+print "Stringent qual diff score cutoff:       -d $Qdiff\n";
+print "Min depth of coverage for repeats:      -l $Rdep\n";
+print "Input data directory path:              -r $DataDirPath\n";
+print "Adjusted overlap score cutoff:          -s $Ascore\n";
+print "Overlap percent identity cutoff:        -t $Pcent\n";
+print "Program: 1 for PCAP; 0 for PCAP.REP     -v $Prog\n";
+print "Number of pcap/pcap.rep jobs:           -y $NoPcapJobs\n\n";
+
+$codeext = $Prog ? "" : ".rep";
+$fofn = $ARGV[0];
+$NoBdocsJobs = 1;
+
+if (!(-e "$fofn"))              { die "The current directory contains no file ($fofn).\n"; }
+if (!(-d "$DataDirPath"))       { die "The provided input directory path ($DataDirPath) does not exist.\n"; }
+if (!(-e "$DataDirPath/$fofn")) { die "The provided input directory path ($DataDirPath) contains no file ($fofn).\n"; }
+
+$prsid = "$$";
+for ($procid = 0; $procid < $NoPcapJobs; $procid++) {
+   my $done;
+   if (system("grep 'The pcap job is completed' $fofn.pcap.info$procid &> /dev/null") == 0) {
+      $done = 1;
+      last;
+   }
+   next if $done;
+   open(SSOUT, ">/tmp/lap.$prsid.$procid") || die "can't create file: $!";
+   print SSOUT <<FOO;
+#!/bin/bash
+	cd $LocDiskDirPath || exit 1
+	mkdir $fofn.lap.$prsid.$procid || exit 1
+	cd $fofn.lap.$prsid.$procid || exit 1
+	cp $DataDirPath/$fofn . || exit 1
+	pcap$codeext $fofn -r $DataDirPath -l $Rdep -y $NoPcapJobs -z $procid || exit 1
+FOO
+   print SSOUT "mv $fofn.pcap.repeat$procid.gz $DataDirPath || exit 1\n" if $Prog;
+   print SSOUT <<FOO;
+	mv $fofn.pcap.overlap$procid.gz $DataDirPath || exit 1
+	mv $fofn.pcap.info$procid $DataDirPath || exit 1
+	rm $fofn || exit 1
+	cd $LocDiskDirPath || exit 1
+	rm -rf $fofn.lap.$prsid.$procid
+
+FOO
+   close SSOUT;
+   chmod 0755, "/tmp/lap.$prsid.$procid";
+   system("job.add '$JobQueue' < /tmp/lap.$prsid.$procid");
+   system("rm -f /tmp/lap.$prsid.$procid");
+ }
+system("job.wait '$JobQueue'");
+
+##############################################################################
+
+for ($procid = 0; $procid < $NoPcapJobs; $procid++) {
+   die "$fofn.pcap.info$procid does not exist" if ! -e "$fofn.pcap.info$procid";
+   if (system("grep 'The pcap job is completed' $fofn.pcap.info$procid &> /dev/null")) {
+	die "pcap job $procid did not complete successfully";
+   }
+}
+
+for (my $jobid = 0; ; $jobid++) {
+    if (system("grep 'Number of bdocs jobs must be set to' $fofn.pcap.docs.info$jobid &> /dev/null") != 0) {
+       $rc = 0xffff & System("yes | bdocs$codeext $fofn -l $Rdep -m $Amem -y $NoPcapJobs -z $jobid");
+       if ( $rc != 0 ) { die "bdocs/bdocs.rep job $jobid failed\n"; }
+    }
+    if (system("grep 'Number of bdocs jobs must be set to' $fofn.pcap.docs.info$jobid &> /dev/null") != 0) {
+       die "bdocs/bdocs.rep job $jobid failed\n";
+    }
+    my $line = `cat $fofn.pcap.docs.info$jobid`;
+    if ($line =~ /Number of bdocs jobs must be set to (\d+)/s) {
+       $NoBdocsJobs = $1;
+       last;
+    }
+    else {
+	die "could not get number of bdocs jobs from $fofn.pcap.docs.info$jobid";
+    }
+}
+
+if (system("grep 'Number of overlaps saved' $fofn.pcap.clean.info &> /dev/null") != 0) {
+    $rc = 0xffff & System("bclean$codeext $fofn -w $NoBdocsJobs -y $NoPcapJobs");
+    if ( $rc != 0 ) { die "bclean/bclean.rep job failed\n"; }
+    if (system("grep 'Number of overlaps saved' $fofn.pcap.clean.info &> /dev/null") != 0) {
+	die "bclean/bclean.rep job failed\n";
+    }
+}
+
+if (system("grep 'The bcontig job is completed' $fofn.pcap.scaffold.info &> /dev/null") != 0) {
+    if (System("bcontig$codeext $fofn -d $Qdiff -s $Ascore -p $Pcent -y $NoPcapJobs") != 0) {
+	die "bcontig/bcontig.rep job failed\n";
+    }
+    if (system("grep 'The bcontig job is completed' $fofn.pcap.scaffold.info &> /dev/null") != 0) {
+	die "bcontig/bcontig.rep job failed\n";
+    }
+}
+
+for ($procid = 0; $procid < $NoPcapJobs; $procid++) {
+   last if ! -e "$fofn.pcap.scaffold$procid";
+}
+die "bcontig/bcontig.rep job failed\n" if $procid == 0;
+if ($procid < $NoPcapJobs) {
+    warn "Found less scaffolds than we expected.  Changing NoPcapJobs to $procid.\n";
+    $NoPcapJobs = $procid;
+}
+
+############################################################################
+
+for ($procid = 0; $procid < $NoPcapJobs; $procid++ ) {
+   die "$fofn.pcap.scaffold$procid not found" if ! -e "$DataDirPath/$fofn.pcap.scaffold$procid";
+}
+
+for ( $procid = 0; $procid < $NoPcapJobs; $procid++ ) {
+   my $file = "$fofn.pcap.consen.pros$procid";
+   next if (system("grep 'The bconsen job is completed' '$file' &> /dev/null") == 0);
+   open(SSOUT, ">/tmp/sen.$prsid.$procid") || die "can't create file: $!";
+   print SSOUT <<FOO;
+#!/bin/bash
+	cd $LocDiskDirPath || exit 1
+	mkdir $fofn.sen.$prsid.$procid || exit 1
+	cd $fofn.sen.$prsid.$procid || exit 1
+	cp $DataDirPath/$fofn . || exit 1
+	cp $DataDirPath/$fofn.con . || exit 1
+	cp $DataDirPath/$fofn.pcap.scaffold$procid . || exit 1
+	bconsen $fofn -r $DataDirPath -y $NoPcapJobs -z $procid > $fofn.pcap.cap3out$procid || exit 1
+	mv $fofn.pcap.contigs$procid  $DataDirPath || exit 1
+	mv $fofn.pcap.contigs$procid.qual  $DataDirPath || exit 1
+	mv $fofn.pcap.contigs$procid.links  $DataDirPath || exit 1
+	mv $fofn.pcap.contigs$procid.snp  $DataDirPath || exit 1
+	mv $fofn.pcap.cap3out$procid  $DataDirPath || exit 1
+	mv $fofn.pcap.scaffold$procid.ace  $DataDirPath || exit 1
+	mv $fofn.pcap.singleton$procid.ace  $DataDirPath || exit 1
+	mv $fofn.pcap.scaffold.new$procid  $DataDirPath || exit 1
+	mv $fofn.pcap.super$procid  $DataDirPath || exit 1
+	mv $fofn.pcap.unused$procid  $DataDirPath || exit 1
+	mv $fofn.pcap.multiple$procid  $DataDirPath || exit 1
+	mv $fofn.pcap.consen.info$procid  $DataDirPath || exit 1
+	mv $fofn.pcap.consen.pros$procid  $DataDirPath || exit 1
+	rm $fofn $fofn.con $fofn.pcap.scaffold$procid || exit 1
+	cd $LocDiskDirPath || exit 1
+	rm -rf $fofn.sen.$prsid.$procid || exit 1
+FOO
+   close SSOUT;
+   system("job.add '$JobQueue' < /tmp/sen.$prsid.$procid");
+   system("rm -f /tmp/sen.$prsid.$procid");
+ }
+system("job.wait '$JobQueue'");
+
+############################################################################
+
+if (! -s "$fofn.pcap.bform.info") {
+    $rc = 0xffff & System("bform $fofn.pcap -y $NoPcapJobs");
+    if ($rc != 0) { die "bform job failed\n"; }
+}
+
+if (! -s "$fofn.con.pcap.results.bpair.info") {
+    $rc = 0xffff & System("bpair $fofn.con.pcap.results");
+    if ( $rc != 0 ) { die "bpair job failed\n"; }
+}
+
+for ( $procid = 0; $procid < $NoPcapJobs; $procid++ ) {
+   next if (-s "$fofn.pcap.contigs$procid.gz");
+   $rc = 0xffff & system("gzip $fofn.pcap.contigs$procid ");
+   if ( $rc != 0 ) { die "gzip job failed\n"; }
+}
+
+if (! -s "$fofn.pcap.n50") {
+    $rc = 0xffff & System("n50 $fofn.pcap.contigs -y $NoPcapJobs > $fofn.pcap.n50");
+    if ( $rc != 0 ) { die "n50 job failed\n"; }
+}
+
+if (! -s "$fofn.con.pcap.sort") {
+    $rc = 0xffff & System("sort -k 3,3 $fofn.con.pcap.results > $fofn.con.pcap.sort");
+    if ( $rc != 0 ) { die "sort job failed\n"; }
+}
+
+if (! -s "$fofn.con.pcap.sort.stat") {
+    $rc = 0xffff & System("xstat $fofn.con.pcap.sort");
+    if ( $rc != 0 ) { die "xstat job failed\n"; }
+}
+
+############################################################################
+
+sub System {
+    print STDERR "running '@_'\n";
+    system(@_);
+}
+

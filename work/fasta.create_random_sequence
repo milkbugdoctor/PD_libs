@@ -1,0 +1,18 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 bases [num-seqs]\n\n";
+
+my $bases = shift;
+my $num_seqs = shift || 1;
+
+my @letters = qw{A C G T};
+
+for my $seq (1 .. $num_seqs) {
+    print ">random_${seq}_$bases\n";
+    for my $i (1 .. $bases) {
+	my $letter = int(rand 4);
+	print $letters[$letter];
+	print "\n" if $i % 70 == 0;
+    }
+    print "\n";
+}

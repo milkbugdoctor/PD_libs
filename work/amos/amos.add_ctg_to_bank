@@ -1,0 +1,38 @@
+#!/bin/bash
+
+. subs.sh
+
+while getopts m foo ; do
+    if [ "$foo" = 'm' ]; then
+	map_names=1
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -ne 2 ]; then
+    prog=`basename $0`
+    echo -e "\nUsage: $prog [options] infile.ctg bank-directory
+
+    Options:
+	-m	map read names in infile.ctg to IIDs
+"
+    exit 1
+fi
+
+ctg="$1" ; shift
+bank="$1" ; shift
+
+bank-unlock $bank 2> /dev/null
+if [ -d "$bank" ]; then
+    run "rm -f '$bank'/CTG.*"
+fi
+if [ "$map_names" ]; then
+    run "amos.ctg.eid2iid '$ctg' '$bank' > /tmp/tmp.$$.ctg"
+    ctg=/tmp/tmp.$$.ctg
+    run "bank-transact -b $bank -m $ctg"
+    rm -f $ctg
+else
+    run "bank-transact -b $bank -m $ctg"
+fi
+
+

@@ -1,0 +1,9 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 reads.fa > reads.con\n\n";
+
+while (<>) {
+    chomp;
+    next if ! /^>(\S+)\.b1/;
+    print "$1.b1 $1.g1 2500 5500 $1\n";
+}

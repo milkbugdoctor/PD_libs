@@ -1,0 +1,35 @@
+#!/usr/bin/perl
+#
+# like batch_query, but should be much faster
+#
+
+my $debug = 0;
+
+require 'misc.pl';
+require 'new_amps.pl';
+
+$batch = 400;
+
+my @primers;
+while (<>) {
+    chomp;
+    next if ! /^[acgt]+$/i;
+    push(@primers, $_);
+    do_primers(\@primers) if @primers >= $batch;
+}
+do_primers(\@primers);
+
+sub do_primers {
+    my ($primers) = @_;
+
+    local *hits;
+    get_hits(*hits, @$primers);
+    for my $chr (@hits) {
+        for my $primer (@$primers) {
+            my @hits = split / /, $hits{$chr}{$primer};
+            my $strand = "+";
+	    print "$primer: @hits on chr $chr strand $strand\n";
+        }
+    }   
+#ZZZ don't forget to do antisense strand
+}

@@ -1,0 +1,47 @@
+#!/usr/bin/perl
+
+@ARGV == 2 || die "\nUsage: $0 infile.ptt genome.txt > outfile.fa\n\n";
+
+require 'misc.pl';
+require 'primers.pl';
+require 'fasta.pl';
+
+doit(@ARGV, STDOUT);
+
+sub doit {
+    my ($ptt, $txt, $out) = @_;
+
+    open(PTT, $ptt) || die "$ptt: $!";
+    while (<PTT>) {
+	chomp;
+	my ($loc, $strand, $tmp, $pid, $gene, $syn, $tmp, $cog, $prod) = split /\t/;
+	my ($first, $last) = split /\.\./, $loc;
+	next if ! ($strand =~ /^[-+]$/);
+	my ($start, $end, $upstream, $downstream, $orf);
+	($start, $end) = ($first, $last);
+	$first -= $pad;
+	die "first < 1" if $first < 1;
+	$last += $pad;
+warn "$loc, first $first start $start end $end last $last\n" if $debug;
+	my $len = $last - $first + 1;
+	$seq = get_file_seq_circular($txt, $first - 1, $len);
+	warn "seq len is not $len" if length($seq) != $len;
+	$last = $first + length($seq) - 1;
+	if ($strand =~ /^-/) {
+	    $seq = rc($seq) if $strand eq '-';
+	    $upstream = substr($seq, 0, $last - $end);
+	    $downstream = substr($seq, $last - $start + 1);
+	    $orf = substr($seq, $last - $end, $end - $start + 1);
+	}
+	else {
+	    $upstream = substr($seq, 0, $start - $first);
+	    $downstream = substr($seq, $end - $first + 1);
+	    $orf = substr($seq, $start - $first, $end - $start + 1);
+	}
+	print $out ">$pid $syn\n";
+	print_wrapped($out, $orf);
+    }
+    close PTT;
+    close $out;
+}
+

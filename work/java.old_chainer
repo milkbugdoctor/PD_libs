@@ -1,0 +1,60 @@
+#!/bin/bash
+
+export CLASSPATH=/home/flong/java/old:$CLASSPATH
+
+hosts="dell1 dell1 dell1 dell1 dell1 dell1
+       dell2 dell2 dell2 dell2
+       dell3 dell3 dell3
+       dell5 dell5 dell5 dell5 dell5
+       dell6 dell6 dell6 dell6 dell6
+       dell7 dell7 dell7 dell7
+"
+
+. subs.sh
+
+while  [[ "$1" =~ ^- ]]; do
+    if [ "$1" = '-p' ]; then
+        parallel=1
+    elif [ "$1" = '-h' ]; then
+	help=1
+    else
+	break
+    fi
+    shift
+done
+
+
+if [ $# -lt 2 -o "$help" ]; then
+    echo -e "\nUsage: $0 [options] Chainer parameters
+
+    Options:
+	-h      show this usage information
+	-p	run Chainer in parallel
+
+    Chainer parameters:"
+    java fred.align.Chainer
+    exit 1
+fi
+
+if [ "$parallel" ]; then
+    args=("$@")
+    pop args; infile=$popped
+    pop args; ref=$popped
+    pop args; sam=$popped
+    if [ "$sam" != sam ]; then
+	echo -e "\ndid not find expected \"sam\" parameter" 1>&2
+	exit 1
+    fi
+if false; then
+    run "rsync -a --delete ~/java ~/.bashrc dell4:"
+    for d in `uniq $hosts`
+    do
+	run "rsync -a $ref* $d:/tmp"
+    done
+    ref=/tmp/`basename $ref`
+fi
+    ref=`abs_path $ref`
+    sam.parallel -q "$hosts" $infile java fred.align.Chainer "${args[@]}" sam "$ref" stdin
+else
+    java -Xbatch fred.align.Chainer "$@"
+fi

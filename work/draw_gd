@@ -1,0 +1,198 @@
+#!/usr/bin/env activeperl
+
+# the perl executable above must support GD
+
+package draw_gd;
+
+use GD;
+use GD::Polyline;
+
+require 'draw_gd.pl';
+
+my $debug = 0;
+
+$anti_aliased = 1;
+
+# create a truecolor new image
+$im = new GD::Image($pixels, $ypixels, 1);
+
+init_colors($im);
+
+# line x1 y1 x2 y2 color thickness
+# radial_box xc yc start_angle end_angle radius len color [outline-color thickness]
+# radial_line xc yc angle radius len color thick
+# radial_text xc yc angle radius color size halign valign "text"
+
+while (<>) {
+    chomp;
+    warn "draw_gd got [$_]\n" if $debug;
+    if (/^#/) {
+    }
+    elsif (/^background (\S+)/) {
+	$im->fill(50, 50, color($1));
+    }
+    elsif (/^arc /) {
+	my ($cmd, $xc, $yc, $radius, $color, $thick, $ang1, $ang2) = split /\s+/;
+	($first_angle, $last_angle) = ($ang1, $ang2);
+	($xc, $yc) = scale_xy($xc, $yc);
+	$poly = new GD::Polyline;
+	my $inc = .002;
+	for (my $ang = $first_angle; $ang <= $last_angle; $ang += $inc) {
+	    my ($x, $y) = from_polar($radius, $ang);
+	    $poly->addPt($xc + $x, $yc + $y);
+	}
+	my ($x, $y) = from_polar($radius, $last_angle);
+	$poly->addPt($xc + $x, $yc + $y);
+	if ($anti_aliased) {
+	    my $real_color = color($color);
+	    $im->setThickness(len($thick/10));
+	    $im->setAntiAliased($real_color);
+	    $im->polygon($poly, gdAntiAliased);
+	}
+	else {
+	    my $brush = create_dot_brush(len($thick/10), $color);
+	    $im->setBrush($brush);
+	    $im->polydraw($poly, gdBrushed);
+	}
+    }
+    elsif (/^radial_text/) {
+	my ($cmd, $xc, $yc, $angle, $radius, $color, $size, $halign, $valign) = split /\s+/;
+	$_ =~ /["'](.*)["']/;
+	my $string = $1;
+	($xc, $yc) = scale_xy($xc, $yc);
+	$color = color($color);
+	next if $color eq "";
+	my ($x, $y) = from_polar($radius - $len, $angle);
+	$x += $xc;
+	$y += $yc;
+	($x, $y) = shift_text($font, $size, $x, $y, $string, $halign, $valign);
+        $im->stringFT($color, $font, $size, 0, $x, $y, $string)
+    }
+    elsif (/^text/) {
+	my ($cmd, $x, $y, $color, $size, $halign, $valign) = split /\s+/;
+	$_ =~ /["'](.*)["']/;
+	my $string = $1;
+	($x, $y) = scale_xy($x, $y);
+	$color = color($color);
+	next if $color eq "";
+	($x, $y) = shift_text($font, $size, $x, $y, $string, $halign, $valign);
+        $im->stringFT($color, $font, $size, 0, $x, $y, $string)
+    }
+    elsif (/^line/) {
+	my ($cmd, $xc, $yc, $x, $y, $color, $thick) = split /\s+/;
+
+	($xc, $yc) = scale_xy($xc, $yc);
+	($x, $y) = scale_xy($x, $y);
+
+	next if $color eq "white";
+	next if $color eq "no data";
+	next if $color eq '';
+
+	my $real_color = color($color);
+	$im->setThickness(len($thick/10));
+	if ($anti_aliased) {
+	    $im->setAntiAliased($real_color);
+	    $im->line($xc, $yc, $x, $y, gdAntiAliased);
+	}
+	else {
+	    $im->line($xc, $yc, $x, $y, $real_color);
+	}
+    }
+    elsif (/^radial_line/) {
+	my ($cmd, $xc, $yc, $start, $radius, $len, $color, $thick) = split /\s+/;
+
+	$angle = $start;
+	($xc, $yc) = scale_xy($xc, $yc);
+
+	next if $color eq "white";
+	next if $color eq "no data";
+	next if $color eq '';
+
+	my $real_color = color($color);
+	my ($x, $y) = from_polar($radius, $angle);
+	my ($x2, $y2) = from_polar($radius - $len, $angle);
+	$im->setThickness(len($thick/10));
+	if ($anti_aliased) {
+	    $im->setAntiAliased($real_color);
+	    $im->line($xc + $x, $yc + $y, $xc + $x2, $yc + $y2, gdAntiAliased);
+	}
+	else {
+	    $im->line($xc + $x, $yc + $y, $xc + $x2, $yc + $y2, $real_color);
+	}
+    }
+    elsif (/^box/) {
+	my ($cmd, $xtop, $ytop, $xbot, $ybot, $color) = split /\s+/;
+	($xtop, $ytop) = scale_xy($xtop, $ytop);
+	($xbot, $ybot) = scale_xy($xbot, $ybot);
+	my $real_color = color($color);
+	next if $real_color eq '';
+	$poly = new GD::Polygon;
+	$poly->addPt($xtop, $ytop);
+	$poly->addPt($xbot, $ytop);
+	$poly->addPt($xbot, $ybot);
+	$poly->addPt($xtop, $ybot);
+	$im->setThickness(1);
+	if ($anti_aliased) {
+	    $im->setAntiAliased($real_color);
+	    $im->filledPolygon($poly, gdAntiAliased);
+	    $im->polygon($poly, gdAntiAliased);
+	}
+	else {
+	    $im->filledPolygon($poly, $real_color);
+	    $im->polygon($poly, $real_color);
+	}
+    }
+    elsif (/^radial_box/) {
+	my ($cmd, $xc, $yc, $start, $end, $radius, $len, $inner_color,
+	    $outer_color, $thick) = split /\s+/;
+	$first_angle = $start;
+	$last_angle  = $end;
+	($xc, $yc) = scale_xy($xc, $yc);
+	my $poly = new GD::Polygon;
+	my $inc = .002;
+	for (my $ang = $first_angle; $ang <= $last_angle; $ang += $inc) {
+	    my ($x, $y) = from_polar($radius, $ang);
+	    $poly->addPt($xc + $x, $yc + $y);
+	}
+	my ($x, $y) = from_polar($radius, $last_angle);
+	$poly->addPt($xc + $x, $yc + $y);
+	for (my $ang = $last_angle; $ang >= $first_angle; $ang -= $inc) {
+	    my ($x, $y) = from_polar($radius - $len, $ang);
+	    $poly->addPt($xc + $x, $yc + $y);
+	}
+	my ($x, $y) = from_polar($radius - $len, $first_angle);
+	$poly->addPt($xc + $x, $yc + $y);
+	my ($x, $y) = from_polar($radius, $first_angle);
+	$poly->addPt($xc + $x, $yc + $y);
+	$im->setThickness(0);
+	if ($anti_aliased) {
+	    $im->setAntiAliased(color($inner_color));
+	    $im->filledPolygon($poly, gdAntiAliased);
+	}
+	else {
+	    $im->filledPolygon($poly, color($inner_color));
+	}
+	if ($outer_color) {
+	    $im->setThickness(len($thick/10));
+	    if ($anti_aliased) {
+		$im->setAntiAliased(color($outer_color));
+		$im->polygon($poly, gdAntiAliased);
+	    }
+	    else {
+		$im->polygon($poly, color($outer_color));
+	    }
+	}
+    }
+    else {
+	die "unknown command: $_\n";
+    }
+}
+
+# make sure we are writing to a binary stream
+binmode STDOUT;
+
+# Convert the image to PNG and print it on standard output
+print $im->png;
+
+flush STDOUT;
+

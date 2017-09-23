@@ -1,0 +1,52 @@
+#!/bin/bash
+
+if [ $# -ne 3 ]; then
+	echo -e "\nUsage: $0 hostname assigned-chr chr-file\n"
+	exit 1
+fi
+
+. $blat3_work/blat3_info.sh
+
+cd $blat3_work
+mkdir -p $blat3_work/data
+
+host=$1
+shift
+chr=$1
+shift
+chrfile=$1
+shift
+
+if ! type blat3_server &> /dev/null; then
+    echo blat3_server program not found
+fi
+if ! type server &> /dev/null; then
+    echo server program not found
+fi
+blat3_server=`type -p blat3_server`
+
+echo -n "querying server on $host... "
+check_status $chr
+status=$?
+if [ $status -lt 2 ]; then
+    exit 0
+fi
+
+blat3_port=`blat3_get_port`
+
+echo starting server on $host port $blat3_port for chr $chr
+
+if [ "`hostname`" = "$host" ]; then
+    cd $blat3_work
+    # nohup $blat3_server $blat3_port &> $blat3_work/data/server.$chr.$host.status &
+    $blat3_server $blat3_port & # for debugging ZZZ
+    blat3_set_server $chr $host $blat3_port $! "$chrfile"
+else
+    cat <<FOO | rsh $host bash
+	cd $blat3_work
+	. ./bashrc
+	nohup $blat3_server $blat3_port &> $blat3_work/data/server.$chr.$host.status &
+	blat3_set_server $chr $host $blat3_port \$! "$chrfile"
+FOO
+fi
+exit 0

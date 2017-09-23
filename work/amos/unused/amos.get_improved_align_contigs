@@ -1,0 +1,35 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+use Cols;
+use Getopt::Std;
+require 'misc.pl';
+
+@ARGV == 2 || die "\nUsage: $0 old-aligns.txt new-aligns.txt > improved-contig-names.txt
+
+";
+
+my $file1 = shift;
+my $file2 = shift;
+
+my $hash1 = alignment_counts($file1);
+my $hash2 = alignment_counts($file2);
+
+for my $key (keys %$hash2) {
+    my $count1 = $hash1->{$key};
+    next if ! defined $count1;
+    my $count2 = $hash2->{$key};
+    next if ! defined $count2;
+    print "$key\n" if $count2 > $count1;
+}
+
+sub alignment_counts {
+    my ($file) = @_;
+    my $c = Cols::new($file);
+    my $num_reads;
+    while (my $r = $c->get_row()) {
+	$num_reads->{$r->{rname}}++;
+    }
+    return $num_reads;
+}

@@ -1,0 +1,32 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('i:');
+
+use Cols;
+require 'misc.pl';
+
+(@ARGV == 2) || die "\nUsage: $0 key best-file > unique-file
+
+    Enumerates unique probe sequences and gives each a unique ID based on key.
+
+    Options:
+	-i num		Starting index number;
+
+";
+my ($key, $bestfile) = @ARGV;
+
+print_tabbed(STDOUT, "probe_seq probe_seq_id\n");
+
+open(BEST, "sort_file probe_seq < $bestfile |") || die "ack: $!";
+my $best = Cols::new(BEST);
+my $uniq_id = $opt_i || 1;
+while (my $row = $best->get_row()) {
+    my $seq = uc($row->{probe_seq});
+    if ($hash{$seq} eq '') {
+	my $probe_name = sprintf "${key}_%06d", $uniq_id;
+	print_tabbed(STDOUT, "$seq $probe_name\n");
+	$hash{$seq} = $uniq_id++;
+    }
+}
+

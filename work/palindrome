@@ -1,0 +1,30 @@
+#!/usr/bin/perl
+
+@ARGV || die "\nUsage: $0 len < file
+
+	List primers that don't have palindromes of len or less
+
+";
+
+my $len = shift;
+
+while (<>) {
+    my ($seq) = split /\s+/;
+    if ($seq =~ /[^ACGTacgt]/) {
+	warn "bad primer $seq\n";
+	next;
+    }
+    print $_ if ! palindrome($seq, $len);
+}
+
+sub palindrome {
+    my ($seq, $len) = @_;
+    return 0 if $len == 0;
+    return 1 if palindrome($seq, $len - 1);
+    my $end = substr($seq, -$len);
+    $end = "\U$end";
+    my $other = substr($seq, -$len * 2, $len);
+    $other = reverse "\U$other";
+    $other =~ tr/ACGT/TGCA/;
+    return $other eq $end;
+}

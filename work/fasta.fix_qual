@@ -1,0 +1,36 @@
+#!/usr/bin/perl
+
+
+use Getopt::Std;
+getopts('i');
+
+require 'fasta.pl';
+
+@ARGV == 2 || die "\nUsage: $0 [-i] infile expr
+
+    -i		in-place fix (overwrites input file)
+    expr	new value for qual scores, e.g. \"+= 10\", \"= 15\"
+
+";
+
+my $file = shift;
+my $expr = shift;
+
+my $out_fd;
+if ($inplace) {
+    ($out_fd, $tmp) = open_tmpfile();
+}
+else {
+    $out_fd = *STDOUT;
+}
+open(FILE, $file) or die "$file: $!";
+
+while ((my ($head, $seq) = read_fasta(FILE)) == 2) {
+    print $out_fd "$head\n";
+    my @nums = split /\s+/, $seq;
+    for my $num (@nums) {
+	$num = int((eval "\$num $expr") + .5);
+    }
+    print_wrapped($out_fd, join(" ", @nums), $max_line);
+}
+system "mv '$tmp' '$file'" if $inplace;

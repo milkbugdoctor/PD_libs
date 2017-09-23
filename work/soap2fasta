@@ -1,0 +1,16 @@
+#!/usr/bin/perl
+
+require 'sequences.pl';
+
+@ARGV == 1 || die "\nUsage: $0 soap.output > fasta
+
+    Converts SOAP output file to FASTA.
+
+";
+
+while (<>) {
+    chomp;
+    my ($name, $seq, $strand) = (split /\t/)[0, 1, 6];
+    $seq = rc($seq) if $strand eq '-';
+    print ">$name\n$seq\n";
+}

@@ -1,0 +1,58 @@
+#!/bin/bash
+
+. subs.sh
+
+while getopts p: foo ; do
+    if [ "$foo" = 'p' ]; then
+        prefix="$OPTARG"
+    fi
+done
+shift $((OPTIND-1))
+
+options="-minMatch=3 -tileSize=18 -stepSize=18"
+
+if [ $# -ne 5 ]; then
+    echo -e "\nUsage: $0 id-col seq-col infile percent filename-base
+
+    Map sequences using blat3 parallel servers.
+
+    Options:
+	-p output column prefix
+"
+    exit 1
+fi
+id_col="$1" ; shift
+seq_col="$1" ; shift
+infile="$1" ; shift
+percent="$1" ; shift
+base="$1" ; shift
+
+####################
+
+output=$base
+fasta=$output.fa
+blat_out=$output.blat-out
+best=$output.blat.best
+matched=$output.matched
+
+if need $infile $fasta; then
+    run "make_fasta '$id_col' '$seq_col' $infile > $fasta"
+fi
+
+if need $fasta $blat_out ; then
+    run "blat3_big_query $fasta '$percent%c' $options > $blat_out 2> $blat_out.err"
+fi
+
+if need $blat_out $best; then
+    run "psl.get_best_hit qname $blat_out > $best"
+fi
+
+if [ "$prefix" ]; then
+    cols="tname ${prefix}_chr tstart ${prefix}_start tend ${prefix}_end strand ${prefix}_strand"
+else
+    cols="tname chr tstart start tend end"
+fi
+
+run "join_files -add 'tname strand tstart tend' $infile $best '$id_col/qname' \
+    | fix_col tstart '{tstart}+1' | cols.change_header $cols"
+

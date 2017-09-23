@@ -1,0 +1,26 @@
+#!/usr/bin/perl
+
+@ARGV == 2 || die "\nUsage: $0 exon-column mrna.txt\n\n";
+
+my $col = shift;
+
+require 'columns.pl';
+
+my @header = get_header(ARGV);
+must_col(\@header, $col);
+
+while (my @row = get_row(ARGV)) {
+    my $exons = get_col(\@header, \@row, $col);
+    my @exons = split /,/, $exons;
+    for my $i (0 .. $#exons - 1) {
+	$hash{"$exons[$i],$exons[$i + 1]"} = 1;
+	my ($a, $b) = split /:/, $exons[$i];
+	my ($c, $d) = split /:/, $exons[$i + 1];
+	my $site = sprintf "%d %d", $a + $b, $c;
+	$hash2{$site} = 1;
+# print "$exons[$i],$exons[$i + 1] -> $site\n";
+    }
+}
+
+print scalar(keys %hash), "\n";
+print scalar(keys %hash2), "\n";

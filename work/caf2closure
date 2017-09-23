@@ -1,0 +1,79 @@
+#!/usr/bin/perl
+
+use Cols;
+
+@ARGV == 2 || die "\nUsage: $0 caf-alignments closure-outfile
+
+    Perform transitive closure on alignments.
+
+    caf-alignments	CAF alignments (delta.list or psl2caf)
+    closure-outfile	yes...
+
+
+";
+
+my $align_file = shift;
+my $closure_file = shift;
+
+my $cols = new Cols $align_file;
+
+open(CLOSURE, ">$closure_file") || die "can't create $closure_file";
+
+require 'misc.pl';
+require 'primers.pl';
+require 'transitive_closure.pl';
+
+$" = "\t";
+while (my $row = $cols->get_row()) {
+    my $match = $row->{match};
+    my $strand = $row->{strand};
+    my $qname = $row->{qname};
+    my $qsize = $row->{qsize};
+    my $tname = $row->{rname};
+    my $tsize = $row->{rsize};
+    my $score = $row->{score};
+
+    # next if $qname eq $tname;
+
+    if ($score >= 95) {
+	$out{$qname}{$tname} = 1;
+	$in{$tname}{$qname} = 1;
+	$slave{$qname} = 1;
+    }
+    if ($row->{rscore} >= 95) {
+	$in{$qname}{$tname} = 1;
+	$out{$tname}{$qname} = 1;
+	$slave{$rname} = 1;
+    }
+
+    $size{$qname} = $qsize;
+    $size{$tname} = $tsize;
+}
+
+for my $key (keys %size) {
+    for my $other (unique(keys %{$in{$key}}, keys %{$out{$key}})) {
+	if ($in{$key}{$other} && $out{$key}{$other}) {
+	    $match{$key}{$other} = 1;
+	    $match{$other}{$key} = 1;
+	}
+    }
+}
+
+transitive_closure(\%match);
+
+print CLOSURE "cluster_size\tgenes\n";
+my $last = scalar(keys %match);
+my $count = 0;
+for my $key (keys %match) {
+    next if $done{$key};
+    my $hash = $match{$key};
+    @keys = keys %$hash;
+    @all = unique(sort @keys);
+    $size = @all;
+    my @line;
+    for my $key (@all) {
+	$done{$key} = 1;
+	push(@line, "$key");
+    }
+    printf CLOSURE "$size\t" . join(" ", @line) . "\n";
+}

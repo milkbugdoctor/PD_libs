@@ -1,0 +1,76 @@
+#!/usr/local/install/ActivePerl-5.8/bin/perl
+
+$debug = 1;
+
+use Cwd qw(cwd getcwd abs_path);
+
+@ARGV == 4 || die "\nUsage: $0 chrdir empty.fa sequences.fa hosts-file\n\n";
+
+my $chrdir = shift;
+my $empty_file = abs_path(shift);
+my $fasta = abs_path(shift);
+my $hosts = shift;
+
+my @hosts = grep(s/\s//g, `cat $hosts`);
+
+for my $file (<$chrdir/chr*.2bit>) {
+    $file =~ m|/([^/]+)$|;
+    my $chr = $1;
+    push(@chrs, $chr);
+    if ($chr =~ /chr20\./) {
+	$test_chr = $chr;
+    }
+    $chrfile{$chr} = $file;
+}
+
+for my $host (@hosts) {
+    $time{$host} = get_time($fasta, $test_chr, $host);
+    warn "time for $host is $time{$host}\n";
+}
+
+for my $chr (@chrs) {
+    $time{$chr} = get_time($fasta, $chr);
+    warn "time for $chr is $time{$chr}\n";
+}
+for my $key (sort keys %time) {
+	print "$key\t$time{$key}\n";
+}
+exit;
+
+sub get_time {
+    my ($infile, $chr, $host) = @_;
+    my $first = get_time2($infile, $chr, $host);
+    my $second = get_time2($infile, $chr, $host);
+    my $result = $first + $second;
+    warn "time for (@_) is $first + $second = $result\n" if $debug;
+    return $result;
+}
+
+sub get_time2 {
+    my ($infile, $chr, $host) = @_;
+    my $base = get_time3($empty_file, $chr, $host);
+    my $time = get_time3($infile, $chr, $host);
+    my $result = $time - $base;
+    warn "time2 for (@_) is norm $time - base $base = $result\n" if $debug;
+    return $time - $base;
+}
+
+sub get_time3 {
+    my ($infile, $chr, $host) = @_;
+    my $chrfile = $chrfile{$chr};
+    my $time;
+    if ($host) {
+	system qq{rsh $host "wc '$infile' > /dev/null"}; # put file in cache
+        $cmd = "rsh $host '/usr/bin/time -p blat $chrfile $infile /dev/null 2>&1 > /dev/null | head -1'";
+        $time = `rsh $host '/usr/bin/time -p blat $chrfile $infile /dev/null 2>&1 > /dev/null | head -1'`;
+    }
+    else {
+	system "wc '$infile' > /dev/null"; # put file in cache
+        $time = `/usr/bin/time -p blat $chrfile $infile /dev/null 2>&1 > /dev/null | head -1`;
+    }
+    chomp($time);
+    $time =~ s/real\s+//;
+    my $result = $time + 0;
+    return $result;
+}
+

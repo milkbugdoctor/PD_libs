@@ -1,0 +1,127 @@
+#!/bin/env activeperl
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('cm');
+
+$gp_db = "gp_hg17";
+
+#
+#   Join with covering RefSeqs or Known Genes
+#
+#   Expects: chr, strand, probe_start, probe_seq
+#
+
+$0 =~ s|.*/||;
+(@ARGV >= 6) || die "\nUsage: $0 [options] marker type cover seq-file gene-outfile prefixes ... > covered-sequences
+
+    Options:
+	-c	: do one chromosome at a time to save memory
+	-m	: keep user markers in memory too
+
+	marker	: refseq | known | mRNA | est | miRNA
+	type	: all | intron | exon - which part of RefSeq to use
+	cover	: all | any - portion of marker that must be covered
+	prefix	: used to find prefix_id, prefix_chr, prefix_strand, prefix_start, etc.
+
+";
+
+require 'refseq.pl';
+require 'columns.pl';
+
+$| = 1;
+
+my $marker = shift;
+die "unknown marker '$marker'" if $marker !~ /^(refseq|known|mrna|est|miRNA)$/i;
+my $type = shift;
+die "unknown type '$type'" if $type !~ /^all|exon|intron$/;
+my $cover = shift;
+die "unknown cover type '$cover'" if $cover !~ /^all|any$/;
+my $probefile = shift;
+my $refseqfile = shift;
+my @prefixes = @ARGV;
+
+if ($marker =~ /^est$/i) {
+    warn "marker type EST, forcing -c and -m options\n";
+    $opt_c = 1;
+    $opt_m = 1;
+}
+
+my @chrs = ('');
+if ($opt_c ne '') {
+    my %chr = get_chr_lengths();
+    @chrs = keys %chr;
+    @chrs = ('chr14'); # ZZZ
+}
+
+my $printed_header = 0;
+
+open(PROBES, $probefile) || die "can't read $probefile";
+my @header = get_header(PROBES);
+my $id_col     = find_prefixed_col(\@header, "id", 1, @prefixes);
+my $strand_col = find_prefixed_col(\@header, 'strand', 1, @prefixes);
+my $chr_col    = find_prefixed_col(\@header, 'chr', 1, @prefixes);
+my $start_col  = find_prefixed_col(\@header, 'start', 1, @prefixes);
+my $end_col    = find_prefixed_col(\@header, 'end', 1, @prefixes);
+my $len_col    = find_prefixed_col(\@header, "len", 0, @prefixes);
+my $seq_col    = find_prefixed_col(\@header, "seq", 0, @prefixes);
+$" = "\t";
+print "@header\n";
+open(REFSEQ, ">$refseqfile") || die "can't write $refseqfile";
+print REFSEQ join("\t", $id_col, "${marker}_id", "${marker}", "${marker}_chr",
+	"${marker}_strand", "${marker}_start", "${marker}_end", "${marker}_len"), "\n";
+
+my %rows;
+if ($opt_m) {
+warn "loading probes\n";
+    my $num = 0;
+    while (my @row = get_row(PROBES)) {
+	my $chr = get_col(\@header, \@row, $chr_col);
+	push(@{$rows{$chr}}, \@row);
+	$num++;
+    }
+warn "loaded $num probes\n";
+}
+
+for my $use_chr (@chrs) {
+    warn "doing chr $use_chr\n" if $use_chr ne '';
+
+    if (!$opt_m) {
+	open(PROBES, $probefile) || die "can't read $probefile";
+	my @header = get_header(PROBES);
+    }
+
+    load_markers($marker, $type, $use_chr);
+    while (1) {
+	my @row;
+	if ($opt_m) {
+	    @row = @{shift @{$rows{$use_chr}}};
+	}
+	else {
+	    @row = get_row(PROBES);
+	}
+	last if @row == 0;
+	my $chr = get_col(\@header, \@row, $chr_col);
+	next if $use_chr ne '' && $chr ne $use_chr;
+	my $start = get_col(\@header, \@row, $start_col);
+	my $end = get_col(\@header, \@row, $end_col);
+	my $len = get_col(\@header, \@row, $len_col);
+	my $strand = get_col(\@header, \@row, $strand_col);
+	my $id = get_col(\@header, \@row, $id_col);
+	my $seq = get_col(\@header, \@row, $seq_col);
+	$len = length($seq) if $len eq '' and $seq ne '';
+	$end = $start + $len - 1 if $end eq '';
+
+	my @refseqs = get_covering_genes($marker, $type, $cover, $chr, $strand, $start, $end);
+	print "@row\n" if @refseqs;
+	for my $refseq (@refseqs) {
+	    my ($rchr, $rstrand, $rstart, $rend, $name, $ref_id, $s, $e, $gene)
+		= split /\t/, $refseq;
+	    my $rlen = $rend - $rstart + 1;
+	    print_tabbed(REFSEQ, "$id $ref_id $name $rchr $rstrand $rstart $rend $rlen\n");
+	}
+    }
+    unload_markers($marker, $type);
+}
+
+exit 0;

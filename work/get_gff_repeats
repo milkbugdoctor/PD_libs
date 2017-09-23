@@ -1,0 +1,80 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+use Delta;
+use Getopt::Std;
+getopts('lm:');
+
+require 'misc.pl';
+require 'primers.pl';
+
+@ARGV || die "\nUsage: $0 [options] input.fa > output.txt
+
+    -l		loose and imperfect
+    -m min	minimum base length
+
+";
+
+my $infile = shift;
+
+if ($opt_l) {
+    $strict = "-b 20";
+}
+else {
+    $strict = "-b 1";
+}
+
+shell("nucmer -c 20 --maxmatch --nosimplify $strict $infile $infile -p /tmp/$$ 2> /dev/null") or die "nucmer: $!";
+$delta = "/tmp/$$.delta";
+if (!$strict) {
+    shell("delta-filter -i 90 $delta > $delta.90") or die "delta-filter: $!";
+    $delta = "$delta.90";
+}
+my $df = new Delta($delta);
+print "##gff-version 3\n";
+my %ref_size;
+my %ref_lines;
+while (my $entry = $df->get_entry) {
+    my ($ref_name, $ref_size, $query_name, $query_size) = $entry->get_header();
+    $ref_size{$ref_name} = $ref_size;
+    next if $ref_name ne $query_name;
+    my ($ref_start, $ref_end) = $entry->get_align();
+    my $len = $ref_end - $ref_start + 1;
+    next if $len == $ref_size;
+    next if $len < $opt_m;
+    my $line = [ $ref_name, ".", "repeat_region", $ref_start, $ref_end, ".", ".", ".", "size=$len" ];
+    push(@{$ref_lines{$ref_name}}, $line);
+}
+
+for my $ref (keys %ref_lines) {
+    print "##sequence-region $ref 1 $ref_size{$ref}\n";
+    my @lines = sort { $a->[3] <=> $b->[3] } @{$ref_lines{$ref}};
+    my $last_line;
+    for my $line (@lines) {
+	if (defined $last_line) {
+	    if ($last_line->[0] ne $line->[0]) { die("ack"); }
+	    my $left = max($last_line->[3], $line->[3]);
+	    my $right = min($last_line->[4], $line->[4]);
+	    if ($right - $left + 1 >= 1) {
+		$last_line->[4] = $line->[4];
+		next;
+	    }
+	    else {
+		flush($last_line);
+		$last_line = $line;
+	    }
+	}
+	else {
+	    $last_line = $line;
+	}
+    }
+    flush($last_line);
+}
+
+sub flush {
+    if (defined $_[0]) {
+	print join("\t", @{$_[0]}) . "\n";
+	$_[0] = undef;
+    }
+}

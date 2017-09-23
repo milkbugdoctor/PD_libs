@@ -1,0 +1,37 @@
+#!/usr/bin/perl
+
+$debug = 0;
+
+@ARGV == 1 || die "\nUsage: $0 kg-exons.out
+
+
+";
+my ($marker_file) = @ARGV;
+
+open(MARKERS, ">$marker_file") || die "can't create '$marker_file'";
+
+require 'golden_path.pl';
+require 'misc.pl';
+require 'columns.pl';
+
+my @header = get_gp_track_header('kg');
+my @kg = get_gp_track('kg');
+$" = "\t";
+
+print_tabbed(MARKERS,
+    "exon_id exon_kg_id exon_chr exon_strand exon_start exon_end exon_len\n");
+my $id = 0;
+for my $kg (@kg) {
+    my @row = split /\t/, $kg;
+    my ($kg_id, $chr, $strand, $exons)
+	= get_cols(\@header, \@row, qw{id chr strand exons});
+    my @exons = split /,/, $exons;
+    for my $exon (@exons) {
+	my ($start, $len) = split /:/, $exon;
+	my $end = $start + $len - 1;
+	print_tabbed(MARKERS, "$id $kg_id $chr $strand $start $end $len\n");
+	$id++;
+    }
+}
+
+exit 0;

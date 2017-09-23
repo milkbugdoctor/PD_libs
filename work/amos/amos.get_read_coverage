@@ -1,0 +1,105 @@
+#!/usr/bin/perl
+
+use Columns;
+require 'misc.pl';
+
+@ARGV || die "\nUsage: $0 reference.fa.headers read-hits.txt > read-coverage.txt\n\n";
+
+my $headers = shift;
+my $read_hits = shift;
+
+print_tabbed(STDOUT, "scaff what start end len name rstart rend rsize rdir\n");
+
+my $rh = Columns::new($headers);
+my $genome_num = 0;
+my %genome_name;
+my %tsize;
+while (my $r = $rh->get_row()) {
+    my ($id, $desc, $tsize) = $rh->get_col($r, 'id', 'desc', 'len');
+    my $tnum = $genome_num{$id} = ++$genome_num;
+    $tsize{$tnum} = $tsize;
+    $genome_name{$genome_num} = $id;
+    warn "genome [$id] -> $genome_num\n"; # ZZZ
+    print "$tnum\tgenome\t1\t$tsize\t$tsize\t$id\n";
+}
+
+get_contigs("$read_hits", 'read', 1, 'rname', 'tname', 'tstart', 'tend', 'tsize');
+
+my %scaff_hash;
+sub get_contigs {
+    my ($file, $what, $gaps, @cols) = @_;
+    my %contigs;
+    warn "opening file $file\n";
+    my $c = Columns::new($file) or die "can't open $file";
+    warn "getting lines from $file\n";
+    my $lines = 0;
+    while (my $row = $c->get_row()) {
+	my ($id, $tname, $start, $end, $tsize) = $c->get_col($row, @cols);
+	my $tnum = $genome_num{$tname};
+	push(@{$contigs{$tnum}}, "$start $end");
+	$lines++;
+	print STDERR "." if $lines % 1000 == 0;
+    }
+    warn "\ndone reading $lines lines\n";
+
+    if ($what eq 'read') {
+	for my $tnum (sort { $a <=> $b } keys %contigs) {
+	    my $tsize = $tsize{$tnum};
+#	    print "$tnum\tgenome\t1\t$tsize\t$tsize\t$genome_name{$tnum}\n";
+	}
+    }
+
+    for my $tnum (keys %contigs) {
+	my @contigs = @{$contigs{$tnum}};
+	delete $contigs{$tnum};
+	warn "\nmerging into contigs\n";
+	while (1) {
+	    @contigs = sort { $a <=> $b } @contigs;
+	    my $did_something = 0;
+	    my (@outer, @inner);
+	    for my $i1 (0 .. $#contigs - 1) {
+		my $r1 = $contigs[$i1];
+		next if ! defined $r1;
+		my $i2 = $i1 + 1;
+		my $r2 = $contigs[$i2];
+		next if ! defined $r2;
+		my ($start1, $end1) = split /\s+/, $r1;
+		my ($start2, $end2) = split /\s+/, $r2;
+		$inner[0] = max($start1, $start2);
+		$inner[1] = min($end1, $end2);
+		$outer[0] = min($start1, $start2);
+		$outer[1] = max($end1, $end2);
+		if ($inner[0] <= $inner[1]) {
+		    $r1 = $contigs[$i1] = "$outer[0] $outer[1]";
+		    $r2 = $contigs[$i2] = undef;
+		    $did_something = 1;
+		    next;
+		}
+	    }
+	    @contigs = grep(defined $_, @contigs);
+	    last if ! $did_something;
+	}
+	printf STDERR "\ndone merging, now printing %d hits\n", scalar @contigs;
+	my $tsize = $tsize{$tnum};
+	for my $r (@contigs) {
+	    my ($s, $e) = split /\s+/, $r;
+	    my $len = $e - $s + 1;
+	    print "$tnum\t${what}_hit\t$s\t$e\t$len\n";
+	}
+
+	next if ! $gaps;
+
+	warn "\nprinting gaps\n";
+	my $start = $tsize{$tnum} + 1;
+	my $last = 0;
+	for my $r (@contigs, "$start $start") {
+	    my ($s, $e) = split /\s+/, $r;
+	    if ($s - $last > 1) {
+		my $len = ($s - $last - 1);
+		printf "$tnum\t${what}_gap\t%d\t%d\t$len\n", $last + 1, $s - 1;
+	    }
+	    $last = $e;
+	}
+    }
+}
+

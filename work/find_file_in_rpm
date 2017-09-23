@@ -1,0 +1,19 @@
+#!/bin/bash
+
+if [ $# -ne 2 ]; then
+	echo -e "\nUsage: $0 rpm-pattern file
+
+    Finds RPMS with \"find\" . -name rpm-pattern, then uses
+    rpm -q --list -p RPM | grep file.
+"
+	exit 1
+fi
+
+rpms=`find . -name "$1"`
+
+for r in $rpms
+do
+	if (rpm -q --list -p $r | grep "$2") >& /dev/null; then
+		echo $r
+	fi
+done

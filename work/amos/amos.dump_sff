@@ -1,0 +1,3 @@
+#!/bin/bash
+
+amos.java fred.amos.DumpSFF "$@"

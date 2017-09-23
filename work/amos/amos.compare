@@ -1,0 +1,256 @@
+#!/usr/bin/perl
+
+$mism_opts = "-b 400";
+
+require 'misc.pl';
+require 'need.pl';
+require 'read_env.pl';
+
+use Getopt::Std;
+getopts('crt');
+
+$opt_c = 1 if $opt_r;
+
+@ARGV || die "\nUsage: $0 [options] directories
+
+    Prints some metrics for each directory.
+
+    -c		calculate any missing metrics
+    -r		force recalculation for each metric
+    -t		use tabs instead of spaces
+
+";
+
+sub get_stats {
+    my ($dir, $fasta) = @_;
+    my $result;
+    my (@keys, %hash);
+    chomp(my $prefix = `cat "$dir"/.prefix 2> /dev/null`);
+    if ($prefix eq '') {
+	do { warn "prefix not found in $dir/.prefix\n"; return ''; } if ! $opt_c;
+	warn "prefix not found in $dir/.prefix, attempting to create\n";
+	chomp(my $abs = `abs_path "$dir"`);
+	chomp($prefix = `basename "$abs"`);
+	system "echo '$prefix' > '$dir'/.prefix";
+    }
+    my $pre = "$dir/$prefix";
+    if (! -s "$dir/reference.fa") {
+        warn "[$dir/reference.fa missing]\n";
+	return '';
+    }
+    if (! -s $fasta) {
+        warn "[$fasta missing]\n";
+	return '';
+    }
+    my %env = read_set(scalar `cat $pre.variables 2> /dev/null`);
+    my $newbler;
+    for my $key (keys %env) {
+	$newbler = $env{$key} if ($key eq 'NEWBLER') 
+    }
+
+    my $stats = "$fasta.stats.num_contigs";
+    if ($opt_r or need($fasta, $stats)) {
+	do { warn "need updated $stats\n"; return ''; } unless $opt_c;
+	run("grep '>' '$fasta' 2> /dev/null | wc -l > $stats");
+    }
+    my $contigs = `cat $stats` + 0;
+    push(@keys, "ctgs");
+    $hash{ctgs} = $contigs;
+
+    my $stats = "$fasta.stats.num_bases";
+    if ($opt_r or need($fasta, $stats)) {
+	do { warn "total contig bases not found in $stats\n"; return ''; } unless $opt_c;
+	run("fasta.get_headers $fasta | add | tail -1 | cols 3 > $stats")
+    }
+    chomp($cov = `cat $stats`);
+    push(@keys, "bases");
+    $hash{bases} = $cov;
+
+    $p = "$fasta.stats.ref_mismatches";
+    $delta = "$p.delta.q";
+    $stats = "$fasta.stats.num_ref_mismatches";
+    if ($opt_r or need($fasta, $delta) or need($fasta, $stats)) {
+	do { warn "total mismatches not found in $stats\n"; return ''; } unless $opt_c;
+        shell("get_mismatches $mism_opts -p $p $dir/reference.fa $fasta > $stats") || exit 1;
+    }
+    chomp($mis = `cat $stats`);
+    push(@keys, "tmis");
+    $hash{tmis} = $mis;
+
+    $stats = "$fasta.stats.ref_mismatches.qlen";
+    if ($opt_r or need($fasta, $stats)) {
+	shell("delta.list $delta | ncols -h qlen | add > $stats") || exit 1;
+    }
+    chomp($qlen = `cat $stats`);
+    push(@keys, "talign");
+    $hash{'talign'} = $qlen;
+    push(@keys, "tmis%");
+    $hash{'tmis%'} = sprintf "%.4f", $mis / $qlen * 100.0;
+
+    if ($newbler && -s $newbler) {
+	$p = "$fasta.newbler_mismatches";
+	$delta = "$p.delta.q";
+	$stats = "$fasta.stats.num_newbler_mismatches";
+	if ($opt_r or ($opt_c and (need($fasta, $delta) or need($fasta, $stats)))) {
+	    shell("get_mismatches $mism_opts -p $p $newbler $fasta > $stats") || exit 1;
+	}
+	chomp($mis = `cat $stats 2> /dev/null`);
+	push(@keys, "nmis");
+	$hash{nmis} = $mis;
+
+	$stats = "$fasta.stats.newbler_mismatches.qlen";
+	if ($opt_r or ($opt_c and need($fasta, $stats))) {
+	    shell("delta.list $delta | ncols -h qlen | add > $stats") || exit 1;
+	}
+	chomp($qlen = `cat $stats 2> /dev/null`);
+	push(@keys, "nalign");
+	$hash{'nalign'} = $qlen;
+	push(@keys, "nmis%");
+	if ($qlen > 0) {
+	    $hash{'nmis%'} = sprintf "%.4f", $mis / $qlen * 100.0;
+	}
+	else {
+	    $hash{'nmis%'} = "/0";
+	}
+
+	$stats = "$fasta.stats.newbler_unused";
+	if ($opt_r or ($opt_c && need($fasta, "$stats.fa"))) {
+	    run("fasta.get_unused_pieces $fasta $newbler > $stats.fa");
+	}
+	if ($opt_r or ($opt_c && need_nonempty("$stats.fa", $stats))) {
+	    $unused = `fasta.get_headers $stats.fa 2> /dev/null | ncols -h len | add` + 0;
+	    write_to_file($stats, $unused);
+	}
+	$unused = from_file($stats);
+	push(@keys, "unused");
+	$hash{unused} = $unused;
+
+    }
+
+    return (\@keys, \%hash);
+}
+
+if (!$opt_t) {
+    open(STDOUT, "| cols.expand -b 1") || die "can't run cols.expand";
+}
+
+#
+# look for phrap results
+#
+my %phrap;
+for my $i (@ARGV) {
+    next if ! -d $i;
+    my $name = $i;
+    for my $p (<$i/*phrap*>) {
+	next if ! -d $p;
+	$p =~ s|.*/||;
+	if ($p =~ /.*\.phrap(\S+)$/) {
+	    $phrap{$1} = 1;
+	}
+    }
+
+}
+my @phrap = sort keys %phrap;
+
+
+print <<FOO;
+#
+# Statistics for templated contigs:
+#     ctgs   - # of templated contigs
+#     bases  - # of bases in templated contigs
+#     tmis   - # of mismatches between templated contigs and the template
+#     talign - # of bases aligned between templated contigs and the template
+#     tmis%  - tmis / talign * 100
+#     nmis   - # of mismatches between templated contigs and newbler contigs
+#     nalign - # of bases aligned between templated contigs and newbler contigs
+#     nmis%  - nmis / nalign * 100
+#     unused - # of bases in newbler contigs that don't align to templated contigs
+#
+# Statistics for Phrapped contigs:
+#
+#     Phrap is used to merge the newbler contigs with the templated contigs.
+#     Newbler contigs that don't merge with a templated contig are thrown away.
+#     Each remaining contig consists of one or more templated contigs merged with
+#     zero or more newbler contigs.
+#
+#     ctgs1, etc. - statistics for contigs from first phrap run
+#     ctgs2, etc. - statistics for contigs from second phrap run
+#
+FOO
+
+#
+# get keys superset and data
+#
+my (@keys, @phrap_keys, @hashes);
+my ($phrap_hashes, $phrap_keys);
+for my $i (@ARGV) {
+    next if ! -d $i;
+    my $name = $i;
+    push(@names, $name);
+    my $pre = get_prefix($i);
+    my $prefix = "$i/$pre";
+    my ($keys, $hash) = get_stats($i, "$prefix.fa");
+    @keys = @$keys if (@$keys > @keys);
+    push(@hashes, $hash);
+    for my $k (@phrap) {
+	my $j = "phrap$k";
+	my $fasta = "$prefix.$j.fa";
+	my ($keys, $hash) = get_stats($i, $fasta);
+	@{$phrap_keys->{$k}} = @$keys if @$keys > @{$phrap_keys->{$k}};
+	$phrap_hashes->{$name}{$k} = $hash;
+    }
+}
+
+print join("\t", "name", @keys);
+for my $k (@phrap) {
+    for my $pk (@{$phrap_keys->{$k}}) {
+	print "\t$pk$k";
+    }
+}
+print "\n";
+
+for my $i (0 .. $#hashes) {
+    my $name = $names[$i];
+    my $hash = $hashes[$i];
+    print $name;
+    for my $key (@keys) {
+	print "\t$hash->{$key}";
+    }
+    for my $k (@phrap) {
+	my @keys = @{$phrap_keys->{$k}};
+	my $hash = $phrap_hashes->{$name}{$k};
+	for my $key (@keys) {
+	    print "\t$hash->{$key}";
+	}
+
+    }
+    printf "\n";
+}
+close STDOUT;
+exit 0;
+
+sub from_file {
+    my $file = shift;
+    open(FILE, $file) || return '';
+    chomp(my $line = <FILE>);
+    return $line;
+}
+
+sub write_to_file {
+    my ($file, $val) = @_;
+    open(FILE, ">$file") || die "can't create file [$file]";
+    print FILE "$val\n";
+    close FILE;
+}
+
+sub get_prefix {
+    my ($dir) = @_;
+    chomp(my $prefix = `cat "$dir"/.prefix 2> /dev/null`);
+    if ($prefix eq '') {
+	do { warn "prefix not found in $dir/.prefix\n"; return ''; } if ! $opt_c;
+	chomp(my $abs = `abs_path "$dir"`);
+	chomp($prefix = `basename "$abs"`);
+	system "echo '$prefix' > '$dir'/.prefix";
+    }
+    return $prefix;
+}

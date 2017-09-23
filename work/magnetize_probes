@@ -1,0 +1,45 @@
+#!/usr/bin/perl
+
+
+(@ARGV >= 2) || die "\nUsage: $0 class-col magnet-spacing [file]
+
+    Input file must be sorted by class-col.
+
+    For each class and each magnet position, pick the best probe.
+
+";
+
+use Columns;
+require 'probes.pl';
+require 'search.pl';
+require 'misc.pl';
+
+my $class_col = shift;
+my $spacing = shift;
+
+my $columns = Columns::new(ARGV);
+$columns->must_col($class_col);
+$columns->must_col("probe_start");
+
+$columns->print_header(STDOUT);
+
+while (my $row = $columns->get_row()) {
+    my $class       = $columns->get_col($row, $class_col);
+    my $probe_start = $columns->get_col($row, "probe_start");
+    if ($class ne $last_class and $last_class ne '') {
+	&do_probes($spacing, \@lines);
+    }
+    $last_class = $class;
+    push(@lines, "$probe_start " . join("\t", @$row));
+}
+&do_probes($spacing, \@lines);
+
+sub do_probes {
+    my ($spacing, $lines_ref) = @_;
+    $lines = magnetize_probes($spacing, $lines_ref);
+    for my $row (@$lines) {
+	print STDOUT "$row\n";
+    }
+    @$lines_ref = ();
+}
+

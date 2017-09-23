@@ -1,0 +1,68 @@
+#!/usr/bin/perl
+
+#
+#   Use .ptt file to get sequences from .txt file,
+#   putting results in .out file.
+#
+
+if ($ARGV[0] =~ /^-p/) {
+    shift;
+    $pad = shift;
+}
+@ARGV || die "\nUsage: $0 [-pad bases] *.ptt
+
+    Use base.ptt file positions to get sequences from matching base.txt
+    contig file, putting results in base.out.
+
+";
+
+require 'misc.pl';
+require 'primers.pl';
+
+for my $ptt (@ARGV) {
+	$ptt =~ /(.*)\.ptt/;
+	my $base = $1;
+	my $txt = "$base.txt";
+	my $out = "$base.out";
+	doit($ptt, $txt, $out);
+}
+
+sub doit {
+    my ($ptt, $txt, $out) = @_;
+
+    open(PTT, $ptt) || die "$ptt: $!";
+    open(OUT, ">$out") || die "$out: $!";
+    print_tabbed(OUT, "loc strand start end len pid gene syn cog prod upstream seq downstream\n");
+    while (<PTT>) {
+	chomp;
+	my ($loc, $strand, $tmp, $pid, $gene, $syn, $tmp, $cog, $prod) = split /\t/;
+	my ($first, $last) = split /\.\./, $loc;
+	next if ! ($strand =~ /^[-+]$/);
+	my ($start, $end, $upstream, $downstream, $orf);
+	($start, $end) = ($first, $last);
+	$first -= $pad;
+	die "first < 1" if $first < 1;
+	$last += $pad;
+print "$loc, first $first start $start end $end last $last\n";
+	my $len = $last - $first + 1;
+	$seq = get_file_seq($txt, $first - 1, $len);
+	warn "seq len is not $len" if length($seq) != $len;
+	$last = $first + length($seq) - 1;
+	if ($strand =~ /^-/) {
+	    $seq = rc($seq) if $strand eq '-';
+	    $upstream = substr($seq, 0, $last - $end);
+	    $downstream = substr($seq, $last - $start + 1);
+	    $orf = substr($seq, $last - $end, $end - $start + 1);
+	}
+	else {
+	    $upstream = substr($seq, 0, $start - $first);
+	    $downstream = substr($seq, $end - $first + 1);
+	    $orf = substr($seq, $start - $first, $end - $start + 1);
+	}
+	print OUT join("\t", $loc, $strand, $start, $end, length($orf), $pid,
+	    $gene, $syn, $cog, $prod, $upstream, $orf, $downstream), "\n";
+    }
+    close PTT;
+    close OUT;
+}
+

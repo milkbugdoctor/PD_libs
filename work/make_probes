@@ -1,0 +1,127 @@
+#!/usr/bin/perl
+
+$debug = 0;
+
+(@ARGV >= 8) || die "\nUsage: $0 file.txt p1 min-lower min-upper total-length stranded-seq-col max-probes prefix1 ...
+
+	p1			probe name prefix, e.g., \"i\" for intron, \"m\" for mRNA
+	min-lower		minimum number of lowercase bases to cover
+	min-upper		minimum number of uppercase bases to cover
+	stranded-seq-col	column to use for building the probes
+
+	max-probes		max. probes per {prefix}_id, 0 if not enforced
+
+	Needs columns:	chr, strand, {prefix}_start, {prefix}_end
+
+";
+
+require 'columns.pl';
+require 'probes.pl';
+require 'NimbleGen.pl';
+
+# start_tm_server();
+
+$| = 1;
+
+my ($filename, $p1, $lower_cover, $upper_cover, $probe_len, $seq_col, $max_probes, @prefixes) = @ARGV;
+
+my $success = 0;
+my $fail = 0;
+my $num_intron = 0;
+
+my $fd;
+open($fd, $filename) || die "can't open $filename";
+my @header = get_header($fd);
+my $strand_col = find_prefixed_col(\@header, 'strand', 1, @prefixes);
+my $pos_col    = find_prefixed_col(\@header, 'start', 1, @prefixes);
+my $chr_col    = find_prefixed_col(\@header, 'chr', 1, @prefixes);
+my $id_col     = find_prefixed_col(\@header, 'id', 1, @prefixes);
+
+print <<FOO;
+# make_probes
+#
+# maximum of $max_probes probes per sequence
+#
+# using columns [$seq_col $strand_col $pos_col $chr_col $id_col] to build probes
+# probe_start   absolute top-strand genome starting position
+# probe_offset  sense-strand offset of probe in the parent sequence
+FOO
+
+print_tabbed(STDOUT, "$id_col chr strand probe_id $pos_col probe_start probe_offset probe_seq tm\n");
+my $seq_num = 0;
+my %good_probes;
+while (my @row = get_row($fd)) {
+    my $seq    = get_col(\@header, \@row, $seq_col);
+    my $chr    = get_col(\@header, \@row, $chr_col);
+    my $strand = get_col(\@header, \@row, $strand_col);
+    my $start  = get_col(\@header, \@row, $pos_col);
+    my $id     = get_col(\@header, \@row, $id_col);
+
+    warn "id $id: doing seq\n$seq\n" if $debug >= 2;
+    my @probes = get_boundary_probes($seq, $lower_cover, $upper_cover, $probe_len);
+    my @good_probes;
+    for (my $p = 0; $p <= $#probes; $p += 1) {
+	my ($probe, $pos, $tm) = @{$probes[$p]};
+        if ($probe =~ /N/i) {
+            $N++;
+	    warn "N\t$probe\n" if $debug >= 2;
+            next;
+        }
+        if ($probe =~ /AAAAAAAA|TTTTTTTT|CCCCCCCC|GGGGGGGG|GTGTGTGT|CACACACA/i) {
+            $rep8++;
+	    warn "REP8\t$probe\n" if $debug >= 2;
+            next;
+        }
+        if (self_anneal(10, $probe)) {
+            $self++;
+	    warn "SELF10\t$probe\n" if $debug >= 2;
+            next;
+        }
+	my @probe;
+	if (NimbleGen::good_probe($probe)) {
+	    push(@probe, $id);
+	    my $probe_start;
+	    if ($strand =~ /^-/) {
+		$probe_start = ($start + length($seq) - 1) - $pos - ($probe_len - 1);
+	    }
+	    else {
+		$probe_start = $start + $pos;
+	    }
+	    $probe_id = sprintf "${p1}\U${chr}${strand}P%06d", $probe_start;
+	    push(@probe, $chr, $strand, $probe_id, $start, $probe_start, $probe_start - $start, $probe, $tm);
+	    push(@good_probes, \@probe);
+	}
+	else {
+	    warn "NIMBLE\t$probe\n" if $debug >= 2;
+	    $bad_nimble++;
+	}
+    }
+    &process_probes if ! defined $good_probes{$id}; # new class
+    push(@{$good_probes{$id}}, @good_probes);
+}
+
+&process_probes;
+
+printf STDERR "seqs %d N %d 8mer %d self %d nimble %d\n",
+	$seq_num, $N, $rep8, $self, $bad_nimble;
+
+# kill_tm_server();
+
+exit 0;
+
+sub process_probes {
+    my ($class, $probes);
+    while (($class, $probes) = each %good_probes) {
+	my @good_probes = @$probes;
+	if ($max_probes > 0) {
+	    warn "trimming probes for $class\n" if $debug >= 2;
+	    @good_probes = trim_probes($max_probes, @good_probes);
+	}
+	$" = "\t";
+	for my $probe (@good_probes) {
+	    print "@$probe\n";
+	}
+	$seq_num++;
+    }
+    undef %good_probes;
+}

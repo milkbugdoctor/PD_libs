@@ -1,0 +1,55 @@
+#!/usr/bin/perl
+
+require 'columns.pl';
+require 'fasta.pl';
+
+use Getopt::Std;
+getopts('d:e:');
+
+(@ARGV >= 3) || die "\nUsage: $0 [options] name-column sequence-column input-files > out.fa
+
+    Options:
+	-d description-column
+	-e description-expression (e.g. \"gene: {gene_gene} product: {gene_product}\")
+
+    (Currently 'make_fasta' is the same as 'tabbed2fasta')
+
+";
+
+my ($name_col, $seq_col, @files) = @ARGV;
+
+for my $file (@files) {
+    open(FILE, $file) || die "can't read $file: $!";
+    my @header = get_header(*FILE);
+    while (my @row = get_row(*FILE)) {
+	my ($name, $seq) = get_cols(\@header, \@row, $name_col, $seq_col);
+	die "$0: couldn't read column '$name_col'" if ! defined $name;
+	die "$0: couldn't read column '$seq_col'" if ! defined $seq;
+	my $desc;
+	if ($opt_d ne '') {
+	    ($desc) = get_cols(\@header, \@row, $opt_d);
+	    die "$0: couldn't read column '$opt_d'" if ! defined $desc;
+	}
+	if ($opt_e ne '') {
+	    $desc = $opt_e;
+	    while ($desc =~ /\{([^}]+)\}/) {
+		my $col = $1;
+		my $match = $&;
+		my ($val) = get_cols(\@header, \@row, $col);
+		# warn "substituting, col [$1], match [$&], val [$val]\n";
+		$match =~ s/\{/\\\{/;
+		$match =~ s/\}/\\\}/;
+		# warn "[$desc] =~ s/$match/$val/\n";
+		$desc =~ s/$match/$val/;
+		warn "desc now: [$desc]\n" if $opt_d;
+	    }
+	}
+	if ($desc) {
+	    print ">$name $desc\n";
+	}
+	else {
+	    print ">$name\n";
+	}
+	print_wrapped(STDOUT, $seq);
+    }
+}

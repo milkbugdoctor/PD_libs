@@ -1,0 +1,31 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+$ok = getopts('bf:hp:');
+
+if (@ARGV || $opt_h || !$ok) {
+    die "\nUsage: $0 [options]
+
+    Outputs amount of free memory in K, including cache and buffers.
+
+    Options:
+	-b           output in bytes instead of K
+	-f frac      multiply by fraction
+	-p perc      multiply by percent
+
+";
+}
+
+@foo = `free`;
+@foo = split(/\s+/, $foo[2]);
+$foo = pop(@foo);
+if ($opt_p > 0) {
+    $foo = int($foo * $opt_p / 100.0);
+}
+elsif ($opt_f > 0) {
+    $foo = int($foo * $opt_f);
+}
+if ($opt_b) {
+    $foo *= 1024;
+}
+print "$foo\n";

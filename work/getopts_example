@@ -1,0 +1,23 @@
+. subs.sh
+
+prefix=mis
+break=20
+
+while getopts b:p: foo ; do
+    if [ "$foo" = 'b' ]; then
+        break="$OPTARG"
+    elif [ "$foo" = 'p' ]; then
+        prefix="$OPTARG"
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -ne 2 ]; then
+    echo -e "\nUsage: $0 [options] ref.fa contigs.fa
+    Options:
+	-b break
+	-p prefix
+"
+    exit 1
+fi
+

@@ -1,0 +1,26 @@
+#!/usr/bin/perl
+
+use Cols;
+require 'misc.pl';
+
+@ARGV == 2 || die "\nUsage: $0 infile.delta what > coverage.txt\n\n"; 
+
+my $delta = shift;
+my $what = shift;
+
+open(FILE, "amos.get_read_hits -s $delta |") or die "huh?: $!";
+my $cols = Cols::new(FILE);
+print_tabbed(STDOUT, "scaff what start end len name rstart rend rsize rdir\n");
+while (my $row = $cols->get_row()) {
+    print $row->{tname}, "\t";
+    print "$what\t";
+    print $row->{tstart}, "\t";
+    print $row->{tend}, "\t";
+    print $row->{tlen}, "\t";
+    print $row->{rid}, "\t";
+    print $row->{rstart}, "\t";
+    print $row->{rend}, "\t";
+    print $row->{rsize}, "\t";
+    print $row->{rdir}, "\n";
+}
+

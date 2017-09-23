@@ -1,0 +1,90 @@
+#!/usr/bin/env activeperl
+
+# the perl executable above must support GD
+
+($image_size, $infile, $outfile) = @ARGV;
+@ARGV == 3 || die "\nUsage: $0 image_size aligns.txt outfile.png
+
+    Aligns.txt must be in delta.list (CAF) format.  See also psl2caf.
+
+";
+
+use GD;
+use Cols;
+use GD_stuff;
+
+my $font = "/usr/local/lib/fonts/ttf/luxisb.ttf";
+$PI = 3.14159265358979323846;
+$PI_2 = 1.57079632679489661923;
+
+my $cols = Cols::new($infile);
+open(FOO, ">$outfile") || die "can't create $outfile";
+
+my $im = new GD::Image($image_size, $image_size, 1);
+
+my $index = $im->colorAllocate(255, 255, 255);
+$im->setThickness($image_size / 1000);
+my (%rname, %qname, $max);
+while (my $row = $cols->get_row()) {
+    my $rs = $row->{rstart} || $row->{tstart};
+    my $re = $row->{rend} || $row->{tend};
+    our $rsize = $row->{rsize} || $row->{tsize};
+    my $qs = $row->{qstart};
+    my $qe = $row->{qend};
+    our $qsize = $row->{qsize};
+    $max = $rs if $rs > $max;
+    $max = $re if $re > $max;
+    $max = $qs if $qs > $max;
+    $max = $qe if $qe > $max;
+    my $xs = $rs / $rsize;
+    my $xe = $re / $rsize;
+    my $ys = $qs / $qsize;
+    my $ye = $qe / $qsize;
+
+    if ($row->{qstrand} eq '-') {
+        ($xs, $xe) = ($xe, $xs);
+    }
+
+    $rname{$row->{rname}} = 1;
+    $qname{$row->{qname}} = 1;
+    warn "drawing $xs,$ys to $xe,$ye\n" if $debug;
+    $im->line(x($xs), x($ys), x($xe), x($ye), $index);
+}
+die "ERROR: found multiple contigs: " . join(" ", keys %rname) if (keys %rname > 1);
+die "ERROR: found multiple contigs: " . join(" ", keys %qname) if (keys %qname > 1);
+my ($rname) = (keys %rname);
+my ($qname) = (keys %qname);
+
+my $scale = 1;
+while ($max > 1000) {
+    $scale *= 1000;
+    $max /= 1000.0;
+}
+
+my $index = $im->colorAllocate(128, 128, 255);
+my $wid = $image_size / 50;
+for (my $i = 0; $i < 1; $i += .10) {
+    my $pos = $i;
+    $im->line(x($pos), x(0), x($pos), x(1), $index);
+    my $string = sprintf "%.2f", $pos * $rsize / $scale;
+    $im->stringFT($index, $font, $image_size / 100, 0, x($pos), x(-.02), $string) || die "stringFT: $@";
+    $im->line(x(0), x($pos), x(1), x($pos), $index);
+    my $string = sprintf "%.2f", $pos * $qsize / $scale;
+    $im->stringFT($index, $font, $image_size / 100, 0, x(-.05), x($pos + .01), $string);
+}
+my $index = $im->colorAllocate(255, 255, 255);
+$im->stringFT($index, $font, $image_size / 75, 0, x(0), x(-.07), $rname);
+draw_string('center', 'bottom', $im, $index, $font, $image_size / 75, 0, x(.5), x(-.07), "scale is $scale");
+$im->stringFT($index, $font, $image_size / 75, -$PI_2, x(-.09), x(0), $qname);
+
+# make sure we are writing to a binary stream
+binmode FOO;
+
+# Convert the image to PNG and print it on standard output
+print FOO $im->png;
+
+flush FOO;
+
+sub x {
+    return ($_[0] * $image_size * .8 + $image_size * .1);
+}

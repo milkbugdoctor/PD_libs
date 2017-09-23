@@ -1,0 +1,18 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+@ARGV || die "\nUsage: $0 infile.fa\n\n";
+
+my $infile = shift;
+
+open(FASTA, $infile) or die "can't read file '$infile'";
+
+require 'fasta.pl';
+require 'misc.pl';
+require 'new_amps.pl';
+
+while ((my ($header, $seq) = read_fasta(FASTA)) == 2) {
+    chomp(my $num = get_num_word_hits($seq));
+    print "$header\t$num\n";
+}

@@ -1,0 +1,80 @@
+#!/usr/bin/perl
+
+if ($ARGV[0] =~ /^-p/) {
+    shift;
+    $pad = shift;
+}
+@ARGV == 2 || die "\nUsage: $0 [-pad bases] infile.ptt sequence-file > outfile.txt
+
+    See add_seq_circular for a more general version.
+
+    sequence-file can be the DNA text, or a 1-sequence FASTA file.
+
+";
+
+require 'misc.pl';
+require 'primers.pl';
+
+doit(@ARGV, STDOUT);
+
+sub doit {
+    my ($ptt, $seq_file, $out) = @_;
+
+    my $whole_seq = `cat "$seq_file"`;
+    die "error reading [$seq_file]" if $? != 0;
+    my $num_seqs = 0;
+    while ($whole_seq =~ />/g) {
+	$num_seqs++;
+    }
+    die "too many sequences found in FASTA file" if $num_seqs > 1;
+    if ($num_seqs) {
+	$whole_seq =~ s/^>.*//m;
+	$whole_seq =~ s/\s//gs;
+    }
+    $whole_seq .= $whole_seq;
+
+    open(PTT, $ptt) || die "$ptt: $!";
+    chomp(my $first_line = <PTT>);
+    my $genome_length;
+    if ($first_line =~ /(\d+)\.\.(\d+)$/) {
+	$genome_length = $2;
+    }
+    print_tabbed($out, "location strand start end length PID gene synonym COG product upstream seq downstream\n");
+    while (<PTT>) {
+	chomp;
+	my ($loc, $strand, $tmp, $pid, $gene, $syn, $tmp, $cog, $prod) = split /\t/;
+	my ($first, $last) = split /\.\./, $loc;
+	if ($last < $first) {
+	    $last += $genome_length;
+	    warn "WARNING: $syn [$loc] -> [$first..$last]\n";
+	    $loc = "$first..$last";
+	}
+	next if ! ($strand =~ /^[-+]$/);
+	my ($start, $end, $upstream, $downstream, $orf);
+	($start, $end) = ($first, $last);
+	$first -= $pad;
+	die "first < 1" if $first < 1;
+	$last += $pad;
+warn "$loc, first $first start $start end $end last $last\n" if $debug;
+	my $len = $last - $first + 1;
+	$seq = substr($whole_seq, $first - 1, $len);
+	warn "seq len is not $len" if length($seq) != $len;
+	$last = $first + length($seq) - 1;
+	if ($strand =~ /^-/) {
+	    $seq = rc($seq) if $strand eq '-';
+	    $upstream = substr($seq, 0, $last - $end);
+	    $downstream = substr($seq, $last - $start + 1);
+	    $orf = substr($seq, $last - $end, $end - $start + 1);
+	}
+	else {
+	    $upstream = substr($seq, 0, $start - $first);
+	    $downstream = substr($seq, $end - $first + 1);
+	    $orf = substr($seq, $start - $first, $end - $start + 1);
+	}
+	print $out join("\t", $loc, $strand, $start, $end, length($orf), $pid,
+	    $gene, $syn, $cog, $prod, $upstream, $orf, $downstream), "\n";
+    }
+    close PTT;
+    close $out;
+}
+

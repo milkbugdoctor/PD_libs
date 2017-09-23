@@ -1,0 +1,63 @@
+#!/usr/bin/perl
+
+use Getopt::Std;
+getopts('t:');
+
+@ARGV == 4 || die "\nUsage: $0 [options] min-len max-len seq-col input.txt > outfile.txt
+
+    Options:
+	-t tm	Use this as average tm instead of calculating
+
+";
+
+my $min_len = shift;
+my $max_len = shift;
+my $seq_col = shift;
+my $infile = shift;
+
+use Cols;
+require 'misc.pl';
+require 'primers.pl';
+require 'perl_tm.pl';
+
+my $avg_tm = $opt_t;
+if ($avg_tm == 0) {
+    my $num_primer, $total_tm;
+    my $cols = Cols::new($infile);
+    while (my $row = $cols->get_row()) {
+	my $top_seq = $row->{$seq_col};
+	for my $seq ($top_seq, rc($top_seq)) {
+	    for my $len ($min_len .. $max_len) {
+		my $primer = substr($seq, 0, $len);
+		next if length($primer) != $len;
+		$num_primer++;
+		$total_tm += PerlTm::exact_tm($primer);
+	    }
+	}
+    }
+    $avg_tm = $total_tm / $num_primer;
+}
+
+my $cols = Cols::new($infile);
+$cols->add_col('avg_tm', 'primer1', 'tm1', 'primer2', 'tm2');
+$cols->print_header(STDOUT);
+while (my $row = $cols->get_row()) {
+    my $seq = $row->{$seq_col};
+    $cols->set_col($row, 'avg_tm', $avg_tm);
+    for my $which (1, 2) {
+	my ($best_seq, $best_tm);
+	for my $len ($min_len .. $max_len) {
+	    my $primer = substr($seq, 0, $len);
+	    next if length($primer) != $len;
+	    my $tm = PerlTm::exact_tm($primer);
+	    if (!$best_seq or abs($avg_tm - $tm) < abs($avg_tm - $best_tm)) {
+		$best_seq = $primer;
+		$best_tm = $tm;
+	    }
+	}
+	$cols->set_col($row, "primer$which", $best_seq);
+	$cols->set_col($row, "tm$which", $best_tm);
+	$seq = rc($seq);
+    }
+    $cols->print_row(STDOUT, $row);
+}

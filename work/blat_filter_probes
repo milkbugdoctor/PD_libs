@@ -1,0 +1,179 @@
+#!/usr/bin/perl
+
+my $strict_main = 1;
+my $debug = 2;
+
+$0 =~ s|.*/||;
+for my $i (0 .. $#ARGV) {
+    if ($ARGV[$i] =~ /^-ns/) {
+	$strict_main = 0;
+	splice(@ARGV, $i, 1);
+	warn "strict_main = 0\n";
+    }
+    elsif ($ARGV[$i] =~ /^-strict/) {
+	$strict_main = 1;
+	splice(@ARGV, $i, 1);
+	warn "strict_main = 1\n";
+    }
+}
+@ARGV >= 5 || die "\nUsage: $0 [-ns] probefile blat-outfile min do-main exact [start_col end_col]
+
+        min     	min bp match
+        do-main     	check for main hit
+	exact		max exact hits, -1 to disable
+	start_col	specify starting position column
+	end_col		specify ending position column
+
+	-ns		non-strict main hit
+	-strict		strict main hit (default)
+
+";
+
+use JoinFiles;
+require 'misc.pl';
+require 'columns.pl';
+
+my ($seqfile, $blat_outfile,
+    $min_ident, $do_main, $max_exact, $alt_start, $alt_end) = @ARGV;
+
+my $out = STDOUT;
+my $join = JoinFiles::new('left', 1, $seqfile, $blat_outfile, "probe_id/qname");
+
+my @header = $join->get_header('left');
+my @blat_header = $join->get_header('right');
+get_columns(\@header);
+$" = "\t";
+add_col(\@header, "exact_hits");
+print $out "@header\n";
+my (%lost, %kept);
+while (my ($left, $right) = $join->get_match) {
+    last if $left eq '';
+    # warn "duplicate lines:\n" . join("\n", @$left) . "\n" if @$left > 1;
+    for my $l (@$left) {
+	if (good_probe($right, $l)) {
+	    print $out "$l\n";
+	}
+    }
+}
+$join->cleanup;
+printf STDERR "lost: %s\n", join(' ', %lost) if $debug;
+printf STDERR "kept: %s\n", join(' ', %kept) if $debug;
+exit 0;
+
+
+my ($start_col, $seq_col, $probe_id_col, $strand_col, $chr_col, $end_col);
+
+sub get_columns {
+    my ($header) = @_;
+    $start_col = must_col($header, "POSITION", "probe_start");
+    $seq_col = must_col($header, "PROBE_SEQUENCE", "probe_seq");
+    $probe_id_col = must_col($header, "PROBE_ID", "probe_id");
+    $chr_col = must_col($header, "probe_chr", "chr");
+    $strand_col = must_col($header, "probe_strand", "strand");
+    if ($alt_start ne '') {
+	$start_col = $alt_start;
+	warn "using start column $alt_start\n";
+    }
+    if ($alt_end ne '') {
+	$end_col = $alt_end;
+	warn "using end column $alt_end\n";
+    }
+}
+
+
+sub good_probe {
+    my ($hits, $line) = @_;
+
+    my @row = split /\t/, $line;
+    my $chr        = get_col(\@header, \@row, $chr_col);
+    my $strand     = get_col(\@header, \@row, $strand_col);
+    my $seq        = get_col(\@header, \@row, $seq_col);
+    my $start      = get_col(\@header, \@row, $start_col);
+    my $probe_name = get_col(\@header, \@row, $probe_id_col);
+    my $len = length($seq);
+    my $end = $start + $len - 1;
+    $end = get_col(\@header, \@row, $end_col) if $end_col ne '';
+
+    my $is_split = ($len < ($end - $start + 1));
+    $do_main = ($do_main > 0);
+    my $do_exact = $max_exact > 0;
+    $strict_main = 0 if ! $do_main;
+    my $min_match = $min_ident;
+    if ($min_ident =~ /%/) {
+	$min_match = $min_ident / 100 * $len;
+	warn "percent match %min_ident => $min_match bases\n" if $debug >= 2;
+    }
+
+    warn "\nin good_probe: $probe_name start_col $start_col start $start end $end\n" if $debug >= 2;
+    #
+    #   look for primary hit
+    #
+    my $found_main = 0;
+    my $found_bad = 0;
+    my $found_exact = 0;
+    @$hits = hash_unique(@$hits);
+    for my $hit (@$hits) {
+	my @row = split /\t/, $hit;
+	my ($match, $tstrand, $qname, $qlen, $tchr, $tstart, $tend)
+	    = get_cols(\@blat_header, \@row, 'match', 'strand', 'qname',
+		'qsize', 'tname', 'tstart', 'tend');
+	$qstart++; $tstart++;
+	die "qlen != len" if $qlen != $len;
+
+        warn "hit $match $qname ($start-$end) on $tchr $tstrand ($tstart-$tend)\n" if $debug >= 2;
+	if ("\U$chr" eq "\U$tchr" and $strand eq $tstrand
+            and ($start <= $tstart and $tend <= $end)	# inside the boundaries
+	    and ((($tstart - $start) < $len) or (($end - $tend) < $len))) 
+	{
+	    $found_main++;
+	    if ($do_main && $strict_main && $match != $len) {
+		$lost{'inexact_main_hit'}++;
+		warn "INEXACT MAIN $found_main\t$qname\t$match/$qlen at $chr:$tstart-$tend\n" if $debug >= 2;
+		return 0;
+	    }
+	    warn "MAIN $found_main\t$qname\t$match/$qlen $chr $start-$end and $tstart-$tend\n" if $debug >= 2;
+	}
+	else {
+	    my $left = max($start, $tstart);
+	    my $right = min($end, $tend);
+	    my $overlap = max(0, $right - $left + 1);
+	    $match -= $overlap;
+	    warn "removing overlap $overlap giving match of $match\n" if $debug >= 2;
+
+	    if ($match >= $min_match and $match < $len) {
+		$lost{'extraneous_hit'}++;
+		warn "HIT\t$qname\t$match/$qlen at $chr:$tstart-$tend\n" if $debug >= 2;
+		return 0;
+	    }
+	    elsif ($match >= $len) {
+		warn "EXACT\t$match >= $len, $qname\t$match/$qlen at $chr:$tstart-$tend\n" if $debug >= 2;
+		$found_exact++;
+	    }
+	}
+    }
+    $found_exact++; # count main hit as exact
+    if ($strict_main && $found_main > 1) {
+	warn "too many main hits for $probe_name\n" if $debug >= 2;
+	$lost{'too_many_main'}++;
+	return 0;
+    }
+    if ($do_exact and $found_exact > $max_exact) {
+	warn "too many exact matches for $probe_name\n" if $debug >= 2;
+	$lost{'too_many_exact'}++;
+	return 0;
+    }
+    if ($do_main and !$found_main) {
+	warn "$probe_name not found at $chr:$strand:$start:$end\n" if $debug >= 2;
+	$lost{'no_main'}++;
+	return 0;
+    }
+    if ($found_exact) {
+	$kept{"${found_exact}_exact_hits"}++;
+	$kept{"${found_main}_main_hits"}++;
+    }
+    set_col(\@header, \@row, "exact_hits", $found_exact);
+    $_[1] = join("\t", @row);
+    return 1;
+}
+
+

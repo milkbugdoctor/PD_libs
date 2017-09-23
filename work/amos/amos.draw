@@ -1,0 +1,36 @@
+#!/bin/bash
+
+. subs.sh
+
+if [ $# -ne 2 ]; then
+    echo -e "\nUsage: $0 prefix outfile.png
+
+    Draws read coverage and contig coverage.
+"
+    exit 1
+fi
+
+prefix="$1" ; shift
+png="$1" ; shift
+
+dir=`dirname $prefix`
+ref="$dir/reference.fa"
+repeats="$dir/reference.fa.repeats"
+contigs="$prefix.contig-coverage.txt"
+layout=$prefix.layout.final
+
+if need $ref.headers $prefix.read-hits.txt $prefix.read-coverage.txt; then
+    run "amos.get_read_coverage $ref.headers $prefix.read-hits.txt > $prefix.read-coverage.txt"
+fi
+
+if need $ref.headers $layout $prefix.contig-coverage.txt; then
+    run "amos.get_contig_coverage $ref.headers $layout > $prefix.contig-coverage.txt"
+fi
+
+if need_nonempty $prefix.read-coverage.txt $contigs $png; then
+    unsplit_files +h $prefix.read-coverage.txt $contigs \
+	| amos.draw_coverage -l '\d+' -c -o $prefix.options -r $repeats - | tee $png.txt \
+	| draw_gd > $png
+fi
+
+exit 0

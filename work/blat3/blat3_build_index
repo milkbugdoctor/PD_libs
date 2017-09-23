@@ -1,0 +1,200 @@
+#!/usr/bin/perl
+#
+#	This program attempts to spread a number of chromosome (or contig) files
+#	evenly across a given number of servers.
+#
+
+my $iterations = 80000;
+
+$0 =~ s|.*/||;
+(@ARGV >= 4)  || die "\nUsage: $0 cpu-file timing-file chr-dir chr-files ...
+
+	node-file	machine names and # of actual CPUs
+	timing-file	chromosome and host timings
+
+";
+
+$SIG{'INT'} = 'die';
+$SIG{'TERM'} = 'die';
+
+($node_file, $timing_file, $chr_dir, @files) = @ARGV;
+
+open(FOO, $timing_file) || die "can't read '$timing_file'";
+while (<FOO>) {
+    next if /^#/;
+    s/\s+$//;
+    my ($thing, $time) = split /\t/;
+    $timing{$thing} = $time;
+}
+
+open(FOO, $node_file) || die "can't read $node_file";
+my $num_nodes = 0;
+while (<FOO>) {
+	next if /^#/;
+	s/\s+$//;
+	my ($node, $cpus) = split /\t/;
+	next if $cpus == 0;
+	$nodes[$num_nodes]{'cpus'} = $cpus;
+	$nodes[$num_nodes]{'name'} = $node;
+	$nodes[$num_nodes]{'timing'} = $timing{$node}
+	    || die "timing for $node must be > 0";
+	$num_nodes++;
+}
+
+my %chr_time;
+for my $file (@files) {
+    $size = (-s $file);
+    if ($file =~ m|.*/(.*)|) {	# find filename
+	$file = $1;		# remove directory
+    }
+    $chr_time{$file} = $timing{$file}
+	|| die "timing for $file must be > 0";
+}
+
+if ($0 eq "build_index") {
+    $outfile = "$chr_dir/node_list";
+}
+elsif ($0 eq "blat3_build_index") {
+    $outfile = "$chr_dir/blat_list";
+}
+else {
+    die "unknown program name '$0'";
+}
+
+open(FOO, ">$outfile") || die "can't create $outfile";
+
+my @best_map = &make_map;
+my $best_fit;
+for my $i (1 .. $iterations) {
+    printf "\niteration $i (%f\%)\n", $i/$iterations*100 if ($i % 20000) == 0;
+    my @map = copy_map(@best_map);
+    my $swap = int(rand 2);
+# print STDERR $swap; # ZZZ
+    change_map($swap, @map);
+    my $fit = get_fit(\@map);
+    if ($best_fit eq '' or $fit < $best_fit) {
+	print "got best fit $fit\n";
+	&print_map(STDOUT, 1);
+	print "worst time: $fit\n";
+	@best_map = copy_map(@map);
+	$best_fit = $fit;
+    }
+}
+
+&print_map(FOO);
+close FOO;
+exit 0;
+
+sub make_map {
+    my @map;
+    for my $key (keys %chr_time) {
+	my $i = int(rand $num_nodes);
+	push(@{$map[$i]}, "$chr_time{$key} $key");	# size filename
+    }
+    return @map;
+}
+
+sub change_map {
+    my ($swap, @map) = @_;
+    my ($i, $j);
+    $i = int(rand $num_nodes);
+    do {
+        $j = int(rand $num_nodes);
+    } while ($j == $i);
+    my $src = $map[$i];
+    my $dest = $map[$j];
+    my $src_index = int(rand(scalar @$src));
+    my $dest_index = int(rand(scalar @$dest));
+    my $s = $src->[$src_index];
+    my $d = $dest->[$dest_index];
+    undef $d if ! $swap;
+    if (! defined $s) {
+	return @map;
+    }
+    if (defined $d) {
+	($src->[$src_index], $dest->[$dest_index]) =
+	    ($dest->[$dest_index], $src->[$src_index]);
+    }
+    else {
+	push(@$dest, $src->[$src_index]);
+	splice(@$src, $src_index, 1);
+    }
+
+    return @map;
+}
+
+#
+#   get time for this node to run its jobs
+#
+sub get_time {
+    my ($map, $i) = @_;
+
+    my $block = $map->[$i];
+    my $sum = 0;
+    return 0 if (@$block == 0);
+    for my $chr_time (@$block) {
+	$sum += $chr_time;
+    }
+    my $host_time = $nodes[$i]{'timing'} or die "huh?";
+    my $max_cpus = $nodes[$i]{'cpus'};
+    my $cpus_used = @$block;
+    my $cpus = min($max_cpus, $cpus_used);
+    my $time = $sum * $host_time / $cpus;
+    return $time;
+}
+
+sub get_fit {
+    my ($map) = @_;
+    my $badness = 0;	# abs(wanted time - actual time)
+    my @times;
+    for my $i (0 .. $#{$map}) {
+	my $time = get_time($map, $i);
+	$badness = max($badness, $time);
+    }
+    return $badness;
+}
+
+sub copy_map {
+    my @map = @_;
+    my @copy;
+    for my $entry (@map) {
+	push(@copy, [ @$entry ]);
+    }
+    return @copy;
+}
+
+sub print_map {
+    my ($fd, $debug) = @_;
+    for my $i (0 .. $#best_map) {
+	my $block = $best_map[$i];
+	print $fd "$nodes[$i]{name}\t";
+	my (@files, $sum);
+	for my $line (@$block) {
+	    my ($num, $key) = split / /, $line;
+	    if ($debug) {
+		push(@files, "$key($num)");
+	    }
+	    else {
+		push(@files, $key);
+	    }
+	}
+	$sum = get_time(\@best_map, $i);
+	print $fd "$sum\t@files\n";
+    }
+    print "\n";
+}
+
+sub die {
+    &print_map(FOO);
+    close FOO;
+    exit 1;
+}
+
+sub min {
+        return $_[0] < $_[1] ? $_[0] : $_[1];
+}
+
+sub max {
+        return $_[0] > $_[1] ? $_[0] : $_[1];
+}
+

@@ -1,0 +1,199 @@
+#!/usr/bin/perl
+#!/usr/bin/env activeperl-5.8
+
+our $opt_a;
+use Getopt::Std;
+getopts('a:');
+
+my $max_diff = 50;
+my $debug = 1;
+
+$0 =~ s|.*/||;
+warn "@ARGV\n";
+@ARGV == 2 || die "\nUsage: $0 aligns infile > outfile
+
+    Parameters:
+
+	aligns		1-to-1 genome alignments
+	infile		file containing gene alignments and such
+
+    Depends on columns:
+
+	rname, rstart, rend
+	qname, qstart, qend, qsize, qstrand
+	gene_chr
+	align - alignment string
+
+    Adds column:
+
+	right_place
+
+";
+
+use Cols;
+use Fasta;
+use CAF;
+use strict;
+require 'markers.pl';
+require 'misc.pl';
+
+my $aligns = shift;
+my $infile = shift;
+
+my $genome_alignments = read_genome_alignments($aligns);
+
+my $columns = Cols::new($infile);
+$columns->add_col(qw/right_place/);
+$columns->print_header('STDOUT');
+
+while (my $row = $columns->get_row()) {
+    $row->{right_place} = is_right_place($genome_alignments, $row);
+    $columns->print_row('STDOUT', $row);
+}
+
+sub read_genome_alignments {
+    my ($infile) = @_;
+    warn "reading genome alignments from [$infile]\n";
+    my $cols = new Cols $infile;
+    my $target_chunk_size = 20;
+    my $markers = markers::new('use_refs');
+    while (my $row = $cols->get_row()) {
+	my ($rname, $qname) = @$row{'rname', 'qname'};
+	my $align = $row->{align} || die "alignment string missing";
+	my ($rstart, $rend, $qstart, $qend) = @$row{'rstart', 'rend', 'qstart', 'qend'};
+	my $qdir = ($row->{qstrand} eq '+') ? 1 : -1;
+	my @chunks = ( );
+	while ($align =~ /(\d*)([Mm i])/g) {
+	    my $num = $1 || 1;
+	    my $what = $2;
+	    my ($rdelta, $qdelta) = (0, 0);
+	    if ($what eq 'i') {
+		$qdelta = $qdir * $num;
+	    }
+	    elsif ($what eq ' ') {
+		$rdelta = $num;
+	    }
+	    else {
+		$rdelta = $num;
+		$qdelta = $qdir * $num;
+	    }
+	    push(@chunks, [ $rdelta, $qdelta ]);
+	}
+
+	my $num_chunks = int(@chunks / $target_chunk_size) || 1;
+	my $chunk_size = @chunks / $num_chunks;
+	my $start = 0;
+	my @new_chunks;
+	for my $i (1 .. $num_chunks) {
+	    my $end = int($i * $chunk_size + .5) - 1;
+	    die "huh?" if $i == $num_chunks && $end != $#chunks;
+	    push(@new_chunks, [ @chunks[$start .. $end] ]);
+	    $start = $end + 1;
+	}
+
+	my $qpos = ($qdir == 1) ? $qstart : $qend;
+	my $rpos = $rstart;
+	my $last_qpos = $qpos - $qdir;
+	my $last_rpos = $rpos - 1;
+	my $first_qpos = $qpos;
+	my $first_rpos = $rpos;
+	for my $chunk (@new_chunks) {
+	    for my $c (@$chunk) {
+		my ($rdelta, $qdelta) = @$c;
+		$last_rpos += $rdelta;
+		$last_qpos += $qdelta;
+		$rpos += $rdelta;
+		$qpos += $qdelta;
+	    }
+# warn "adding $first_rpos, $last_rpos, $first_qpos, $last_qpos, $chunk;\n";
+	    $markers->add_marker("{$rname}{$qname}", '+',
+		$first_rpos, $last_rpos, $first_qpos, $last_qpos, $chunk);
+	    $first_qpos = $qpos;
+	    $first_rpos = $rpos;
+	}
+    }
+    warn "done reading genome alignments\n";
+    return $markers;
+}
+
+my $out;
+sub is_right_place {
+    my ($markers, $row) = @_;
+    my ($rname, $qname) = @$row{'rname', 'gene_chr'};
+    my ($ns, $ne) = @$row{'rstart', 'rend'};
+    my ($qs, $qe, $qsize) = @$row{'qstart', 'qend', 'qsize'};
+
+    die "qname is undefined" if $qname eq '';
+
+    my @entries = $markers->get_covering_markers('any', "{$rname}{$qname}", '+', $ns, $ne);
+    return 0 if @entries == 0;
+
+    my $gdir;
+    my ($gs, $ge, $qstrand, $gstrand) = @$row{'gene_start', 'gene_end',
+	    'qstrand', 'gene_strand'};
+    my ($exp_start, $exp_end);
+    my $offset = ($gstrand eq '-') ? $qsize - $qe : $qs - 1;
+    if ($qstrand ne $gstrand) {
+	$gdir = -1;
+	$exp_end   = $gs + $offset;
+	$exp_start = $exp_end + ($qe - $qs);
+    }
+    else {
+	$gdir = 1;
+	$exp_start = $gs + $offset;
+	$exp_end   = $exp_start + ($qe - $qs);
+    }
+    my $ok = 0;
+$out = '';
+$out .= "\noriginal gene $row->{qname} $gs - $ge gene_strand $gstrand qstrand $qstrand on $row->{gene_chr}\n";
+$out .= "exp start $exp_start end $exp_end offset $offset\n";
+    my $start_ok = check_pair($row, \@entries, $ns, $exp_start);
+    my $end_ok   = check_pair($row, \@entries, $ne, $exp_end);
+    $ok = ($start_ok && $end_ok) + 0;
+print STDERR $out if ! $ok;
+    return $ok;
+}
+
+sub check_pair {
+    my ($row, $entries, $rpos, $gpos) = @_;
+    my $mapping = 0;
+    my $worst_diff = 0;
+    for my $e (@$entries) {
+	my ($rs, $re, $ms, $me, $array) = (@$e)[2..6];
+	next if $rpos < $rs;
+	next if $rpos > $re;
+	$mapping = 1;
+$out .= "map $row->{rname} $rs - $re to $row->{qname} [$ms - $me]\n";
+	my $pos = map_pos($rpos, $e);
+$out .= "$row->{rname} rpos $rpos mapped $pos expect $gpos\n";
+	my $diff = abs($pos - $gpos);
+$out .= sprintf "diff %s vs $max_diff\n", abs($pos - $gpos), $max_diff;
+	return 1 if ($diff < $max_diff);
+    }
+    return 0;
+}
+
+sub map_pos {
+    my ($pos, $e) = @_;
+    my ($rs, $re, $qs, $qe, $array) = (@$e)[2..6];
+    my $qdir = ($qe - $qs) / abs($qe - $qs);
+
+    my $qpos = $qs;
+    my $rpos = $rs;
+
+    return $qpos if $pos == $rpos;
+
+    for my $pair (@$array) {
+	my ($rdelta, $qdelta) = @$pair;
+	if ($rpos + $rdelta >= $pos) {
+	    my $needed = $pos - $rpos;
+	    my $frac = $needed / $rdelta;
+	    $rpos += $rdelta * $frac;
+	    $qpos += $qdelta * $frac;
+	    return $qpos;
+	}
+	$rpos += $rdelta;
+	$qpos += $qdelta;
+    }
+    die "can't find match!";
+}

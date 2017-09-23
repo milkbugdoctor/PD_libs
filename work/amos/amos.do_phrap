@@ -1,0 +1,91 @@
+. subs.sh
+
+def_opts="-minmatch 65 -maxmatch 65 -retain_duplicates -vector_bound 0"
+opts=$def_opts
+
+while getopts o:q: foo ; do
+    if [ "$foo" = 'o' ]; then
+        opts="$OPTARG"
+    elif [ "$foo" = 'q' ]; then
+        qual="$OPTARG"
+    fi
+done
+shift $((OPTIND-1))
+
+
+if [ $# -lt 4 ]; then
+    echo -e "\nUsage: $0 [options] amos_dir name [contigs.fa contigs.qual ...]
+
+    Tags our contigs. Runs phrap in new directory <name>.
+    Extracts our contigs. Computes statistics.
+    Creates <name>.fa.
+
+    Options:
+
+	-o \"phrap options\"   (default: $def_opts)
+	-q qual                use this qual for amos contigs
+
+"
+    exit 1
+fi
+
+# status prefix key
+create_image() {
+    pre=$1
+    our=$2
+    if need $dir/$our.fa $dir/$our.mapped_contigs.png; then
+	draw_mapped_contigs -n 'g?[\d.]+$' -p $our.mapped_contigs $ref $our.fa || exit 1
+    fi
+}
+
+dir=`abs_path "$1"` ; shift
+base="$1"; shift
+ref="$dir/reference.fa"
+i=`cat $dir/.prefix` || exit 1
+
+for file in "$@"
+do
+    if [ ! "$newbler" ]; then
+	# assume 1st fasta file is from newbler
+	newbler="$file"
+    fi
+done
+pre="$dir/$i"
+
+if [ ! -s "$ref" ]; then
+    echo "'$ref' not found" 1>&2 ; exit 1
+fi
+
+rm -f $dir/$key/phrap.*our*
+
+key=$base
+if [ "$qual" ]; then
+    pre_qual=q$qual
+else
+    pre_qual=$pre.qual
+fi
+run "phrap.do_our_contigs -o '$opts' $dir/$key/phrap $pre.fasta $pre_qual $*"
+run "ln -f $dir/$key/phrap.our-contigs.fa $dir/$key.fa"
+create_image $i $key
+
+if need $dir/$key.fa $newbler $dir/$key.unused.fa; then
+    run "fasta.get_unused_pieces $dir/$key.fa $newbler > $dir/$key.unused.fa"
+fi
+
+exit
+
+################ old, unused ##########################
+
+key=$base-split
+if need_nonempty $dir/our1.fa $dir/$key.fa; then
+    run "amos.split_circular_contigs $ref $dir/our1.fa > $dir/$key.fa"
+fi
+# create_image $i $key
+
+if need_nonempty $dir/$key.fa $dir/$key.n.fa; then
+    run "amos.reorient_contigs -n $ref $dir/$key.fa > $dir/$key.n.fa"
+fi
+if need_nonempty $dir/$key.fa $dir/$key.r.fa; then
+    run "amos.reorient_contigs -r $ref $dir/$key.fa > $dir/$key.r.fa"
+fi
+

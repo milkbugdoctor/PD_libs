@@ -1,0 +1,51 @@
+#!/usr/bin/env activeperl-5.8
+
+# our $opt_a;
+# use Getopt::Std;
+# getopts('a');
+
+$0 =~ s|.*/||;
+@ARGV == 2 || die "\nUsage: $0 genomes.fa reads.fa < infile > outfile
+
+    Fix gene alignments and annotate pseudogene status.
+
+    Infile must be a normal \"CAF\" file.
+
+    Parameters:
+
+	genomes.fa	FASTA file containing reference sequences
+	reads.fa	FASTA file containing query sequences
+
+    Options:
+
+";
+
+use Cols;
+use Fasta;
+use Genes;
+use CAF;
+
+use strict;
+
+my $genomes_file = shift;
+my $reads_file = shift;
+
+my $genome_fasta = Fasta::new($genomes_file, 'cache_all');
+my $reads_fasta = Fasta::new($reads_file, 'cache_all');
+
+my $columns = Cols::new('STDIN');
+$columns->add_col(qw/rflags gene_flags pseudo shifted pident qseq rseq/);
+$columns->print_header('STDOUT');
+
+while (my $row = $columns->get_row()) {
+    Genes::add_rseq_column($row, $genome_fasta);
+
+    if ($row->{gene_type} =~ /CDS|pseudo/) {
+        Genes::fix_gene_alignment($row, $genome_fasta, $reads_fasta);
+    }
+
+    Genes::annotate_pseudo_status($row, $genome_fasta, $reads_fasta);
+    CAF::round($row);
+    $columns->print_row('STDOUT', $row);
+}
+

@@ -1,0 +1,103 @@
+#!/bin/bash
+
+#
+#   dependencies:
+#	perl.replace
+#	phrap.fix_fasta
+#
+
+. subs.sh
+
+many=".big"
+
+while getopts mo:t foo ; do
+    if [ "$foo" = 'm' ]; then
+	many=".manyreads"
+    elif [ "$foo" = 'o' ]; then
+	phrap_options="$OPTARG"
+    elif [ "$foo" = 't' ]; then
+	tag="-t"
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -lt 3 ]; then
+    echo -e "\nUsage: $0 [options] prefix f1.fa f1.qual [f2.fa f2.qual]
+
+    Combines paired input files and runs phrap.
+
+    If a quality file name is of the form \"q<num>\", e.g. \"q20\", then a quality
+    file will be created with a contant quality score of <num>.
+
+    The output file prefix is of the form \"[directory/]filebase\".
+    If filebase is missing, then \"phrap\" will be used as the file base.
+
+    Uses file timestamps to try to continue where it left off.
+
+    Options:
+
+        -m                    many short reads
+        -o 'phrap options'    specify phrap options
+	-t                    tag sequences with 'fasta.tag_and_cat -n ...'
+
+    Useful phrap options:
+
+        -vector_bound x
+        -minmatch x
+        -maxmatch x
+        -retain_duplicates
+
+    See also fasta.combine_pairs.
+"
+    exit 1
+fi
+
+prefix="$1" ; shift
+dir=`dirname "$prefix"`
+dir=`abs_path -f "$dir"`
+base=`basename "$prefix"`
+
+if [ -d "$prefix" ]; then
+    if [ ! -d "$dir/phrap" ]; then
+	echo "Prefix '$prefix' is a directory.  Changing prefix to '$prefix/phrap'." 1>&2
+	base="phrap"
+	prefix="$prefix/$base"
+    else
+	echo "Prefix '$prefix' is a directory.  Can't continue." 1>&2
+	exit 1
+    fi
+fi
+
+Run -n fasta.combine_pairs $tag /tmp/phrap.run.fasta.$$ "$@"
+tmp=`mktemp /tmp/tmp.XXXXXXXXXX`
+phrap.fix_fasta -chem -diff /tmp/phrap.run.fasta.$$.fa > $tmp || exit 1
+mv $tmp /tmp/phrap.run.fasta.$$.fa || exit 1
+fa=/tmp/phrap.run.fasta.$$.fa
+qual=/tmp/phrap.run.fasta.$$.qual
+
+mkdir -p $dir
+
+input="$prefix"
+
+if ! cmp "$fa" "$input" &> /dev/null || ! cmp "$qual" "$input.qual" &> /dev/null ; then
+    rm -f "$input" "$input.fa" "$input.qual"
+    cp "$fa" "$input"
+    ln "$input" "$input.fa" 2> /dev/null
+    cp "$qual" "$input.qual"
+fi
+
+echo $phrap_options > /tmp/phrap.options.$$
+if need $input.options; then
+    mv /tmp/phrap.options.$$ $input.options
+elif ! diff -w /tmp/phrap.options.$$ $input.options &> /dev/null; then
+    echo "warning: new options '$phrap_options' differ from old options '`cat $input.options`' in file '$input.options'" 1>&2
+    diff -w /tmp/phrap.options.$$ $input.options 1>&2
+    mv /tmp/phrap.options.$$ $input.options
+fi
+
+if need $input $input.options $input.contigs; then
+    run "phrap$many -new_ace $phrap_options $input > $input.stdout 2> $input.stderr"
+    run "perl.replace '>.*Contig' '>Contig' $input.contigs"
+    run "perl.replace '>.*Contig' '>Contig' $input.contigs.qual"
+fi
+

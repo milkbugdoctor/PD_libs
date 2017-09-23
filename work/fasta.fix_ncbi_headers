@@ -1,0 +1,19 @@
+#!/usr/bin/perl
+
+while (<>) {
+    if (/^>(\S+)(.*)/) {
+	my $id = $1;
+	my $rest = $2;
+	if ($id =~ /gi\|\d+\|.*\|(\S+)\|/) {
+	    my $id = $1;
+	    $id =~ s/\.\d+$//;
+	    print ">$id$rest\n";
+	}
+	else {
+	    print ">$id$rest\n";
+	}
+    }
+    else {
+	print;
+    }
+}

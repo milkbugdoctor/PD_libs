@@ -1,0 +1,37 @@
+. subs.sh
+
+prefix=out
+break=20
+opts="--maxmatch --nosimplify"
+
+while getopts b:c:l:p: foo ; do
+    if [ "$foo" = 'p' ]; then
+        prefix="$OPTARG"
+    else
+	opts="$opts -$foo $OPTARG"
+    fi
+done
+shift $((OPTIND-1))
+
+if [ $# -ne 2 ]; then
+    echo -e "\nUsage: $0 [options] ref.fa contigs.fa
+
+    Run nucmer and then delta-filter -q.
+
+    Options:
+	-p prefix
+	-b break	[ default is 20 ]
+	-l wordlen	[ default is 20 ]
+	-c mincluster	[ default is 20 ]
+"
+    exit 1
+fi
+
+# echo nucmer -p $prefix -c 20 $opts "$1" "$2" 1>&2
+if ! nucmer -p $prefix -c 20 $opts "$1" "$2" 2> /tmp/nucmer.err.$$; then
+    echo nucmer failed: 1>&2
+    cat /tmp/nucmer.err.$$ 1>&2
+    rm -f /tmp/nucmer.err.$$
+    exit 1
+fi
+delta-filter -q $prefix.delta > $prefix.delta.q || exit 1

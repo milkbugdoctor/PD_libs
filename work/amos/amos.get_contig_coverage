@@ -1,0 +1,73 @@
+#!/usr/bin/perl
+
+require 'misc.pl';
+use Columns;
+
+@ARGV == 2 || die "\nUsage: $0 ref.headers infile.layout > outfile\n\n";
+
+my $ref_headers = shift;
+my $infile = shift;
+
+my %ref_headers;
+my $rh = Columns::new($ref_headers);
+my %genome_num;
+my $counter = 0;
+while (my $r = $rh->get_row()) {
+    my ($id, $desc) = $rh->get_col($r, 'id', 'desc');
+    $ref_headers{$id} = $desc;
+    $genome_num{$id} = ++$counter;
+}
+
+print_tabbed(STDOUT, "scaff what start end len name rstart rend rsize rdir\n");
+
+my %contigs;
+open(LAYOUT, "$infile") or die "can't open $infile";
+while (<LAYOUT>) {
+    my ($c, $num, $temp, $genome, $pos) = split /\s+/;
+    next if $c ne "C";
+    my $tnum = $genome_num{$genome};
+    $pos =~ /(-?\d+)-(-?\d+)/;
+    my ($s, $e) = ($1, $2);
+    my $len = ($e - $s + 1);
+    print "$tnum\tcontig\t$s\t$e\t$len\t$num\n";
+}
+
+sub condense_and_print_contigs {
+    for my $key (keys %contigs) {
+        my @contigs = @{$contigs{$key}};
+        delete $contigs{$key};
+        warn "\nmerging into contigs\n";
+        while (1) {
+            @contigs = sort { $a <=> $b } @contigs;
+            my $did_something = 0;
+            my (@outer, @inner);
+            for my $i1 (0 .. $#contigs - 1) {
+                my $r1 = $contigs[$i1];
+                next if ! defined $r1;
+                my $i2 = $i1 + 1;
+                my $r2 = $contigs[$i2];
+                next if ! defined $r2;
+                my ($start1, $end1) = split /\s+/, $r1;
+                my ($start2, $end2) = split /\s+/, $r2;
+                $inner[0] = max($start1, $start2);
+                $inner[1] = min($end1, $end2);
+                $outer[0] = min($start1, $start2);
+                $outer[1] = max($end1, $end2);
+                if ($inner[1] - $inner[0] > -10) {
+                    $r1 = $contigs[$i1] = "$outer[0] $outer[1]";
+                    $r2 = $contigs[$i2] = undef;
+                    $did_something = 1;
+                    next;
+                }
+            }
+            @contigs = grep(defined $_, @contigs);
+            last if ! $did_something;
+        }
+	my ($tnum, $contig_num) = split /\s+/, $key;
+        for my $r (@contigs) {
+            my ($s, $e) = split /\s+/, $r;
+            my $len = $e - $s + 1;
+            print "$tnum\tcontig\t$s\t$e\t$len\t$contig_num\n";
+        }
+    }
+}

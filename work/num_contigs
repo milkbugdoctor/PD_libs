@@ -1,0 +1,9 @@
+#!/usr/bin/perl
+
+my $whole_stuff = join('', <>);
+printf "length %d\n", length($whole_stuff);
+
+while ($whole_stuff =~ /N+/g) {
+	printf "%d ", length($&);
+}
+print "\n";

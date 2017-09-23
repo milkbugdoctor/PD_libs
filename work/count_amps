@@ -1,0 +1,294 @@
+#!/usr/bin/perl
+
+$debug = shift if $ARGV[0] eq '-d';
+
+$max_amp = 1001;
+
+$do_dbsnp = 1;
+$all_hits = 1;
+
+$reconnect = 0;
+$clear_hits = 1;
+
+require 'primer.pl';
+require 'sets.pl';
+require 'new_amps.pl';
+require 'misc.pl';
+
+(@ARGV >= 1) || die "\nUsage: $0 -d grp-file\n\n";
+($file) = @ARGV;
+
+$total_time = time;
+
+if (!$debug) {
+    open(STDOUT, ">$file.amp") || die "ack";
+    open(STDERR, ">$file.amp.err") || die "ack";
+    open(TABLE, ">$file.amp.table") || die "ack";
+    open(TABLE2, ">$file.amp.table2") || die "ack";
+    open(DBSNP, ">$file.amp.dbsnp") || die "ack";
+    autoflush STDERR 1;
+    autoflush STDOUT 1;
+    autoflush TABLE 1;
+    autoflush TABLE2 1;
+    autoflush DBSNP 1;
+}
+
+$rsfile = $file; $rsfile =~ s|[^/]*$|rs.txt|; $rsfile =~ s|output/|data/|;
+$posfile = $file; $posfile =~ s|[^/]*$|pos.txt|; $posfile =~ s|output/|data/|;
+(-s $posfile) || die "$posfile";
+(-s $rsfile) || die "$rsfile";
+
+print STDERR "getting rs numbers for snps\n";
+@rs = split(/\s+/, `cat $rsfile`);
+
+open(FOO, "$file") || die "Can't open $file";
+@mapfile = <FOO>;
+close(FOO);
+
+print STDERR "getting snp positions\n";
+open(FOO, "$posfile") || die "Can't open $posfile";
+while (<FOO>) {
+	chomp($row = $_);
+	next if /^rs/;
+	my ($rs, $chr, $pos) = split(/\t/, $row);
+	$chr = 'X' if $chr == 23;
+	$chr = 'Y' if $chr == 24;
+	$snp_hit{$rs} = "$chr $pos";	# rs -> chr, pos
+	$snp_pos{"chr$chr"} .= "$pos\n";
+	$rs_map{$chr}{$pos} = $rs;
+}
+close(FOO);
+
+if ($do_dbsnp) {
+    $dbsnp_file = $posfile; $dbsnp_file =~ s/pos\.txt$/dbsnp_pos\.txt/;
+    (-s $dbsnp_file) || die "$dbsnp_file";
+    print STDERR "getting dbsnp positions\n";
+    open(FOO, "$dbsnp_file") || die "Can't open $$dbsnp_file";
+    while (<FOO>) {
+	chomp($row = $_);
+	next if /^rs/;
+	my ($rs, $chr, $pos) = split(/\t/, $row);
+	$chr = 'X' if $chr == 23;
+	$chr = 'Y' if $chr == 24;
+	# $dbsnp_hit{$rs} = "$chr $pos";	# rs -> chr, pos
+	$dbsnp_rs_map{$chr}{$pos} = $rs;
+	$dbsnp_pos{"chr$chr"} .= "$pos\n";
+    }
+    close(FOO);
+}
+
+for (@mapfile) {
+    if (/^group (\d+)/) {
+	$group_num = $1;
+	$groups{$group_num} .= $_;
+    }
+    elsif (/^    ([ACGT]+)\s+([ACGT]+)\s+(.*)/) {
+	$pairs{$group_num} .= "$1 $2\n";
+	@tmp = set_to_array($3);
+	$snps{$group_num, "$1 $2"} = [ @tmp ];
+	push(@{$group_snps{$group_num}}, @tmp);
+	$group_primers{$group_num}{$1} = 1;
+	$group_primers{$group_num}{$2} = 1;
+	$groups{$group_num} .= $_;
+	$all_primers{$1} = 1;
+	$all_primers{$2} = 1;
+    }
+    elsif (/^    /) {
+	$groups{$group_num} .= $_;
+    }
+}
+
+
+@all_primers = keys(%all_primers);
+$all_hits = 0 if (@all_primers > 4000);
+
+if ($all_hits) {
+    $time = time;
+    @all_primers = keys(%all_primers);
+    printf STDERR "getting hits for all %d primers\n", @all_primers+0;
+    store_hits(@all_primers) || die "store_hits";
+    print STDERR time - $time, " seconds\n";
+}
+
+@groups = sort { $a <=> $b } keys %groups;
+
+print TABLE "# grp\tsmall_size\ttarget_amps\tsmaller_amps\tdbsnp\n";
+
+print STDERR @groups+0, " groups\n";
+
+$total_smaller_amps = 0;
+$total_snp_amps = 0;
+$all_weight = 0;
+$smaller_weight = 0;
+$snp_weight = 0;
+for $group (@groups) {
+    $grp = $groups{$group};
+    print STDERR "$grp\n";
+    @pairs = split(/\n/, $pairs{$group});
+    @primers = keys %{$group_primers{$group}};
+
+    if (@primers == 0) {
+	print STDERR "    skipping empty group\n";
+	next;
+    }
+
+    if (!$all_hits) {
+	$time = time;
+	if ($reconnect) {
+	    print STDERR "making connections\n";
+	    get_connections();
+	}
+	if ($clear_hits) {
+	    print STDERR "clearing hits to save mem\n";
+	    clear_hits() || die "clear_hits";
+	}
+	print STDERR "getting hits for group $group\n";
+	get_hits(@primers) || die "get_hits";
+	print STDERR time - $time, " seconds\n";
+    }
+    $time = time;
+
+    undef $foo; undef @foo; undef %foo;
+    local($foo, @foo, %foo);
+
+    $group_smaller_amps = 0;
+    $group_total_amps = 0;
+    $group_snp_amps = 0;	# targeted snp hits
+    $group_all_weight = 0;
+    $group_smaller_weight = 0;
+    $group_snp_weight = 0;
+    $group_snp_hits = 0;	# snp hits by all primers
+    $group_dbsnp_hits = 0;	# dbsnp hits by group primers
+
+    print STDERR "getting actual snp count for group\n";
+    @group_snp_list = &unique(@{$group_snps{$group}});
+    printf STDERR "actual snp count for group is %d\n", @group_snp_list+0;
+
+    my $max_snp_amp = 0;
+    for $pair (@pairs) {
+	($p1, $p2) = split(/ /, $pair);
+	my @snps = @{$snps{$group, $pair}};
+	print STDERR "\ngetting amps for pair $pair snps {@snps}\n";
+	$time = time;
+	get_amps(*foo, 0, $max_amp, 1, 0, $p1, $p2);
+	print STDERR time - $time, " seconds\n";
+	for my $snp (@snps) {
+	    my ($chr, $pos) = split(/ /, $snp_hit{$rs[$snp]});
+	    my @chr_amps = split(/\s+/, $foo{"chr$chr"});
+	    print STDERR "snp $snp rs $rs[$snp] chr $chr pos $pos\n";
+	    print STDERR "chr$chr amps: ", @chr_amps+0, "\n";
+	    my $pair_snp_amps = 0;
+	    for my $amp (@chr_amps) {
+		$amp =~ /(\d+)\((\d+)\)/;
+		my ($start, $len) = ($1, $2);
+		if ($pos >= $start && $pos < $start + $len) {
+		    print STDERR "got snp amp $amp\n";
+		    $pair_snp_amps++;
+		    $total_snp_amps++;
+		    $group_snp_amps++;
+		    $snp_weight += 1/$len;
+		    $group_snp_weight += 1/$len;
+		    $max_snp_amp = $len if $len > $max_snp_amp;
+		}
+	    }
+	    if ($pair_snp_amps == 0) {
+		print "ERROR didn't find snp amp for snp $snp\n";
+		warn "ERROR didn't find snp amp for snp $snp\n";
+		exit 1;
+	    }
+	}
+    }
+    print STDERR time - $time, " seconds\n";
+
+    $time = time;
+    print STDERR "getting overlapping amps for group $group\n";
+    get_amps(*foo, 0, $max_amp, 1, 0, @primers);
+    print STDERR time - $time, " seconds\n";
+    
+    $time = time;
+    my %amps;
+    for my $amp (@foo) {
+	my ($chr, $start, $len, $p1, $p2) = split(/ /, $amp);
+	$all_weight += 1/$len;
+	$group_all_weight += 1/$len;
+	if ($len <= $max_snp_amp) {
+	    $group_smaller_amps++;
+	    $total_smaller_amps++;
+	    $smaller_weight += 1/$len;
+	    $group_smaller_weight += 1/$len;
+	}
+	$group_total_amps++;
+	$total_amps++;
+	$amps{$p1} .= "$len ";
+	$amps{$p2} .= "$len " if $p1 ne $p2;
+	$amps{'all'} .= "$len ";
+    }
+    for my $p (@primers, 'all') {
+	my @list = sort { $a <=> $b } split(/ /, $amps{$p});
+	print TABLE2 "$group $p @list\n";
+    }
+
+    print STDERR "getting covered amps for group $group\n";
+    get_snps_covered(*foo, $max_amp, \@primers, \%snp_pos);
+    for my $tmp (@foo) {
+	my ($chr, $pos) = split(/\s+/, $tmp);
+	$chr =~ s/^chr//;
+	my $rs = $rs_map{$chr}{$pos};
+	print STDERR "    oursnp rs$rs chr$chr pos $pos\n";
+    }
+    $group_snp_hits += $foo;
+
+    #
+    # get covered dbSNPs
+    #
+    if ($do_dbsnp) {
+	print STDERR "getting covered dbSNPs for group $group\n";
+	get_snps_covered(*foo, $max_amp, \@primers, \%dbsnp_pos);
+	for my $tmp (@foo) {
+	    my ($chr, $pos, $mlen, $start, $len, @primers) = split(/\s+/, $tmp);
+	    $chr =~ s/^chr//;
+	    my $rs = $dbsnp_rs_map{$chr}{$pos};
+	    my $end = $start + $len - 1;
+	    print STDERR "    rs$rs chr$chr $pos     $start $end @primers\n";    
+	    print DBSNP "$rs $chr $pos     $start $end @primers\n";
+	    $dbsnp_hits{"$chr $pos"} = 1;
+	}
+	$group_dbsnp_hits = $foo;
+	$dbsnp_hits += $foo;
+    }
+
+print TABLE "$group\t$max_snp_amp\t";
+print TABLE "$group_snp_amps\t$group_smaller_amps\t$group_total_amps\t$group_dbsnp_hits\n";
+
+print STDERR "group's max target amp size: $max_snp_amp\n";
+print STDERR "max genome amp size counted: $max_amp\n";
+print STDERR "group: snp_amps $group_snp_amps smaller_genome_amps $group_smaller_amps total_genome_amps $group_total_amps\n";
+print STDERR "group: snp_weight $group_snp_weight smaller_weight $group_smaller_weight all_weight $group_all_weight\n";
+printf STDERR "group: expected snp hit count: %d\n", scalar @group_snp_list;
+print STDERR "group: actual snp hit count: $group_snp_hits\n";
+print STDERR "totals so far:\n";
+print STDERR "    snp_amps $total_snp_amps smaller_genome_amps $total_smaller_amps total_genome_amps $total_amps\n";
+print STDERR "    snp_weight $snp_weight smaller_weight $smaller_weight all_weight $all_weight\n";
+print STDERR "    dbsnp_hits $dbsnp_hits (with dups)\n" if ($do_dbsnp);
+print STDERR "\n\n";
+}
+
+$dbsnp_hits = scalar(keys(%dbsnp_hits));
+
+print "snp_amps $total_snp_amps smaller_genome_amps $total_smaller_amps total_genome_amps(<=$max_amp) $total_amps\n";
+print "snp_weight $snp_weight smaller_weight $smaller_weight all_weight(<=$max_amp) $all_weight\n";
+print "dbsnp_hits $dbsnp_hits\n" if ($do_dbsnp);
+print "done\n";
+print STDERR (time - $total_time)/60.0, " total minutes\n";
+close(TABLE);
+close(TABLE2);
+close(STDOUT);
+close(STDERR);
+close(DBSNP);
+
+system "
+	sort -u $file.amp.dbsnp > /tmp/$$;
+	echo 'rs chr pos start end primer1 primer2' > $file.amp.dbsnp;
+	cat /tmp/$$ >> $file.amp.dbsnp;
+	rm -f /tmp/$$
+";

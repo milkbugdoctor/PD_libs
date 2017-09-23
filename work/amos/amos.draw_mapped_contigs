@@ -1,0 +1,9 @@
+#!/bin/bash
+
+if [ $# -ne 2 ]; then
+    echo -e "\nUsage: $0 ref.fa prefix\n"
+    exit 1
+fi
+
+draw_mapped_contigs "$1" "$2.fasta" "$2.mapped-contigs.png"
+

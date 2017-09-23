@@ -1,0 +1,3 @@
+#!/usr/local/bin/perl
+
+print int(rand(50000) + 9000), "\n";

@@ -1,0 +1,322 @@
+#!/bin/bash
+
+. subs.sh
+. args.sh
+
+while getopts ds foo ; do
+    if [ "$foo" = 'd' ]; then
+        debug=1
+    elif [ "$foo" = 's' ]; then
+        share=1
+    fi
+done
+shift $((OPTIND-1))
+
+args=`quote_args "$@"`
+
+input_dir=/home/flong/current/input
+
+PATH=${PATH}:/home/flong/current
+
+if [ $# -lt 4 ]; then
+    echo -e "\nUsage: $0 [options] reads.fa reads.qual template.fa directory [variables]
+
+    Parameters:
+	reads.fa		FASTA file containing read sequences
+	reads.qual		FASTA file containing read quality scores, or \"\"
+	template.fa		FASTA file containing sequence to use as reference
+	directory		output directory
+
+    Setting variables:
+	NUCM \"...\"		nucmer options
+	CASM \"...\"		casm-layout options
+	CONS \"...\"		make-consensus options
+	df   \"...\"		run delta-filter using these options
+	DF   \"...\"		run delta.filter using these options
+	fixl \"...\"
+	FL   \"...\"		run Cheater using these options
+	d2l 1
+
+    Options:
+	-d        		debug: don't send stderr to log file
+	-s			try to share files to save space
+
+"
+
+    exit 1
+fi
+
+fasta=`abs_path -0 "$1"` || exit 1; shift
+qual="$1"; shift
+ref=`abs_path -0 "$1"` || exit 1; shift
+prefix="$1" ; shift
+
+if [ "$qual" ]; then
+    qual=`abs_path -0 "$qual"` || exit 1
+fi
+
+base="`basename $prefix`"
+mkdir -p $prefix || exit 1
+echo $base > $prefix/.prefix
+rm -f $prefix/*.options
+rm -f $prefix/*.variables
+echo "$args" > $prefix/$base.options
+echo "cd `pwd`; $0 $args" > $prefix/$base.commandline
+vars=
+while [ "$1" -a "$2" ]
+do
+    vars="$vars\n$1"
+    push $1 "$2"
+    shift
+    shift
+done
+vars=`echo -e "$vars" | sort -u`
+for v in $vars
+do
+    eval tmp=\`quote_args \"\${$v[*]}\"\`
+    eval "$v=($tmp)"
+    echo $v=$tmp >> $prefix/$base.variables
+done
+
+overlap=10
+casm_overlap=`get_arg -o $CASM`
+cons_overlap=`get_arg -o $CONS`
+fixl_overlap=`get_arg -o $fixl`
+if [ "$casm_overlap" ]; then
+    overlap="$casm_overlap"
+fi
+if [ "$fixl_overlap" ]; then
+    overlap="$fixl_overlap"
+fi
+if [ ! "$cons_overlap" ]; then
+    CONS="$CONS -o $overlap"
+fi
+
+make_link() {
+    file=`abs_path -0 "$1"`
+    ln -sf $file $2
+}
+
+doit() {
+    echo -e "\nrunning $0 $args" 1>&2
+
+    if [ "$share" ]; then
+	repeats=$ref.repeats
+	if lneed $ref $repeats; then
+	    lrun $repeats "amos.get_repeats -l -m 30 $ref > $repeats"
+	fi
+	make_link $repeats $prefix/reference.fa.repeats 2> /dev/null
+	if lneed $ref $ref.headers; then
+	    lrun $ref.headers "fasta.get_headers $ref > $ref.headers"
+	fi
+	make_link $ref.headers $prefix/reference.fa.headers 2> /dev/null
+    else
+	repeats=$prefix/reference.fa.repeats
+	if need $ref $repeats; then
+	    run $repeats "amos.get_repeats -l -m 30 $ref > $repeats"
+	fi
+	ref_headers=$prefix/reference.fa.headers
+	if need $ref $ref_headers; then
+	    run $ref_headers "fasta.get_headers $ref > $ref_headers"
+	fi
+    fi
+
+
+    make_link "$fasta" $prefix/input.seq
+    if [ "$qual" ]; then
+	make_link "$qual" $prefix/input.qual
+    fi
+    make_link "$ref" $prefix/reference.fa
+    cd $prefix
+    prefix="$base"
+    input_seq=input.seq
+    input_qual=input.qual
+
+    AFG=$prefix.afg
+    SEQS=$fasta.seq
+    BANK=$prefix.bank
+    ALIGN=$prefix.delta
+    LAYOUT=$prefix.layout
+    CONFLICT=$prefix.conflict
+    FASTA=$prefix.fasta
+    MAP=$BANK/RED.map
+    CTG=$prefix.ctg
+
+    if [ "$share" ]; then
+	if lneed $fasta $fasta.afg; then
+	    lrun $fasta.afg "tarchive2amos -o $fasta $input_seq 2> /dev/null"	|| exit 1
+	fi
+	if need $AFG; then
+	    make_link $fasta.afg $AFG 2> /dev/null
+	fi
+    else
+	if need $fasta $AFG; then
+	    run $AFG "tarchive2amos -o $prefix $input_seq 2> /dev/null"
+	fi
+    fi
+
+    if need $AFG $MAP; then
+	## Building AMOS bank
+	rm -rf $BANK
+	run "bank-transact -c -b $BANK -m $AFG"
+    fi
+
+    if [ "$share" ]; then
+	if lneed $MAP "$SEQS"; then
+	    ## Collecting clear range sequences
+	    lrun "$SEQS" "dumpreads $BANK > $SEQS"
+	fi
+	ln -sf $SEQS $prefix.seqs 2> /dev/null
+    else
+	if need $MAP $prefix.seqs; then
+	    ## Collecting clear range sequences
+	    run "$SEQS" "dumpreads $BANK > $prefix.seqs"
+	fi
+    fi
+
+    if need $prefix.seqs $ALIGN; then
+	## Running nucmer
+	run "nucmer $NUCM --maxmatch --prefix=$prefix $ref $prefix.seqs"
+    fi
+
+    if need $ALIGN $prefix.read-hits.txt; then
+	run "amos.get_read_hits $ALIGN | amos.add_read_name $prefix.bank > $prefix.read-hits.txt"
+    fi
+
+    if [ "$df" ]; then
+	if need $ALIGN $ALIGN.df; then
+	    run "delta-filter $df $ALIGN > $ALIGN.df"
+	fi
+	ALIGN=$ALIGN.df
+    fi
+    if [ "$DF" ]; then
+	if need $ALIGN $ALIGN.DF; then
+	    run "delta.filter $DF $ALIGN > $ALIGN.DF"
+	fi
+	ALIGN=$ALIGN.DF
+    fi
+    ln -sf $ALIGN $prefix.delta.final
+
+    # get layout
+    if [ "$d2l" -o "$fixl" -o "$FL" ]; then
+	if need $ALIGN $LAYOUT.1; then
+	    run "amos.delta2layout $ALIGN > $LAYOUT.1"
+	fi
+	if [ "$fixl" ]; then
+	    if need $LAYOUT.1 $LAYOUT.2; then
+		run "amos.fix_layout -n $fixl -m $MAP $LAYOUT.1 > $LAYOUT.2"
+	    fi
+	    if need $LAYOUT.2 $LAYOUT; then
+		run "amos.fix_layout -r $fixl -m $MAP $LAYOUT.2 > $LAYOUT"
+	    fi
+	elif [ "$FL" ]; then
+	    # CTG=$prefix.iid.ctg
+	    CTG=$prefix.ctg
+	    if need_nonempty $LAYOUT.1 $CTG; then
+		# opts="-m $BANK/RED.map $FL"
+		run "amos.cheater $FL $LAYOUT.1 $ref $prefix.seqs tmp 2> cheater.stderr"
+		run "rename tmp $prefix tmp.*"
+	    fi
+	    ln -sf $prefix.layout $prefix.layout.final
+	else
+	    echo "\$d2l set but \$fixl and \$FL were not" 1>&2
+	    exit 1
+	fi
+    else
+	if need $ALIGN $LAYOUT; then
+	    rm -f $BANK/{LAY,CTG}*
+	    run "casm-layout $CASM -U $LAYOUT -C $CONFLICT -b $BANK $ALIGN"
+	fi
+    fi
+
+    if [ "$FL" ]; then
+	if need $CTG $prefix.did-consensus; then
+	    rm -f $BANK/{LAY,CTG}*
+	    bank-unlock $BANK 2> /dev/null
+	    run "bank-transact -b $BANK -m $CTG"
+	    echo "done" > $prefix.did-consensus
+	    ln -sf $prefix.fa $FASTA
+	fi
+    elif [ "$d2l" -o "$fixl" ]; then
+	if need $LAYOUT $prefix.did-consensus; then
+	    rm -f $BANK/{LAY,CTG}*
+	    bank-unlock $BANK
+	    run "make-consensus -P $CONS -B $LAYOUT $BANK"
+	    echo "done" > $prefix.did-consensus
+	fi
+	ln -sf $LAYOUT $prefix.layout.final
+    else
+	if need $LAYOUT $prefix.did-consensus; then
+	    rm -f $BANK/CTG*
+	    bank-unlock $BANK
+	    run "make-consensus $CONS -B -b $BANK"
+	    echo "done" > $prefix.did-consensus
+	fi
+	ln -sf $LAYOUT $prefix.layout.final
+    fi
+
+    if [ ! "$FL" ]; then
+	if need $prefix.did-consensus $FASTA; then
+	    ## Outputting fasta
+	    run "bank2fasta -b $BANK > $FASTA"
+	    ln -f $FASTA $prefix.fa
+	fi
+	# .ctg is needed for .ace
+	if need $prefix.bank/CTG* $CTG; then
+	    run "bank-report -b $prefix.bank CTG > $CTG"	|| exit 1
+	fi
+    fi
+
+    run "amos.redraw ."
+
+    if need $CTG $prefix.ace; then
+	run "amos2ace $AFG $CTG"
+    fi
+    if need $prefix.ace $prefix.qual; then
+	run "ace2qual $prefix.ace $prefix"
+    fi
+    if need $prefix.ace $prefix.used-reads.txt; then
+	run "get_ace_reads $prefix.ace > $prefix.used-reads.txt"
+    fi
+
+    if false; then
+	amos.get_missed_reads $prefix
+	if need $prefix.missed-reads.txt $prefix.missed-reads.fa; then
+	    run "amos.get_matching_fa_qual $input_seq $input_qual $prefix.missed-reads < $prefix.missed-reads.txt"
+	fi
+	if need $prefix.mapped-contigs.coverage $prefix.read-hits.txt $prefix.gap-reads.txt; then
+	    run "amos.get_gap_reads $prefix"
+	fi
+	if need $prefix.gap-reads.txt $prefix.gap-reads.fa; then
+	    run "amos.get_matching_fa_qual $input_seq $input_qual $prefix.gap-reads < $prefix.gap-reads.txt"
+	fi
+    fi
+
+    if [ "$snps" ]; then
+	if need $ALIGN $prefix.snps; then
+	    run "show-snps -Clr $ALIGN > $prefix.snps"
+	fi
+    fi
+
+    #
+    # run phrap
+    #
+    list=`set | grep "^PHRAP_FILES_." | sed -e 's/=.*//' -e 's/PHRAP_FILES_//'`
+    for i in $list
+    do
+        eval files=\$PHRAP_FILES_$i
+        eval opts=\$PHRAP_OPTS_$i
+        eval do_phrap_opts=\$DO_PHRAP_OPTS_$i
+        if [ "$files" ]; then
+            run "amos.do_phrap $do_phrap_opts -o '$opts' . $prefix.phrap$i $files"
+        fi
+    done
+
+    amos.compare -c . > summary.txt
+}
+
+if [ "$debug" ]; then
+    doit || exit 1
+else
+    (doit 2>&1 || exit 1) >> $prefix/log.txt
+fi

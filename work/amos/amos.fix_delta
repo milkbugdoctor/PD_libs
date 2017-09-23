@@ -1,0 +1,70 @@
+#!/usr/bin/perl
+
+my $patch = 25;
+
+@ARGV || die "\nUsage: $0 diff file.delta
+
+    diff	fractional difference allowed, e.g. .01
+
+";
+
+use Delta;
+use IO::Handle;
+require 'markers.pl';
+
+my $allow = shift;
+my $delta_file = shift;
+
+my @hits;
+my $count = 0;
+
+my $m = markers::new();
+my %genome_lengths;
+my %read_lengths;
+
+my $d = Delta::new($delta_file);
+print $d->{header};
+while (my $entry = $d->get_entry) {
+    my ($rname, $rsize, $qname, $qsize) = $entry->get_header();
+    my ($ident, $rgap, $tgap, $align_len, $score, $cover) = $entry->get_align_stats();
+    my ($rstart, $rend, $qstart, $qend, $rstrand, $qstrand, $mis) = $entry->get_align();
+    $genome_lengths{$rname} = $rsize;
+    $read_lengths{$qname} = $qsize;
+
+    $hits[$count] = $entry;
+    $m->add_marker($rname, "+", $rstart, $rend, $count, $score, $qname);
+    $count++;
+    warn "$count reads added\n" if $count % 10000 == 0;
+}
+
+for my $ref (keys %genome_lengths) {
+    my $ref_len = $genome_lengths{$ref};
+    my %kept_hits;
+    for (my $pos = 0; $pos < $ref_len; $pos += $patch) {
+	my @hits = $m->get_covering_markers('any', $ref, "+", $pos, $pos + 1);
+	my @best_hits;
+	my $best_ident;
+	for my $hit (@hits) {
+	    my ($ctg, $strand, $start, $end, $hit_id, $ident) = split /\t/, $hit;
+	    $best_ident = $ident if $ident > $best_ident;
+	}
+	my $worst_allowed = $best_ident * (1 - $allow);
+	for my $hit (@hits) {
+	    my ($ctg, $strand, $start, $end, $hit_id, $ident) = split /\t/, $hit;
+	    $kept_hits{$hit} = $hit_id if $ident >= $worst_allowed;
+	}
+    }
+    my @kept_hits = sort {
+	$kept_hits{$a} <=> $kept_hits{$b};
+    } keys %kept_hits;
+    %kept_hits = ();
+    my $num_kept = @kept_hits;
+    my ($last_ctg, $last_read);
+    for my $hit (@kept_hits) {
+	my ($ctg, $strand, $start, $end, $hit_id, $ident, $read) = split /\t/, $hit;
+	my $read_len = $read_lengths{$read};
+	$hits[$hit_id]->print(STDOUT);
+	$last_ctg = $ctg;
+	$last_read = $read;
+    }
+}

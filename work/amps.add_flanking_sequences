@@ -1,0 +1,62 @@
+#!/usr/bin/perl
+
+$0 =~ s|.*/||;
+@ARGV == 6 || die "\nUsage: $0 <upstream> <downstream> input-file prefix
+
+	prefix - look for prefix_chr, prefix_strand, etc.
+
+	<upstream>:	'bp new-col'
+	<downstream>:	'bp new-col'
+
+
+";
+
+my ($up_bp, $up_col, $dn_bp, $dn_col, $infile, $prefix) = @ARGV;
+
+require 'marker_reader.pl';
+require 'misc.pl';
+
+my $markers = marker_reader::new($infile,
+	"id chr strand start end", $prefix);
+
+my $columns = $markers->get_Columns;
+$columns->add_col($up_col, $dn_col);
+$columns->print_header(STDOUT);
+
+while (my $mark = $markers->read_marker) {
+    my ($id, $chr, $strand, $start, $end) = @$mark;
+
+    my ($up_start, $up_end, $dn_start, $dn_end);
+    if ($strand =~ /^-/) {
+	$up_start = $end + 1;
+	$up_end = $end + $up_bp;
+	$dn_start = max(1, $start - $dn_bp);
+	$dn_end = max(1, $start - 1);
+    }
+    else {
+	$up_start = max(1, $start - $up_bp);
+	$up_end = max(1, $start - 1);
+	$dn_start = $end + 1;
+	$dn_end = $end + $dn_bp;
+    }
+    my $up_seq = get_the_seq($chr, $strand, $up_start, $up_end);
+    my $dn_seq = get_the_seq($chr, $strand, $dn_start, $dn_end);
+    my $row = $markers->get_row();
+    $columns->set_col($row, $up_col, $up_seq);
+    $columns->set_col($row, $dn_col, $dn_seq);
+    $columns->print_row(STDOUT, $row);
+}
+close(INPUT);
+
+sub get_the_seq {
+    my ($chr, $strand, $start, $end) = @_;
+    $len = ($end - $start + 1);
+    my $seq = get_seq($chr, $start, $len);
+    my $real_len = length($seq);
+    if ($real_len != $len) {
+	warn "query: get_seq($chr, $start, $len):\n";
+	warn "actual sequence length ($real_len) != specified ($len) on line:\n";
+    }
+    $seq = rc($seq) if $strand =~ /^-/;
+    return $seq;
+}

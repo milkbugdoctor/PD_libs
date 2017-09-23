@@ -1,0 +1,77 @@
+#!/usr/bin/perl
+
+$pad = 30;
+
+use Getopt::Std;
+getopts('p:');
+
+$pad = $opt_p if $opt_p ne '';
+
+@ARGV == 2 || die "\nUsage: $0 [options] genes.txt genome.txt > outfile.txt
+
+    Options:
+	-pad bases
+
+";
+
+use Cols;
+require 'misc.pl';
+require 'primers.pl';
+
+my $genes_file = shift;
+my $seq_file = shift;
+
+my $genome_seq;
+open(FILE, $seq_file) or die "can't open '$seq_file'";
+while (read(FILE, $tmp, 5000000)) {
+    $genome_seq .= $tmp;
+}
+my $genome_len = length($genome_seq);
+$genome_seq .= $genome_seq;
+
+my $genes;
+my $cols = Cols::new($genes_file);
+while (my $row = $cols->get_row()) {
+    push(@genes, $row);
+}
+
+print_tabbed(STDOUT, "strand1 gene1 start1 end1 strand2 gene2 start2 end2 " .
+    "inter_start inter_end inter_len fwd_before_seq fwd_inter_seq fwd_after_seq " .
+    "fwd_first_1000 fwd_last_1000 fwd_full_seq " .
+    "rev_before_seq rev_inter_seq rev_after_seq " .
+    "rev_first_1000 rev_last_1000 rev_full_seq\n");
+
+@genes = sort {
+    $a->{start} <=> $b->{start} || $a->{end} <=> $b->{end};
+} @genes;
+my $num = @genes;
+for my $first (0 .. $num - 1) {
+    my $g1 = $genes[$first];
+    my $inter_start = $g1->{end} + 1;
+    my $second = ($first + 1) % $num;
+    my $g2 = $genes[$second];
+    my $inter_end = $g2->{start} - 1;
+    $inter_end += $genome_len if $second < $first;
+    my $before_seq = get_seq($inter_start - $pad, $inter_start - 1);
+    my $inter_seq = get_seq($inter_start, $inter_end);
+    my $after_seq = get_seq($inter_end + 1, $inter_end + $pad);
+    my $full_seq = $before_seq . $inter_seq . $after_seq;
+    my $first_1000 = substr($inter_seq, 0, 1000);
+    my $last_1000 = substr($inter_seq, -1000);
+
+    my ($rev_before, $rev_inter, $rev_after, $rev_first, $rev_last) = (rc($after_seq),
+	    rc($inter_seq), rc($before_seq), rc($last_seq), rc($first_seq));
+    my $rev_full_seq = rc($full_seq);
+
+    print join("\t", $g1->{strand}, $g1->{gene}, $g1->{start}, $g1->{end},
+	$g2->{strand}, $g2->{gene}, $g2->{start}, $g2->{end}, $inter_start, $inter_end,
+	($inter_end - $inter_start + 1),
+	$before_seq, $inter_seq, $after_seq, $first_1000, $last_1000, $full_seq,
+	$rev_before, $rev_inter, $rev_after, $rev_first, $rev_last, $rev_full_seq), "\n";
+}
+
+sub get_seq {
+    my ($start, $end) = @_;
+    return '' if ($start > $end);
+    return substr($genome_seq, $start - 1, $end - $start + 1);
+}

@@ -1,0 +1,74 @@
+#!/usr/local/bin/perl -i
+
+#
+#   Do tm filtering for NimbleGen probes.
+#
+#   Expects: probe_seq probe_id seq_id left_start strand
+#
+
+$max_tm_diff = 5;
+
+require 'primers.pl';
+require 'melting.pl';
+
+(@ARGV >= 3) || die "\nUsage: $0 delete? avg_tm files ...\n\n";
+
+my $delete = shift;
+my $avg_tm = shift;
+
+start_tm_server();
+
+$| = 1;
+
+while (<>) {
+    my $line = $_;
+    chomp;
+    my ($seq, $id1, $id2, $pos, $strand) = split /\t/;
+    if ($seq =~ /seq/i) {
+	print "$_\ttm\n";
+	next;
+    }
+
+    $total++;
+    my $tm = get_tm($seq);
+    if ($tm < $avg_tm - $max_tm_diff) {
+	$too_low++;
+	print "$_\t$tm\n" if ! $delete;
+	next;
+    }
+    elsif ($tm > $avg_tm) {
+	my $delete = 0;
+	for (my $del = 0; $del <= 5; $del++) {
+	    my $tm = get_tm(substr($seq, $del));
+	    if ($tm < $avg_tm) {
+		$delete = $del - 1;
+		last;
+	    }
+	}
+	my $tm = get_tm(substr($seq, $delete));
+	my $new_pos = $pos + $delete;
+	if ($tm > $avg_tm + $max_tm_diff) {
+	    $too_high++;
+	    next if $delete;
+	}
+	else {
+	    $good++;
+	}
+	my $new_pos = $pos;
+	$pos += $delete if $strand eq '+';
+	my $new_id = ($delete > 0) ? "$id1-$delete" : $id1;
+	print join("\t", substr($seq, $delete), $new_id, $id2, $new_pos, $strand, $tm), "\n";
+    }
+    else {
+	$good++;
+	print "$_\t$tm\n";
+    }
+}
+printf STDERR "total: %d good: %d (%f%%) lost: tm-too-low %d (%f%%) tm-too-high %d (%f%%)\n",
+	$total, $good, $good/$total*100,
+	$too_low, $too_low/$total*100,
+	$too_high, $too_high/$total*100;
+
+kill_tm_server();
+
+exit 0;

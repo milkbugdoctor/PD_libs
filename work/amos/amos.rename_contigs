@@ -1,0 +1,44 @@
+#!/usr/bin/perl
+
+my $debug = 1;
+
+use strict 'vars';
+
+(@ARGV == 2) || die "\nUsage: $0 [options] layout fasta > new-fasta
+
+    Maps reference contig names in layout to fasta entry names.
+
+";
+
+my $layout_file = shift;
+my $fasta_file = shift;
+
+require 'fasta.pl';
+
+my (@layout_names, @layout_ranges, %name_hash);
+
+open(LAYOUT, $layout_file) || die "can't open file [$layout_file]";
+while (<LAYOUT>) {
+    chomp;
+    if (/^C\s+\S+\s+\S+\s+(\S+)\s+(\S+)/) {
+	push(@layout_names, $1);
+	push(@layout_ranges, $2);
+	$name_hash{$1}++;
+    }
+}
+
+my $count = 0;
+open(FASTA, $fasta_file) || die "can't open file [$fasta_file]";
+while ((my ($header, $seq) = read_fasta(FASTA)) == 2) {
+    $header =~ /^>(\S+)/;
+    my $id = $1;
+    my $name = $layout_names[$count];
+    if ($name_hash{$name} > 1) {
+	print ">$name.$layout_ranges[$count]\n";
+    }
+    else {
+	print ">$name\n";
+    }
+    print_wrapped(STDOUT, $seq);
+    $count++;
+}

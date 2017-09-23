@@ -1,0 +1,44 @@
+#!/usr/bin/perl
+
+my $debug = 0;
+
+use Cols;
+use Getopt::Std;
+require 'misc.pl';
+
+@ARGV || die "\nUsage: $0 aligns.txt > outfile.layout
+
+    aligns.txt must be in delta.list format?
+
+";
+
+my $infile = shift;
+my $sorted = get_tmpfile("/tmp", "tabbed2layout");
+system("sort_file rname rstart/n < $infile > $sorted") == 0 or die "command failed";
+
+my $c = Cols::new($sorted);
+my %num_reads;
+while (my $r = $c->get_row()) {
+    $num_reads{$r->{rname}}++;
+}
+
+my $c = Cols::new($sorted);
+my $last_rname;
+my $contig_num = 0;
+while (my $r = $c->get_row()) {
+    if ($last_rname ne $r->{rname}) {
+	print "\n" if $last_rname;
+        $contig_num++;
+        $last_rname = $r->{rname};
+        printf "C $contig_num\t%d\t%s\t1-%s\n", $num_reads{$last_rname}, $r->{rname}, $r->{rsize};
+    }
+    my ($rstart, $rend) = ($r->{rstart} - 1, $r->{rend} - 1);
+    ($rstart, $rend) = ($rend, $rstart) if $r->{qstrand} eq '-';
+    my ($ltrim, $rtrim) = ($r->{qstart} - 1, $r->{qsize} - $r->{qend});
+    ($ltrim, $rtrim) = ($rtrim, $ltrim) if $r->{qstrand} eq '-';
+    print "$r->{qname} $rstart $rend\t";
+    print join("\t", $ltrim, $rtrim, $r->{score}, $r->{align}), "\n";
+    $num_reads{$last_rname}++;
+}
+
+unlink($sorted);

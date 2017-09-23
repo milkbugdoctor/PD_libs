@@ -1,0 +1,27 @@
+#!/usr/bin/perl
+
+use Columns;
+require 'misc.pl';
+
+@ARGV || die "\nUsage: $0 reference.fa\n\n";
+
+my $ref = shift;
+
+my $headers;
+
+if (-s "$ref.headers") {
+    $headers = "$ref.headers";
+}
+else {
+    open($headers, "fasta.get_headers $ref |") || die "command failed: $!";
+}
+
+print join("\t", qw{scaff what start end len name rstart rend rsize rdir}), "\n";
+
+my $rh = Columns::new($headers);
+my $tnum = 0;
+while (my $r = $rh->get_row()) {
+    my ($id, $desc, $tsize) = $rh->get_col($r, 'id', 'desc', 'len');
+    $tnum++;
+    print "$tnum\tgenome\t1\t$tsize\t$tsize\t$id\t\t\t\t\n";
+}

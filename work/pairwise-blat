@@ -1,0 +1,34 @@
+#!/usr/bin/perl
+
+require 'fasta.pl';
+
+if (@ARGV < 1) {
+        print STDERR "\n\nUsage: $0 tabbed-files\n\n";
+        exit 1;
+}
+
+for $file (@ARGV) {
+	open(FOO, "$file") || die "open $file";
+	while (<FOO>) {
+		my ($key, $seq, $key2) = split /[\t\n\r]+/;
+		$seq{"$key2"} = $seq if $key2;
+	}
+	close(FOO);
+}
+
+unlink "results.txt";
+for my $key1 (keys %seq) {
+    my $file = "all-$key1.fa";
+    open(GOO, ">$file") || die "could not create $file";
+    for my $key2 (keys %seq) {
+	next if $key1 eq $key2;
+	print GOO ">$key2\n";
+	print_wrapped(GOO, $seq{$key2});
+    }
+    close(GOO);
+    open(GOO, ">$key1.fa") || die "could not create $key1.fa";
+    print GOO ">$key1\n";
+    print_wrapped(GOO, $seq{$key1});
+    close(GOO);
+    system "blat $file $key1.fa out -out=blast; cat out >> results.txt ; rm out";
+}
